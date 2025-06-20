@@ -1,0 +1,283 @@
+package com.teachhelper.controller.evaluation;
+
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.teachhelper.dto.request.CreateBatchTaskRequest;
+import com.teachhelper.dto.request.ManualEvaluationRequest;
+import com.teachhelper.dto.response.BatchEvaluationResult;
+import com.teachhelper.dto.response.EvaluationStatistics;
+import com.teachhelper.dto.response.StudentAnswerResponse;
+import com.teachhelper.entity.StudentAnswer;
+import com.teachhelper.service.evaluation.BatchEvaluationCacheService;
+import com.teachhelper.service.evaluation.EvaluationService;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+
+@RestController
+@RequestMapping("/api/evaluations")
+@Tag(name = "答案评估", description = "AI评估和手动评估学生答案")
+@PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+public class EvaluationController {
+    
+    @Autowired
+    private EvaluationService evaluationService;
+    
+    @Autowired
+    private BatchEvaluationCacheService cacheService;
+    
+    @PostMapping("/answer/{answerId}")
+    @Operation(summary = "评估单个答案", description = "使用AI评估单个学生答案")
+    public ResponseEntity<StudentAnswerResponse> evaluateAnswer(@PathVariable Long answerId) {
+        StudentAnswer evaluatedAnswer = evaluationService.evaluateAnswer(answerId);
+        StudentAnswerResponse response = convertToResponse(evaluatedAnswer);
+        return ResponseEntity.ok(response);
+    }
+    
+    @PostMapping("/manual/{answerId}")
+    @Operation(summary = "手动评估答案", description = "手动评估学生答案")
+    public ResponseEntity<StudentAnswerResponse> manuallyEvaluateAnswer(
+            @PathVariable Long answerId,
+            @Valid @RequestBody ManualEvaluationRequest request) {
+        
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        String evaluatorUsername = authentication.getName();
+        
+        StudentAnswer evaluatedAnswer = evaluationService.manuallyEvaluateAnswer(
+            answerId, 
+            request.getScore(), 
+            request.getFeedback(), 
+            evaluatorUsername
+        );
+        
+        StudentAnswerResponse response = convertToResponse(evaluatedAnswer);
+        return ResponseEntity.ok(response);
+    }
+    
+    @PostMapping("/batch")
+    @Operation(summary = "批量评估答案", description = "批量评估多个学生答案")
+    public ResponseEntity<String> evaluateAnswersInBatch(
+            @RequestBody List<Long> answerIds) {
+        
+        try {
+            // Validate input
+            if (answerIds == null || answerIds.isEmpty()) {
+                return ResponseEntity.badRequest().body("Answer IDs list cannot be null or empty");
+            }
+            
+            String taskId = evaluationService.startBatchEvaluation(answerIds);
+            return ResponseEntity.accepted().body("Batch evaluation started with task ID: " + taskId + 
+                    ". Use /progress/" + taskId + " to track progress and /result/" + taskId + " to get results.");
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body("Invalid request: " + e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Failed to start batch evaluation: " + e.getMessage());
+        }
+    }
+    
+    @PostMapping("/batch/question/{questionId}")
+    @Operation(summary = "评估题目的所有答案", description = "评估指定题目的所有未评估答案")
+    public ResponseEntity<String> evaluateAnswersByQuestion(
+            @PathVariable Long questionId) {
+        
+        try {
+            String taskId = evaluationService.startBatchEvaluationForQuestion(questionId);
+            return ResponseEntity.accepted().body("Batch evaluation started for question " + questionId + 
+                    " with task ID: " + taskId + ". Use /progress/" + taskId + " to track progress and /result/" + taskId + " to get results.");
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body("Invalid request: " + e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Failed to start batch evaluation for question " + questionId + ": " + e.getMessage());
+        }
+    }
+    
+    @PostMapping("/batch/exam/{examId}")
+    @Operation(summary = "评估考试的所有答案", description = "评估指定考试的所有未评估答案")
+    public ResponseEntity<String> evaluateAnswersByExam(
+            @PathVariable Long examId) {
+        
+        try {
+            String taskId = evaluationService.startBatchEvaluationForExam(examId);
+            return ResponseEntity.accepted().body("Batch evaluation started for exam " + examId + 
+                    " with task ID: " + taskId + ". Use /progress/" + taskId + " to track progress and /result/" + taskId + " to get results.");
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body("Invalid request: " + e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Failed to start batch evaluation for exam " + examId + ": " + e.getMessage());
+        }
+    }
+    
+    @GetMapping("/statistics/question/{questionId}")
+    @Operation(summary = "获取题目评估统计", description = "获取指定题目的评估统计信息")
+    public ResponseEntity<EvaluationStatistics> getEvaluationStatistics(@PathVariable Long questionId) {
+        EvaluationStatistics statistics = evaluationService.getEvaluationStatistics(questionId);
+        return ResponseEntity.ok(statistics);
+    }
+    
+    @GetMapping("/progress/question/{questionId}")
+    @Operation(summary = "获取题目评估进度", description = "获取指定题目的评估进度")
+    public ResponseEntity<Double> getEvaluationProgress(@PathVariable Long questionId) {
+        EvaluationStatistics statistics = evaluationService.getEvaluationStatistics(questionId);
+        return ResponseEntity.ok(statistics.getEvaluationProgress());
+    }
+    
+    @GetMapping("/progress/{taskId}")
+    @Operation(summary = "获取批量评估进度", description = "获取批量评估任务的进度信息")
+    public ResponseEntity<BatchEvaluationResult> getBatchEvaluationProgress(@PathVariable String taskId) {
+        BatchEvaluationResult result = cacheService.getResult(taskId);
+        if (result == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(result);
+    }
+    
+    @GetMapping("/result/{taskId}")
+    @Operation(summary = "获取批量评估结果", description = "获取批量评估的结果状态")
+    public ResponseEntity<BatchEvaluationResult> getBatchEvaluationResult(@PathVariable String taskId) {
+        BatchEvaluationResult result = cacheService.getResult(taskId);
+        if (result == null) {
+                    return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(result);
+    }
+    
+    @PostMapping("/revaluate/{answerId}")
+    @Operation(summary = "重新评估答案", description = "重新评估已评估的答案")
+    public ResponseEntity<StudentAnswerResponse> revaluateAnswer(@PathVariable Long answerId) {
+        // 直接调用评估方法，会覆盖之前的评估结果
+        StudentAnswer evaluatedAnswer = evaluationService.evaluateAnswer(answerId);
+        StudentAnswerResponse response = convertToResponse(evaluatedAnswer);
+        return ResponseEntity.ok(response);
+    }
+    
+    @GetMapping("/tasks/list")
+    @Operation(summary = "获取评估任务列表", description = "获取批量评估任务列表（支持分页和筛选）")
+    public ResponseEntity<List<BatchEvaluationResult>> getTasks() {
+        try {
+            List<BatchEvaluationResult> tasks = cacheService.getRecentTasks();
+            return ResponseEntity.ok(tasks);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+    
+    @GetMapping("/tasks/stats")
+    @Operation(summary = "获取任务统计信息", description = "获取各种状态的任务统计数据")
+    public ResponseEntity<Object> getTaskStats() {
+        try {
+            List<BatchEvaluationResult> allTasks = cacheService.getRecentTasks();
+            
+            // 统计各种状态的任务数量
+            long pending = allTasks.stream().filter(t -> "PENDING".equals(t.getStatus())).count();
+            long running = allTasks.stream().filter(t -> "IN_PROGRESS".equals(t.getStatus())).count();
+            long completed = allTasks.stream().filter(t -> "COMPLETED".equals(t.getStatus()) || "COMPLETED_WITH_ERRORS".equals(t.getStatus())).count();
+            long failed = allTasks.stream().filter(t -> "FAILED".equals(t.getStatus()) || "CANCELLED".equals(t.getStatus())).count();
+            
+            // 创建统计结果
+            java.util.Map<String, Object> stats = new java.util.HashMap<>();
+            stats.put("pending", pending);
+            stats.put("running", running);
+            stats.put("completed", completed);
+            stats.put("failed", failed);
+            stats.put("total", allTasks.size());
+            
+            return ResponseEntity.ok(stats);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @GetMapping("/tasks/recent")
+    @Operation(summary = "获取最近的评估任务", description = "获取最近的批量评估任务列表")
+    public ResponseEntity<List<BatchEvaluationResult>> getRecentTasks() {
+        try {
+            List<BatchEvaluationResult> recentTasks = cacheService.getRecentTasks();
+            return ResponseEntity.ok(recentTasks);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+    
+    @PostMapping("/tasks")
+    @Operation(summary = "创建批量评估任务", description = "创建新的批量评估任务")
+    public ResponseEntity<String> createBatchTask(@RequestBody CreateBatchTaskRequest request) {
+        try {
+            String taskId;
+            if (request.getExamId() != null) {
+                taskId = evaluationService.startBatchEvaluationForExam(request.getExamId());
+            } else if (request.getQuestionId() != null) {
+                taskId = evaluationService.startBatchEvaluationForQuestion(request.getQuestionId());
+            } else {
+                return ResponseEntity.badRequest().body("Either examId or questionId must be provided");
+            }
+            return ResponseEntity.accepted().body("Batch evaluation task created with ID: " + taskId);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Failed to create batch task: " + e.getMessage());
+        }
+    }
+    
+    @PostMapping("/tasks/{taskId}/cancel")
+    @Operation(summary = "取消评估任务", description = "取消指定的批量评估任务")
+    public ResponseEntity<String> cancelTask(@PathVariable String taskId) {
+        try {
+            // 对于简单实现，我们可以将任务状态设为已取消
+            BatchEvaluationResult result = cacheService.getResult(taskId);
+            if (result == null) {
+                return ResponseEntity.notFound().build();
+            }
+            
+            // 如果任务还在进行中，设置为已取消状态
+            if ("IN_PROGRESS".equals(result.getStatus()) || "PENDING".equals(result.getStatus())) {
+                result.setStatus("CANCELLED");
+                cacheService.saveResult(taskId, result);
+                return ResponseEntity.ok("Task cancelled successfully");
+            } else {
+                return ResponseEntity.badRequest().body("Task cannot be cancelled in current status: " + result.getStatus());
+            }
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Failed to cancel task: " + e.getMessage());
+        }
+    }
+    
+    private StudentAnswerResponse convertToResponse(StudentAnswer answer) {
+        StudentAnswerResponse response = new StudentAnswerResponse();
+        response.setId(answer.getId());
+        response.setAnswerText(answer.getAnswerText());
+        response.setScore(answer.getScore() != null ? answer.getScore().doubleValue() : null);
+        response.setFeedback(answer.getFeedback());
+        response.setEvaluated(answer.isEvaluated());
+        response.setEvaluatedAt(answer.getEvaluatedAt());
+        response.setSubmittedAt(answer.getCreatedAt());
+        
+        if (answer.getStudent() != null) {
+            StudentAnswerResponse.StudentInfo studentInfo = new StudentAnswerResponse.StudentInfo(
+                answer.getStudent().getId(),
+                answer.getStudent().getStudentId(),
+                answer.getStudent().getName(),
+                answer.getStudent().getEmail()
+            );
+            response.setStudent(studentInfo);
+        }
+        
+        if (answer.getQuestion() != null) {
+            response.setQuestionId(answer.getQuestion().getId());
+            response.setQuestionTitle(answer.getQuestion().getTitle());
+            response.setQuestionContent(answer.getQuestion().getContent());
+        }
+        
+        return response;
+    }
+}

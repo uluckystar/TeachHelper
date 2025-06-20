@@ -1,0 +1,86 @@
+# TeachHelper 智能教学助手系统配置文件
+# 共同基础配置：应用信息、JWT、文件上传、监控等
+# 具体环境配置通过 profile 分离
+
+spring:
+  application:
+    name: exam-evaluation-system  # 应用名称：考试评估系统
+  
+  profiles:
+    active: dev  # 激活的配置环境：开发环境
+  
+  # Web MVC 配置
+  mvc:
+    static-path-pattern: /static/**  # 静态资源路径模式
+  
+  web:
+    resources:
+      static-locations: classpath:/static/  # 静态资源位置
+      add-mappings: true  # 启用静态资源映射
+  
+  # 文件上传配置
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+  # Spring AI 自动配置管理
+  autoconfigure:
+    exclude:
+      # 禁用冲突的自动配置
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiEmbeddingAutoConfiguration
+      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
+
+# 应用程序通用配置
+app:
+  # JWT（JSON Web Token）认证配置
+  jwt:
+    # JWT签名密钥，支持环境变量覆盖，用于生成和验证token
+    secret: ${JWT_SECRET:mySecretKeyForJWTTokenSigningThatIs512BitsLongAndSecureForHS512AlgorithmSecretKey12345}
+    expiration: 86400000 # JWT过期时间：24小时（毫秒）
+  
+  # AI服务通用配置
+  ai:
+    concurrent-requests: ${AI_CONCURRENT_REQUESTS:5}  # AI并发请求数限制
+    rate-limit:
+      requests-per-minute: ${AI_RATE_LIMIT:60}  # 速率限制
+    enable-knowledge-extraction: ${AI_ENABLE_KNOWLEDGE:true}
+    enable-vectorization: ${AI_ENABLE_VECTOR:true}
+    
+  # 文件上传配置
+  upload:
+    dir: ${UPLOAD_DIR:/Users/jiangjiaxing/project/vvv/TeachHelper/uploads}  # 文件上传目录
+    max-file-size: 52428800 # 50MB
+    allowed-types: .pdf,.doc,.docx,.txt,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.bmp
+  
+  # 向量数据库通用配置
+  vector:
+    dimensions: 768 # embedding向量维度，nomic-embed-text: 768维
+    similarity-threshold: 0.7
+    max-results: 10
+    # 文档分块配置
+    chunk-size: ${VECTOR_CHUNK_SIZE:2000} # 文档分块大小（字符数）
+    chunk-overlap: ${VECTOR_CHUNK_OVERLAP:200} # 分块重叠大小
+    min-chunk-size: ${VECTOR_MIN_CHUNK_SIZE:100} # 最小分块大小
+    # Embedding模型配置
+    embedding-model: ${EMBEDDING_MODEL:nomic-embed-text:latest} # 使用nomic-embed-text模型
+    embedding-provider: ${EMBEDDING_PROVIDER:ollama} # ollama, openai, huggingface等
+
+# Spring Boot Actuator 监控配置
+management:
+  endpoints:
+    web:
+      exposure:
+        # 暴露的监控端点：健康检查、应用信息、性能指标、Prometheus监控
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always  # 健康检查显示详细信息：总是显示详细状态
+
+# API文档配置 - SpringDoc OpenAPI
+springdoc:
+  api-docs:
+    path: /api-docs  # API文档JSON路径
+  swagger-ui:
+    path: /swagger-ui.html  # Swagger UI界面访问路径
+    enabled: ${SWAGGER_ENABLED:true}  # 启用Swagger UI

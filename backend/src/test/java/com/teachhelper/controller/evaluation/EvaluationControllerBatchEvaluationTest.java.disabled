@@ -1,0 +1,103 @@
+package com.teachhelper.controller.evaluation;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.teachhelper.config.TestSecurityConfig;
+import com.teachhelper.security.JwtTokenProvider;
+import com.teachhelper.service.evaluation.EvaluationService;
+import com.teachhelper.service.evaluation.BatchEvaluationCacheService;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@WebMvcTest(EvaluationController.class)
+@Import(TestSecurityConfig.class)
+public class EvaluationControllerBatchEvaluationTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @MockBean
+    private EvaluationService evaluationService;
+
+    @MockBean
+    private BatchEvaluationCacheService cacheService;
+
+    @MockBean
+    private JwtTokenProvider jwtTokenProvider;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Test
+    @WithMockUser(roles = "TEACHER")
+    public void testBatchEvaluateAnswers_Success() throws Exception {
+        // Arrange
+        List<Long> answerIds = Arrays.asList(1L, 2L, 3L);
+        String expectedTaskId = "task-123";
+        
+        when(evaluationService.startBatchEvaluation(answerIds)).thenReturn(expectedTaskId);
+
+        // Act & Assert
+        mockMvc.perform(post("/api/evaluations/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(answerIds)))
+                .andExpect(status().isAccepted())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Batch evaluation started with task ID: " + expectedTaskId)));
+    }
+
+    @Test
+    @WithMockUser(roles = "TEACHER")
+    public void testBatchEvaluateAnswers_EmptyAnswerIds() throws Exception {
+        // Arrange
+        List<Long> emptyAnswerIds = Collections.emptyList();
+
+        // Act & Assert
+        mockMvc.perform(post("/api/evaluations/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(emptyAnswerIds)))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("Answer IDs list cannot be null or empty"));
+    }
+
+    @Test
+    @WithMockUser(roles = "TEACHER")
+    public void testBatchEvaluateAnswers_NullAnswerIds() throws Exception {
+        // Act & Assert - Spring返回500当请求体解析失败时
+        mockMvc.perform(post("/api/evaluations/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("null"))
+                .andExpect(status().isInternalServerError());
+    }
+
+    @Test
+    @WithMockUser(roles = "TEACHER")
+    public void testBatchEvaluateAnswers_ServiceException() throws Exception {
+        // Arrange
+        List<Long> answerIds = Arrays.asList(1L, 2L, 3L);
+        
+        when(evaluationService.startBatchEvaluation(answerIds))
+                .thenThrow(new RuntimeException("Service error"));
+
+        // Act & Assert
+        mockMvc.perform(post("/api/evaluations/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(answerIds)))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().string("Failed to start batch evaluation: Service error"));
+    }
+}

@@ -1,0 +1,337 @@
+package com.teachhelper.service.evaluation;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.teachhelper.ai.AIEvaluationService;
+import com.teachhelper.dto.response.BatchEvaluationResult;
+import com.teachhelper.dto.response.EvaluationStatistics;
+import com.teachhelper.entity.Question;
+import com.teachhelper.entity.RubricCriterion;
+import com.teachhelper.entity.StudentAnswer;
+import com.teachhelper.exception.EvaluationException;
+import com.teachhelper.service.question.QuestionService;
+import com.teachhelper.service.student.StudentAnswerService;
+
+@Service
+public class EvaluationService {
+    
+    private static final Logger logger = LoggerFactory.getLogger(EvaluationService.class);    
+    @Autowired
+    private AIEvaluationService aiEvaluationService;
+    
+    @Autowired
+    private StudentAnswerService studentAnswerService;
+    
+    @Autowired
+    private QuestionService questionService;
+    
+    @Autowired
+    private BatchEvaluationCacheService cacheService;
+    
+    // Semaphore to control concurrent AI evaluations
+    private final Semaphore evaluationSemaphore = new Semaphore(5); // Default 5 concurrent evaluations
+    
+    @Transactional
+    public StudentAnswer evaluateAnswer(Long answerId) throws EvaluationException {
+        StudentAnswer answer = studentAnswerService.getAnswerById(answerId);
+        return evaluateSingleAnswer(answer);
+    }
+    
+    @Transactional
+    public StudentAnswer evaluateSingleAnswer(StudentAnswer answer) throws EvaluationException {
+        try {
+            Question question = answer.getQuestion();
+            List<RubricCriterion> rubricCriteria = questionService.getRubricCriteriaByQuestionId(question.getId());
+            
+            logger.info("Evaluating answer {} for question {}", answer.getId(), question.getId());
+            
+            // Use AI service to evaluate the answer
+            var evaluationResult = aiEvaluationService.evaluateAnswer(
+                answer.getAnswerText(),
+                question.getContent(),
+                rubricCriteria,
+                question.getMaxScore()
+            );
+            
+            // Update answer with evaluation results
+            answer.setScore(evaluationResult.getScore());
+            answer.setFeedback(evaluationResult.getFeedback());
+            answer.setEvaluated(true);
+            answer.setEvaluatedAt(LocalDateTime.now());
+            answer.setEvaluator(null); // Indicates AI evaluation
+            
+            StudentAnswer savedAnswer = studentAnswerService.updateAnswer(answer.getId(), answer);
+            
+            logger.info("Successfully evaluated answer {} with score {}", answer.getId(), evaluationResult.getScore());
+            return savedAnswer;
+            
+        } catch (EvaluationException e) {
+            logger.error("Error evaluating answer {}: {}", answer.getId(), e.getMessage(), e);
+            throw e;
+        } catch (Exception e) {
+            logger.error("Unexpected error evaluating answer {}: {}", answer.getId(), e.getMessage(), e);
+            throw new EvaluationException("Failed to evaluate answer: " + e.getMessage(), e);
+        }
+    }
+    
+    @Async
+    public CompletableFuture<BatchEvaluationResult> evaluateAnswersAsync(List<Long> answerIds) {
+        String taskId = UUID.randomUUID().toString();
+        return CompletableFuture.supplyAsync(() -> {
+            BatchEvaluationResult result = new BatchEvaluationResult();
+            result.setTaskId(taskId);
+            result.setTotalAnswers(answerIds.size());
+            result.setStartTime(LocalDateTime.now());
+            result.setStatus("IN_PROGRESS");
+            
+            AtomicInteger successCount = new AtomicInteger(0);
+            AtomicInteger failureCount = new AtomicInteger(0);
+            AtomicInteger processedCount = new AtomicInteger(0);
+            
+            logger.info("Starting batch evaluation with task ID: {}", taskId);
+            
+            // Process answers sequentially to better track progress
+            for (Long answerId : answerIds) {
+                try {
+                    evaluationSemaphore.acquire();
+                    try {
+                        // Update progress before processing each answer
+                        cacheService.updateProgress(taskId, answerIds.size(), processedCount.get(), "IN_PROGRESS");
+                        
+                        evaluateAnswer(answerId);
+                        successCount.incrementAndGet();
+                        logger.debug("Successfully evaluated answer {}", answerId);
+                    } finally {
+                        evaluationSemaphore.release();
+                        processedCount.incrementAndGet();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    logger.error("Evaluation interrupted for answer {}: {}", answerId, e.getMessage());
+                    result.addError("Evaluation interrupted for answer " + answerId + ": " + e.getMessage());
+                    failureCount.incrementAndGet();
+                    processedCount.incrementAndGet();
+                } catch (EvaluationException e) {
+                    logger.error("Evaluation failed for answer {}: {}", answerId, e.getMessage());
+                    result.addError("Evaluation failed for answer " + answerId + ": " + e.getMessage());
+                    failureCount.incrementAndGet();
+                    processedCount.incrementAndGet();
+                } catch (Exception e) {
+                    logger.error("Unexpected error evaluating answer {}: {}", answerId, e.getMessage());
+                    result.addError("Unexpected error for answer " + answerId + ": " + e.getMessage());
+                    failureCount.incrementAndGet();
+                    processedCount.incrementAndGet();
+                }
+            }
+            
+            result.setSuccessfulEvaluations(successCount.get());
+            result.setFailedEvaluations(failureCount.get());
+            result.setEndTime(LocalDateTime.now());
+            result.setStatus(failureCount.get() == 0 ? "COMPLETED" : "COMPLETED_WITH_ERRORS");
+            
+            // Cache the final result
+            cacheService.saveResult(taskId, result);
+            
+            logger.info("Batch evaluation completed: {} successful, {} failed out of {} total, task ID: {}", 
+                successCount.get(), failureCount.get(), answerIds.size(), taskId);
+            
+            return result;
+        });
+    }
+    
+    // Batch evaluation by exam
+    @Async
+    public CompletableFuture<BatchEvaluationResult> evaluateExamAnswersAsync(Long examId) {
+        List<StudentAnswer> answers = studentAnswerService.getUnevaluatedAnswersByExamId(examId);
+        List<Long> unevaluatedAnswerIds = answers.stream()
+            .map(StudentAnswer::getId)
+            .toList();
+        
+        logger.info("Starting batch evaluation for {} unevaluated answers in exam {}", unevaluatedAnswerIds.size(), examId);
+        return evaluateAnswersAsync(unevaluatedAnswerIds);
+    }
+    
+    // New methods that return taskId immediately
+    public String startBatchEvaluation(List<Long> answerIds) {
+        // Validate input
+        if (answerIds == null || answerIds.isEmpty()) {
+            throw new IllegalArgumentException("Answer IDs list cannot be null or empty");
+        }
+        
+        String taskId = UUID.randomUUID().toString();
+        evaluateAnswersAsyncWithTaskId(answerIds, taskId);
+        return taskId;
+    }
+    
+    public String startBatchEvaluationForQuestion(Long questionId) {
+        // Validate question exists
+        if (questionId == null) {
+            throw new IllegalArgumentException("Question ID cannot be null");
+        }
+        if (!questionService.existsById(questionId)) {
+            throw new IllegalArgumentException("Question with ID " + questionId + " does not exist");
+        }
+        
+        List<Long> answerIds = studentAnswerService.getUnevaluatedAnswerIdsByQuestionId(questionId);
+        logger.info("Starting batch evaluation for {} unevaluated answers in question {}", answerIds.size(), questionId);
+        
+        if (answerIds.isEmpty()) {
+            logger.warn("No unevaluated answers found for question {}", questionId);
+            throw new IllegalArgumentException("No unevaluated answers found for question " + questionId);
+        }
+        
+        return startBatchEvaluation(answerIds);
+    }
+    
+    public String startBatchEvaluationForExam(Long examId) {
+        // Validate exam exists (through checking if we can get answers)
+        if (examId == null) {
+            throw new IllegalArgumentException("Exam ID cannot be null");
+        }
+        
+        List<StudentAnswer> answers = studentAnswerService.getUnevaluatedAnswersByExamId(examId);
+        List<Long> unevaluatedAnswerIds = answers.stream()
+            .map(StudentAnswer::getId)
+            .toList();
+        
+        logger.info("Starting batch evaluation for {} unevaluated answers in exam {}", unevaluatedAnswerIds.size(), examId);
+        
+        if (unevaluatedAnswerIds.isEmpty()) {
+            logger.warn("No unevaluated answers found for exam {}", examId);
+            throw new IllegalArgumentException("No unevaluated answers found for exam " + examId);
+        }
+        
+        logger.info("Starting batch evaluation for {} unevaluated answers in exam {}", unevaluatedAnswerIds.size(), examId);
+        return startBatchEvaluation(unevaluatedAnswerIds);
+    }
+    
+    @Async
+    private void evaluateAnswersAsyncWithTaskId(List<Long> answerIds, String taskId) {
+        BatchEvaluationResult result = new BatchEvaluationResult();
+        result.setTaskId(taskId);
+        result.setTotalAnswers(answerIds.size());
+        result.setStartTime(LocalDateTime.now());
+        result.setStatus("IN_PROGRESS");
+        
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger failureCount = new AtomicInteger(0);
+        AtomicInteger processedCount = new AtomicInteger(0);
+        
+        logger.info("Starting batch evaluation with task ID: {}", taskId);
+        
+        // Process answers sequentially to better track progress
+        for (Long answerId : answerIds) {
+            try {
+                evaluationSemaphore.acquire();
+                try {
+                    // Update progress before processing each answer
+                    cacheService.updateProgress(taskId, answerIds.size(), processedCount.get(), "IN_PROGRESS");
+                    
+                    evaluateAnswer(answerId);
+                    successCount.incrementAndGet();
+                    logger.debug("Successfully evaluated answer {}", answerId);
+                } finally {
+                    evaluationSemaphore.release();
+                    processedCount.incrementAndGet();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.error("Evaluation interrupted for answer {}: {}", answerId, e.getMessage());
+                result.addError("Evaluation interrupted for answer " + answerId + ": " + e.getMessage());
+                failureCount.incrementAndGet();
+                processedCount.incrementAndGet();
+            } catch (EvaluationException e) {
+                logger.error("Evaluation failed for answer {}: {}", answerId, e.getMessage());
+                result.addError("Evaluation failed for answer " + answerId + ": " + e.getMessage());
+                failureCount.incrementAndGet();
+                processedCount.incrementAndGet();
+            } catch (Exception e) {
+                logger.error("Unexpected error evaluating answer {}: {}", answerId, e.getMessage());
+                result.addError("Unexpected error for answer " + answerId + ": " + e.getMessage());
+                failureCount.incrementAndGet();
+                processedCount.incrementAndGet();
+            }
+        }
+        
+        result.setSuccessfulEvaluations(successCount.get());
+        result.setFailedEvaluations(failureCount.get());
+        result.setEndTime(LocalDateTime.now());
+        result.setStatus(failureCount.get() == 0 ? "COMPLETED" : "COMPLETED_WITH_ERRORS");
+        
+        // Cache the final result
+        cacheService.saveResult(taskId, result);
+        
+        logger.info("Batch evaluation completed: {} successful, {} failed out of {} total, task ID: {}", 
+            successCount.get(), failureCount.get(), answerIds.size(), taskId);
+    }
+    
+    // Batch evaluation by question
+    @Async
+    public CompletableFuture<BatchEvaluationResult> evaluateQuestionAnswersAsync(Long questionId) {
+        List<Long> answerIds = studentAnswerService.getUnevaluatedAnswerIdsByQuestionId(questionId);
+        logger.info("Starting batch evaluation for {} unevaluated answers in question {}", answerIds.size(), questionId);
+        return evaluateAnswersAsync(answerIds);
+    }
+    
+    // Manual evaluation methods
+    @Transactional
+    public StudentAnswer manuallyEvaluateAnswer(Long answerId, Double score, String feedback, String evaluatorUsername) {
+        StudentAnswer answer = studentAnswerService.getAnswerById(answerId);
+        
+        answer.setScore(BigDecimal.valueOf(score));
+        answer.setFeedback(feedback);
+        answer.setEvaluated(true);
+        answer.setEvaluatedAt(LocalDateTime.now());
+        // Note: In a real implementation, you'd set the actual evaluator user
+        // answer.setEvaluator(userService.findByUsername(evaluatorUsername));
+        
+        return studentAnswerService.updateAnswer(answer.getId(), answer);
+    }
+    
+    // Statistics and reporting methods
+    @Transactional(readOnly = true)
+    public EvaluationStatistics getEvaluationStatistics(Long questionId) {
+        long totalAnswers = studentAnswerService.getAnswerCountByQuestionId(questionId);
+        long evaluatedAnswers = studentAnswerService.getEvaluatedAnswerCountByQuestionId(questionId);
+        double averageScore = studentAnswerService.getAverageScoreByQuestionId(questionId);
+        
+        EvaluationStatistics stats = new EvaluationStatistics();
+        stats.setQuestionId(questionId);
+        stats.setTotalAnswers(totalAnswers);
+        stats.setEvaluatedAnswers(evaluatedAnswers);
+        stats.setUnevaluatedAnswers(totalAnswers - evaluatedAnswers);
+        stats.setAverageScore(averageScore);
+        stats.setEvaluationProgress((double) evaluatedAnswers / totalAnswers * 100);
+        
+        return stats;
+    }
+    
+    @Transactional(readOnly = true)
+    public EvaluationStatistics getExamEvaluationStatistics(Long examId) {
+        long totalAnswers = studentAnswerService.getAnswerCountByExamId(examId);
+        long evaluatedAnswers = studentAnswerService.getEvaluatedAnswerCountByExamId(examId);
+        double averageScore = studentAnswerService.getAverageScoreByExamId(examId);
+        
+        EvaluationStatistics stats = new EvaluationStatistics();
+        stats.setTotalAnswers(totalAnswers);
+        stats.setEvaluatedAnswers(evaluatedAnswers);
+        stats.setUnevaluatedAnswers(totalAnswers - evaluatedAnswers);
+        stats.setAverageScore(averageScore);
+        stats.setEvaluationProgress((double) evaluatedAnswers / totalAnswers * 100);
+        
+        return stats;
+    }
+}
