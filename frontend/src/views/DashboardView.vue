@@ -123,47 +123,166 @@
 
       <!-- 学生视图 -->
       <div v-else class="student-dashboard">
-        <el-card header="可参加的考试">
-          <div v-if="availableExams.length === 0" class="empty-state">
-            <el-empty description="暂无可参加的考试" />
-          </div>
-          <div v-else>
-            <div
-              v-for="exam in availableExams"
-              :key="exam.id"
-              class="exam-item"
-            >
-              <div class="exam-info">
-                <h4>{{ exam.title }}</h4>
-                <p class="exam-desc">{{ exam.description }}</p>
-                <div class="exam-meta">
-                  <span class="exam-time">
-                    创建时间：{{ formatDate(exam.createdAt) }}
-                  </span>
-                  <span class="exam-duration">
-                    <!-- 考试时长字段暂时隐藏，等后端实现后显示 -->
-                    <!-- 考试时长：{{ exam.duration }} 分钟 -->
-                  </span>
+        <!-- 学生统计卡片 -->
+        <div class="stats-section mb-4">
+          <el-row :gutter="20">
+            <el-col :span="8">
+              <el-card class="stat-card">
+                <el-statistic
+                  title="可参加的考试"
+                  :value="availableExams.length"
+                  class="stat-content"
+                >
+                  <template #suffix>
+                    <el-icon class="stat-icon available">
+                      <Document />
+                    </el-icon>
+                  </template>
+                </el-statistic>
+              </el-card>
+            </el-col>
+            <el-col :span="8">
+              <el-card class="stat-card">
+                <el-statistic
+                  title="我的所有考试"
+                  :value="allMyExams.length"
+                  class="stat-content"
+                >
+                  <template #suffix>
+                    <el-icon class="stat-icon total">
+                      <Folder />
+                    </el-icon>
+                  </template>
+                </el-statistic>
+              </el-card>
+            </el-col>
+            <el-col :span="8">
+              <el-card class="stat-card">
+                <el-statistic
+                  title="已完成考试"
+                  :value="completedExamsCount"
+                  class="stat-content"
+                >
+                  <template #suffix>
+                    <el-icon class="stat-icon completed">
+                      <Check />
+                    </el-icon>
+                  </template>
+                </el-statistic>
+              </el-card>
+            </el-col>
+          </el-row>
+        </div>
+
+        <!-- 考试区域 -->
+        <el-row :gutter="20">
+          <!-- 可参加的考试 -->
+          <el-col :span="12">
+            <el-card>
+              <template #header>
+                <div class="card-header">
+                  <span>📝 可参加的考试</span>
+                  <el-button 
+                    type="primary" 
+                    size="small" 
+                    @click="$router.push('/exams')"
+                  >
+                    查看全部
+                  </el-button>
+                </div>
+              </template>
+              <div v-if="availableExams.length === 0" class="empty-state">
+                <el-empty 
+                  description="暂无可参加的考试" 
+                  :image-size="80"
+                />
+              </div>
+              <div v-else class="exam-list">
+                <div
+                  v-for="exam in availableExams.slice(0, 3)"
+                  :key="exam.id"
+                  class="exam-item available-exam"
+                >
+                  <div class="exam-info">
+                    <h4>{{ exam.title }}</h4>
+                    <p class="exam-desc">{{ truncateText(exam.description, 60) }}</p>
+                    <div class="exam-meta">
+                      <el-tag type="success" size="small">可参加</el-tag>
+                      <span class="exam-time">
+                        {{ formatDate(exam.createdAt) }}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="exam-actions">
+                    <el-button
+                      type="primary"
+                      size="small"
+                      @click="takeExam(exam.id)"
+                    >
+                      开始考试
+                    </el-button>
+                  </div>
                 </div>
               </div>
-              <div class="exam-actions">
-                <el-button
-                  v-if="canTakeExam(exam)"
-                  type="primary"
-                  @click="takeExam(exam.id)"
-                >
-                  开始考试
-                </el-button>
-                <el-button
-                  v-else
-                  disabled
-                >
-                  {{ getExamButtonText(exam) }}
-                </el-button>
+            </el-card>
+          </el-col>
+
+          <!-- 我的所有考试 -->
+          <el-col :span="12">
+            <el-card>
+              <template #header>
+                <div class="card-header">
+                  <span>📚 我的所有考试</span>
+                  <el-button 
+                    type="default" 
+                    size="small" 
+                    @click="$router.push('/my-exams')"
+                  >
+                    查看全部
+                  </el-button>
+                </div>
+              </template>
+              <div v-if="allMyExams.length === 0" class="empty-state">
+                <el-empty 
+                  description="暂无考试记录" 
+                  :image-size="80"
+                />
               </div>
-            </div>
-          </div>
-        </el-card>
+              <div v-else class="exam-list">
+                <div
+                  v-for="exam in allMyExams.slice(0, 3)"
+                  :key="exam.id"
+                  class="exam-item my-exam"
+                  :class="{ 'submitted': (exam as any).hasSubmitted }"
+                  @click="goToMyExam(exam)"
+                >
+                  <div class="exam-info">
+                    <h4>{{ exam.title }}</h4>
+                    <p class="exam-desc">{{ truncateText(exam.description, 60) }}</p>
+                    <div class="exam-meta">
+                      <el-tag :type="getExamStatusTagType(exam)" size="small">
+                        {{ getExamStatusText(exam) }}
+                      </el-tag>
+                      <span class="exam-time">
+                        {{ formatDate(exam.createdAt) }}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="exam-actions">
+                    <el-button
+                      :type="getExamActionButtonType(exam)"
+                      size="small"
+                      :disabled="(exam as any).hasSubmitted"
+                      @click.stop="handleExamAction(exam)"
+                    >
+                      {{ getExamActionText(exam) }}
+                    </el-button>
+                  </div>
+                </div>
+              </div>
+            </el-card>
+          </el-col>
+        </el-row>
       </div>
     </div>
   </div>
@@ -173,7 +292,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Plus, Document } from '@element-plus/icons-vue'
+import { Plus, Document, Folder, Check } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { examApi } from '@/api/exam'
 import { devApi } from '@/api/dev'
@@ -196,6 +315,17 @@ const stats = ref({
 
 const recentExams = ref<Exam[]>([])
 const availableExams = ref<Exam[]>([])
+const allMyExams = ref<Exam[]>([])
+
+// 计算属性：已完成考试数量
+const completedExamsCount = computed(() => {
+  // 考虑已提交状态和考试状态
+  return allMyExams.value.filter((exam: any) => {
+    return (exam as any).hasSubmitted || 
+           exam.status === 'EVALUATED' || 
+           exam.status === 'ENDED'
+  }).length
+})
 
 onMounted(async () => {
   await loadDashboardData()
@@ -208,16 +338,69 @@ const loadDashboardData = async () => {
       const myExamsResponse = await examApi.getAllExams(0, 5)
       recentExams.value = myExamsResponse
       stats.value.myExamsCount = myExamsResponse.length
+      
+      // 加载总统计
+      const totalExamsResponse = await examApi.getAllExams(0, 1)
+      stats.value.totalExamsCount = totalExamsResponse.length
     } else {
-      // 加载学生数据 - 使用 getAllExams 替代 getExams
-      const examsResponse = await examApi.getAllExams(0, 10)
-      // 暂时显示所有考试，因为后端还没有status字段
-      availableExams.value = examsResponse
+      // 加载学生数据
+      console.log('Loading student dashboard data...')
+      
+      // 获取可参加的考试（仅已发布状态）
+      try {
+        const availableResponse = await examApi.getAvailableExams()
+        
+        // 为每个可参加的考试检查提交状态，过滤掉已提交的
+        const { studentAnswerApi } = await import('@/api/answer')
+        const availableWithSubmissionStatus = await Promise.all(
+          availableResponse.map(async (exam: any) => {
+            try {
+              const hasSubmitted = await studentAnswerApi.hasCurrentStudentSubmittedExam(exam.id)
+              return { ...exam, hasSubmitted }
+            } catch (error) {
+              console.error('检查考试提交状态失败:', error)
+              return { ...exam, hasSubmitted: false }
+            }
+          })
+        )
+        
+        // 只保留未提交的考试
+        availableExams.value = availableWithSubmissionStatus.filter((exam: any) => !exam.hasSubmitted)
+        console.log('Available exams loaded (filtered):', availableExams.value.length)
+      } catch (error) {
+        console.error('Failed to load available exams:', error)
+        availableExams.value = []
+      }
+      
+      // 获取所有相关考试（包括已结束、已评阅等）
+      try {
+        const allMyExamsResponse = await examApi.getStudentExams()
+        allMyExams.value = allMyExamsResponse
+        console.log('All my exams loaded:', allMyExamsResponse.length)
+        
+        // 为每个考试检查提交状态
+        const { studentAnswerApi } = await import('@/api/answer')
+        const submissionChecks = allMyExams.value.map(async (exam: any) => {
+          try {
+            ;(exam as any).hasSubmitted = await studentAnswerApi.hasCurrentStudentSubmittedExam(exam.id)
+            console.log(`Exam ${exam.id} submission status:`, (exam as any).hasSubmitted)
+          } catch (error) {
+            console.error('检查考试提交状态失败:', error)
+            ;(exam as any).hasSubmitted = false
+          }
+        })
+        await Promise.all(submissionChecks)
+        
+        // 更新统计
+        stats.value.totalExamsCount = allMyExamsResponse.length
+        stats.value.participatedExamsCount = allMyExamsResponse.filter((exam: any) => 
+          exam.status === 'EVALUATED' || exam.status === 'ENDED' || exam.hasSubmitted
+        ).length
+      } catch (error) {
+        console.error('Failed to load student exams:', error)
+        allMyExams.value = []
+      }
     }
-    
-    // 加载总统计 - 使用 getAllExams 替代 getExams
-    const totalExamsResponse = await examApi.getAllExams(0, 1)
-    stats.value.totalExamsCount = totalExamsResponse.length
   } catch (error) {
     console.error('Failed to load dashboard data:', error)
   }
@@ -270,15 +453,104 @@ const getExamStatusType = (status: string) => {
   }
 }
 
-const getExamStatusText = (status: string) => {
+const getExamStatusText = (exam: any) => {
+  // 首先检查是否已提交
+  if ((exam as any).hasSubmitted) {
+    return '已提交'
+  }
+  
+  const status = exam.status || 'DRAFT'
   switch (status) {
     case 'DRAFT': return '草稿'
-    case 'PUBLISHED': return '已发布'
+    case 'PUBLISHED': return '可参加'
     case 'IN_PROGRESS': return '进行中'
     case 'ENDED': return '待评估'
     case 'EVALUATED': return '评估完成'
     default: return status
   }
+}
+
+// 学生端专用方法
+const getExamStatusTagType = (exam: any) => {
+  // 首先检查是否已提交
+  if ((exam as any).hasSubmitted) {
+    return 'success'
+  }
+  
+  const status = exam.status || 'DRAFT'
+  switch (status) {
+    case 'PUBLISHED': return 'warning'
+    case 'IN_PROGRESS': return 'warning'
+    case 'ENDED': return 'info'
+    case 'EVALUATED': return 'success'
+    case 'DRAFT': return 'info'
+    default: return 'info'
+  }
+}
+
+const getExamActionButtonType = (exam: any) => {
+  // 首先检查是否已提交
+  if ((exam as any).hasSubmitted) {
+    return 'success'
+  }
+  
+  const status = exam.status || 'DRAFT'
+  switch (status) {
+    case 'PUBLISHED': return 'primary'
+    case 'EVALUATED': return 'success'
+    case 'ENDED': return 'info'
+    default: return 'default'
+  }
+}
+
+const getExamActionText = (exam: any) => {
+  // 首先检查是否已提交
+  if ((exam as any).hasSubmitted) {
+    return '已提交'
+  }
+  
+  const status = exam.status || 'DRAFT'
+  switch (status) {
+    case 'PUBLISHED': return '开始考试'
+    case 'EVALUATED': return '查看成绩'
+    case 'ENDED': return '查看答卷'
+    default: return '查看详情'
+  }
+}
+
+const handleExamAction = (exam: any) => {
+  // 首先检查是否已提交
+  if ((exam as any).hasSubmitted) {
+    // 已提交的考试，禁用操作或显示结果
+    ElMessage.info('该考试已提交，无法重复参加')
+    return
+  }
+  
+  const status = exam.status || 'DRAFT'
+  switch (status) {
+    case 'PUBLISHED':
+      takeExam(exam.id)
+      break
+    case 'EVALUATED':
+      router.push(`/my-exams/${exam.id}/result`)
+      break
+    case 'ENDED':
+      router.push(`/my-exams/${exam.id}/answers`)
+      break
+    default:
+      router.push(`/my-exams/${exam.id}`)
+  }
+}
+
+const goToMyExam = (exam: any) => {
+  // 根据考试状态跳转到相应页面
+  handleExamAction(exam)
+}
+
+const truncateText = (text: string, maxLength: number) => {
+  if (!text) return ''
+  if (text.length <= maxLength) return text
+  return text.substring(0, maxLength) + '...'
 }
 
 const formatDate = (dateString: string) => {
@@ -357,6 +629,75 @@ const takeExam = (examId: number) => {
   text-align: center;
 }
 
+/* 学生端统计卡片样式 */
+.stats-section {
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  border-radius: 12px;
+  transition: transform 0.3s, box-shadow 0.3s;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+}
+
+.stat-card :deep(.el-card__body) {
+  padding: 20px;
+}
+
+.stat-content {
+  color: white;
+}
+
+.stat-content :deep(.el-statistic__head) {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.stat-content :deep(.el-statistic__content) {
+  color: white;
+  font-size: 28px;
+  font-weight: bold;
+}
+
+.stat-icon {
+  margin-left: 8px;
+  opacity: 0.8;
+}
+
+.stat-icon.available {
+  color: #67c23a;
+}
+
+.stat-icon.total {
+  color: #409eff;
+}
+
+.stat-icon.completed {
+  color: #f56c6c;
+}
+
+/* 卡片头部样式 */
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 500;
+  color: #303133;
+}
+
+/* 考试列表样式 */
+.exam-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
 .exam-item {
   display: flex;
   justify-content: space-between;
@@ -365,7 +706,6 @@ const takeExam = (examId: number) => {
   border: 1px solid #ebeef5;
   border-radius: 8px;
   margin-bottom: 12px;
-  cursor: pointer;
   transition: all 0.3s;
 }
 
@@ -374,16 +714,70 @@ const takeExam = (examId: number) => {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
 }
 
+.exam-item.available-exam:hover {
+  border-color: #67c23a;
+  box-shadow: 0 2px 12px rgba(103, 194, 58, 0.2);
+}
+
+.exam-item.my-exam {
+  cursor: pointer;
+}
+
+.exam-item.my-exam:hover {
+  border-color: #409eff;
+  box-shadow: 0 2px 12px rgba(64, 158, 255, 0.2);
+}
+
+/* 已提交考试样式 */
+.exam-item.submitted {
+  background-color: #f0f9f0;
+  border-color: #b3e5b3;
+  position: relative;
+}
+
+.exam-item.submitted:hover {
+  border-color: #67c23a;
+  box-shadow: 0 2px 12px rgba(103, 194, 58, 0.15);
+}
+
+.exam-item.submitted .exam-info h4 {
+  color: #67c23a;
+}
+
+.exam-item.submitted::before {
+  content: '✓';
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 20px;
+  height: 20px;
+  background-color: #67c23a;
+  color: white;
+  border-radius: 50%;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+}
+
+.exam-info {
+  flex: 1;
+  min-width: 0;
+}
+
 .exam-info h4 {
   margin: 0 0 8px 0;
   color: #303133;
   font-size: 16px;
+  font-weight: 500;
 }
 
 .exam-desc {
   margin: 0 0 12px 0;
   color: #606266;
   font-size: 14px;
+  word-break: break-word;
 }
 
 .exam-meta {
@@ -399,6 +793,11 @@ const takeExam = (examId: number) => {
   align-items: center;
 }
 
+.exam-actions {
+  margin-left: 16px;
+  flex-shrink: 0;
+}
+
 .action-buttons {
   display: flex;
   flex-direction: column;
@@ -412,17 +811,12 @@ const takeExam = (examId: number) => {
 
 .empty-state {
   padding: 32px 0;
+  text-align: center;
 }
 
 /* 开发工具样式 */
 .dev-tools-section {
   margin-bottom: 24px;
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
 }
 
 .dev-tools-content {
@@ -443,5 +837,38 @@ const takeExam = (examId: number) => {
 
 .ml-2 {
   margin-left: 8px;
+}
+
+.mb-4 {
+  margin-bottom: 24px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .welcome-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  
+  .welcome-stats {
+    width: 100%;
+    justify-content: space-around;
+  }
+  
+  .exam-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  
+  .exam-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+  
+  .exam-actions .el-button {
+    width: 100%;
+  }
 }
 </style>

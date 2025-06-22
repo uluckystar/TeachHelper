@@ -4,8 +4,10 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -28,6 +30,7 @@ import com.teachhelper.entity.StudentAnswer;
 
 import com.teachhelper.entity.EvaluationType;
 import com.teachhelper.service.student.StudentAnswerService;
+import com.teachhelper.service.exam.ExamService;
 
 
 /**
@@ -44,6 +47,9 @@ public class BatchEvaluationExecutorService {
     
     @Autowired
     private StudentAnswerService studentAnswerService;
+    
+    @Autowired
+    private ExamService examService;
     
     @Autowired
     @Qualifier("securityContextTaskExecutor")
@@ -463,6 +469,9 @@ public class BatchEvaluationExecutorService {
             );
             
             callback.saveTaskResults(taskId, results);
+            
+            // 任务完成后，检查并更新相关考试的状态
+            checkAndUpdateExamStatusAfterEvaluation(answerIds, taskId);
         }, securityContextTaskExecutor);
     }
     
@@ -678,5 +687,46 @@ public class BatchEvaluationExecutorService {
         finalFailedResult.put("errorMessage", "达到最大重试次数");
         
         return finalFailedResult;
+    }
+    
+    /**
+     * 批阅任务完成后检查并更新相关考试的状态
+     */
+    private void checkAndUpdateExamStatusAfterEvaluation(List<Long> answerIds, String taskId) {
+        try {
+            // 获取所有涉及的考试ID
+            Set<Long> examIds = new java.util.HashSet<>();
+            
+            // 批量获取答案信息以减少数据库查询
+            for (Long answerId : answerIds) {
+                try {
+                    StudentAnswer answer = studentAnswerService.getAnswerById(answerId);
+                    if (answer != null && answer.getQuestion() != null && answer.getQuestion().getExam() != null) {
+                        examIds.add(answer.getQuestion().getExam().getId());
+                    }
+                } catch (Exception e) {
+                    logger.warn("获取答案 {} 的考试信息失败: {}", answerId, e.getMessage());
+                }
+            }
+            
+            if (!examIds.isEmpty()) {
+                logger.info("任务 {} 完成，检查 {} 个考试的状态", taskId, examIds.size());
+                
+                // 为每个考试检查并更新状态
+                for (Long examId : examIds) {
+                    try {
+                        boolean updated = examService.checkAndUpdateExamToEvaluated(examId);
+                        if (updated) {
+                            logger.info("✅ 考试 {} 状态已更新为 EVALUATED", examId);
+                        }
+                    } catch (Exception e) {
+                        logger.error("❌ 检查考试 {} 状态失败: {}", examId, e.getMessage());
+                    }
+                }
+            }
+            
+        } catch (Exception e) {
+            logger.error("❌ 批阅完成后检查考试状态失败: {}", e.getMessage(), e);
+        }
     }
 }

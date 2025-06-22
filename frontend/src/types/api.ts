@@ -86,13 +86,19 @@ export interface ExamUpdateRequest {
 export interface ExamCreateRequest {
   title: string
   description: string
+  targetClassroomIds?: number[] // 支持多个班级ID
+  duration?: number // 考试时长（分钟）
+  startTime?: string // 开始时间
+  endTime?: string // 结束时间
 }
 
 // 学生答案相关类型
 export interface StudentAnswerSubmitRequest {
   questionId: number
+  studentId: string
+  studentName: string
+  studentEmail?: string
   answerText: string
-  studentId?: string // 新增字段以支持现有组件
 }
 
 export interface StudentAnswerResponse {
@@ -420,6 +426,9 @@ export interface ExamResult {
   totalScore: number
   answeredQuestions: number
   status: string
+  totalPossibleScore?: number // 考试满分
+  scorePercentage?: number // 得分率
+  grade?: string // 成绩等级
   startTime: string
   submitTime: string
   duration: number // 用时（秒）

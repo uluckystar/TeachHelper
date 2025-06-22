@@ -200,8 +200,11 @@ const parsedOptions = computed(() => {
 })
 
 const trueFalseAnswer = computed(() => {
-  if (!question.value || question.value.questionType !== 'TRUE_FALSE' || typeof question.value.referenceAnswer === 'undefined') {
-    return false; // Default to false if not a TRUE_FALSE question or referenceAnswer is missing
+  if (!question.value || 
+      question.value.questionType !== 'TRUE_FALSE' || 
+      typeof question.value.referenceAnswer === 'undefined' ||
+      question.value.referenceAnswer === null) {
+    return false; // Default to false if not a TRUE_FALSE question or referenceAnswer is missing/null
   }
   return question.value.referenceAnswer.toLowerCase() === 'true'
 })

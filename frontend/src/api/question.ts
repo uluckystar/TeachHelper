@@ -34,6 +34,12 @@ export const questionApi = {
     return response.data
   },
 
+  // 学生参加考试时获取题目列表（不包含答案）
+  async getQuestionsForTaking(examId: number): Promise<QuestionResponse[]> {
+    const response = await api.get<QuestionResponse[]>(`/questions/exam/${examId}/take`)
+    return response.data
+  },
+
   // 更新题目
   async updateQuestion(id: number, data: QuestionCreateRequest): Promise<QuestionResponse> {
     const response = await api.put<QuestionResponse>(`/questions/${id}`, data)

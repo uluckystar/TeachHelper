@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>角色选择修复测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .test-title {
+            color: #333;
+            border-bottom: 2px solid #409eff;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .test-case {
+            margin: 15px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #fafafa;
+        }
+        .test-case h4 {
+            margin: 0 0 10px 0;
+            color: #606266;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #f0f9ff;
+            border: 1px solid #67c23a;
+            color: #67c23a;
+        }
+        .error {
+            background-color: #fef0f0;
+            border: 1px solid #f56c6c;
+            color: #f56c6c;
+        }
+        button {
+            background-color: #409eff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px 0;
+        }
+        button:hover {
+            background-color: #66b1ff;
+        }
+        select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #dcdfe6;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #dcdfe6;
+            border-radius: 4px;
+            margin: 5px 0;
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h2 class="test-title">注册功能角色选择修复测试</h2>
+        
+        <div class="test-case">
+            <h4>测试场景：模拟注册表单角色选择</h4>
+            <p>这个测试模拟了修复后的注册表单行为，验证角色选择功能是否正常工作。</p>
+            
+            <form id="registerForm">
+                <label>用户名:</label>
+                <input type="text" id="username" placeholder="输入用户名，如：王平" value="王平">
+                
+                <label>邮箱:</label>
+                <input type="email" id="email" placeholder="输入邮箱" value="wangping@example.com">
+                
+                <label>密码:</label>
+                <input type="password" id="password" placeholder="输入密码" value="test123456">
+                
+                <label>角色:</label>
+                <select id="roles" multiple>
+                    <option value="">请选择角色</option>
+                    <option value="STUDENT">学生</option>
+                    <option value="TEACHER">教师</option>
+                </select>
+                
+                <button type="button" onclick="testRegistration()">测试注册验证</button>
+            </form>
+            
+            <div id="result" class="result" style="display: none;"></div>
+        </div>
+        
+        <div class="test-case">
+            <h4>角色验证函数测试</h4>
+            <button onclick="testRoleValidation()">运行角色验证测试</button>
+            <div id="roleTestResult" class="result" style="display: none;"></div>
+        </div>
+        
+        <div class="test-case">
+            <h4>用户名验证测试（中文支持）</h4>
+            <button onclick="testUsernameValidation()">运行用户名验证测试</button>
+            <div id="usernameTestResult" class="result" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        // 模拟 registerSecurity.ts 中的验证函数
+        const REGISTER_CONFIG = {
+            ALLOWED_ROLES: ['STUDENT', 'TEACHER'],
+            USERNAME_RULES: {
+                reservedWords: ['admin', 'root', 'system', 'administrator', 'teacher', 'student', '管理员', '教师', '学生', '系统']
+            }
+        }
+
+        const validateRegistration = {
+            username: (username) => {
+                if (!username) {
+                    return '用户名不能为空'
+                }
+                
+                // 检查字符是否合法（中文、英文、数字、下划线）
+                const validCharPattern = /^[\u4e00-\u9fff\u3400-\u4dbfa-zA-Z0-9_]+$/
+                if (!validCharPattern.test(username)) {
+                    return '用户名只能包含中文、英文、数字和下划线'
+                }
+                
+                // 检查长度：中文字符2-50个，英文字符3-50个
+                const chineseCharCount = (username.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length
+                const totalLength = username.length
+                
+                if (totalLength > 50) {
+                    return '用户名长度不能超过50个字符'
+                }
+                
+                // 如果包含中文字符，最少2个字符
+                if (chineseCharCount > 0) {
+                    if (totalLength < 2) {
+                        return '包含中文的用户名至少需要2个字符'
+                    }
+                } else {
+                    // 纯英文数字组合，最少3个字符
+                    if (totalLength < 3) {
+                        return '英文用户名至少需要3个字符'
+                    }
+                }
+                
+                // 检查保留词
+                const lowerUsername = username.toLowerCase()
+                for (const reserved of REGISTER_CONFIG.USERNAME_RULES.reservedWords) {
+                    if (lowerUsername === reserved.toLowerCase() || username === reserved) {
+                        return '用户名不能使用保留词'
+                    }
+                }
+                
+                return null
+            },
+            
+            roles: (roles) => {
+                if (!roles || roles.length === 0) {
+                    return '请选择角色'
+                }
+                
+                if (roles.length > 1) {
+                    return '一个用户只能有一个角色'
+                }
+                
+                const role = roles[0]
+                if (!REGISTER_CONFIG.ALLOWED_ROLES.includes(role)) {
+                    return '只允许注册学生或教师角色'
+                }
+                
+                return null
+            },
+            
+            email: (email) => {
+                if (!email) {
+                    return '邮箱不能为空'
+                }
+                
+                const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+                if (!emailPattern.test(email)) {
+                    return '邮箱格式不正确'
+                }
+                
+                return null
+            }
+        }
+
+        function testRegistration() {
+            const username = document.getElementById('username').value
+            const email = document.getElementById('email').value
+            const password = document.getElementById('password').value
+            const rolesSelect = document.getElementById('roles')
+            const selectedOptions = Array.from(rolesSelect.selectedOptions).map(option => option.value).filter(v => v)
+            
+            const resultDiv = document.getElementById('result')
+            resultDiv.style.display = 'block'
+            
+            // 验证各个字段
+            const usernameError = validateRegistration.username(username)
+            const emailError = validateRegistration.email(email)
+            const rolesError = validateRegistration.roles(selectedOptions)
+            
+            let html = '<h4>验证结果：</h4>'
+            html += `<p><strong>用户名 "${username}":</strong> ${usernameError || '✅ 通过'}</p>`
+            html += `<p><strong>邮箱 "${email}":</strong> ${emailError || '✅ 通过'}</p>`
+            html += `<p><strong>角色选择:</strong> ${rolesError || `✅ 通过，选择了角色: ${selectedOptions.join(', ')}`}</p>`
+            
+            if (!usernameError && !emailError && !rolesError) {
+                resultDiv.className = 'result success'
+                html += '<p><strong>🎉 所有验证通过！可以提交注册</strong></p>'
+            } else {
+                resultDiv.className = 'result error'
+                html += '<p><strong>❌ 存在验证错误，请修正后重试</strong></p>'
+            }
+            
+            resultDiv.innerHTML = html
+        }
+
+        function testRoleValidation() {
+            const resultDiv = document.getElementById('roleTestResult')
+            resultDiv.style.display = 'block'
+            
+            const testCases = [
+                { roles: [], expected: '请选择角色' },
+                { roles: ['STUDENT'], expected: null },
+                { roles: ['TEACHER'], expected: null },
+                { roles: ['ADMIN'], expected: '只允许注册学生或教师角色' },
+                { roles: ['STUDENT', 'TEACHER'], expected: '一个用户只能有一个角色' },
+                { roles: ['INVALID'], expected: '只允许注册学生或教师角色' }
+            ]
+            
+            let html = '<h4>角色验证测试结果：</h4>'
+            let allPassed = true
+            
+            testCases.forEach((testCase, index) => {
+                const result = validateRegistration.roles(testCase.roles)
+                const passed = result === testCase.expected
+                allPassed = allPassed && passed
+                
+                html += `<p><strong>测试 ${index + 1}:</strong> `
+                html += `角色 [${testCase.roles.join(', ')}] `
+                html += `${passed ? '✅' : '❌'} `
+                html += `(期望: ${testCase.expected || '通过'}, 实际: ${result || '通过'})</p>`
+            })
+            
+            resultDiv.className = allPassed ? 'result success' : 'result error'
+            resultDiv.innerHTML = html
+        }
+
+        function testUsernameValidation() {
+            const resultDiv = document.getElementById('usernameTestResult')
+            resultDiv.style.display = 'block'
+            
+            const testCases = [
+                { username: '王平', expected: null, description: '2个中文字符' },
+                { username: '张三丰', expected: null, description: '3个中文字符' },
+                { username: '李', expected: '包含中文的用户名至少需要2个字符', description: '1个中文字符（不够）' },
+                { username: 'ab', expected: '英文用户名至少需要3个字符', description: '2个英文字符（不够）' },
+                { username: 'abc', expected: null, description: '3个英文字符' },
+                { username: 'user123', expected: null, description: '英文+数字' },
+                { username: '王平123', expected: null, description: '中文+数字' },
+                { username: 'user@name', expected: '用户名只能包含中文、英文、数字和下划线', description: '包含特殊字符' },
+                { username: 'admin', expected: '用户名不能使用保留词', description: '保留词' },
+                { username: '管理员', expected: '用户名不能使用保留词', description: '中文保留词' }
+            ]
+            
+            let html = '<h4>用户名验证测试结果：</h4>'
+            let allPassed = true
+            
+            testCases.forEach((testCase, index) => {
+                const result = validateRegistration.username(testCase.username)
+                const passed = result === testCase.expected
+                allPassed = allPassed && passed
+                
+                html += `<p><strong>测试 ${index + 1}:</strong> `
+                html += `"${testCase.username}" (${testCase.description}) `
+                html += `${passed ? '✅' : '❌'} `
+                if (!passed) {
+                    html += `<br>&nbsp;&nbsp;&nbsp;&nbsp;期望: ${testCase.expected || '通过'}<br>&nbsp;&nbsp;&nbsp;&nbsp;实际: ${result || '通过'}`
+                }
+                html += `</p>`
+            })
+            
+            resultDiv.className = allPassed ? 'result success' : 'result error'
+            resultDiv.innerHTML = html
+        }
+
+        // 页面加载完成后自动设置默认选择的角色
+        window.addEventListener('load', function() {
+            const rolesSelect = document.getElementById('roles')
+            rolesSelect.value = 'STUDENT'
+        })
+    </script>
+</body>
+</html>

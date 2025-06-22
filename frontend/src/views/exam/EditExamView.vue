@@ -155,6 +155,83 @@
               :value="cls.id"
             />
           </el-select>
+          <div class="form-help">
+            <el-text type="info" size="small">
+              选择要发布考试的班级，学生只能看到其所在班级的考试
+            </el-text>
+          </div>
+        </el-form-item>
+        
+        <!-- 已选班级的成员预览 -->
+        <el-form-item 
+          v-if="form.accessType === 'CLASS' && form.selectedClasses.length > 0" 
+          label="已选班级"
+        >
+          <div class="selected-classes-preview">
+            <el-card 
+              v-for="classId in form.selectedClasses" 
+              :key="classId"
+              class="class-preview-card"
+              shadow="hover"
+            >
+              <template #header>
+                <div class="class-preview-header">
+                  <span>{{ getClassNameById(classId) }}</span>
+                  <el-button 
+                    size="small" 
+                    type="primary" 
+                    link
+                    @click="showClassMembers(classId)"
+                  >
+                    查看成员
+                  </el-button>
+                </div>
+              </template>
+              <div class="class-preview-content">
+                <span>学生人数: {{ getClassStudentCount(classId) }}</span>
+              </div>
+            </el-card>
+          </div>
+        </el-form-item>
+        
+        <!-- 所有可选班级 -->
+        <el-form-item 
+          v-if="form.accessType === 'CLASS'" 
+          label="所有班级"
+        >
+          <div class="all-classes-preview">
+            <el-card 
+              v-for="cls in classes" 
+              :key="cls.id"
+              class="class-preview-card selectable-class"
+              shadow="hover"
+              :class="{ selected: form.selectedClasses.includes(cls.id) }"
+              @click="toggleClassSelection(cls.id)"
+            >
+              <template #header>
+                <div class="class-preview-header">
+                  <el-checkbox 
+                    :model-value="form.selectedClasses.includes(cls.id)"
+                    @change="toggleClassSelection(cls.id)"
+                    @click.stop
+                  >
+                    <span>{{ cls.name }}</span>
+                  </el-checkbox>
+                  <el-button 
+                    size="small" 
+                    type="primary" 
+                    link
+                    @click.stop="showClassMembers(cls.id)"
+                  >
+                    查看成员
+                  </el-button>
+                </div>
+              </template>
+              <div class="class-preview-content">
+                <span>学生人数: {{ getClassStudentCount(cls.id) }}</span>
+              </div>
+            </el-card>
+          </div>
         </el-form-item>
         
         <el-form-item label="密码保护">
@@ -198,6 +275,53 @@
         </el-button>
       </div>
     </el-form>
+
+    <!-- 班级成员查看对话框 -->
+    <el-dialog
+      v-model="showMembersDialog"
+      title="班级成员"
+      width="600px"
+    >
+      <div v-if="selectedClassroomForMembers">
+        <el-descriptions :column="2" border class="mb-4">
+          <el-descriptions-item label="班级名称">
+            {{ selectedClassroomForMembers.name }}
+          </el-descriptions-item>
+          <el-descriptions-item label="班级代码">
+            <el-tag>{{ selectedClassroomForMembers.classCode }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="学生数量" :span="2">
+            {{ selectedClassroomForMembers.studentCount }} 人
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <el-divider>学生列表</el-divider>
+        <div v-if="selectedClassroomForMembers.students && selectedClassroomForMembers.students.length > 0">
+          <el-table :data="selectedClassroomForMembers.students" stripe>
+            <el-table-column prop="username" label="姓名" />
+            <el-table-column prop="email" label="邮箱" />
+            <el-table-column label="角色">
+              <template #default="scope">
+                <el-tag 
+                  v-for="role in scope.row.roles" 
+                  :key="role" 
+                  size="small"
+                  :type="role === 'STUDENT' ? 'primary' : 'info'"
+                >
+                  {{ role === 'STUDENT' ? '学生' : role }}
+                </el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <div v-else class="empty-state">
+          <el-empty description="该班级暂无学生" size="small" />
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showMembersDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -206,6 +330,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { examApi } from '@/api/exam'
+import { classroomApi, type ClassroomResponse, type StudentResponse } from '@/api/classroom'
 import type { ExamResponse, ExamUpdateRequest } from '@/types/api'
 
 interface Student {
@@ -229,6 +354,8 @@ const saving = ref(false)
 const publishing = ref(false)
 const students = ref<Student[]>([])
 const classes = ref<Class[]>([])
+const showMembersDialog = ref(false)
+const selectedClassroomForMembers = ref<ClassroomResponse | null>(null)
 
 const form = reactive<ExamUpdateRequest & { 
   settings: string[];
@@ -316,15 +443,34 @@ const loadExamData = async () => {
 
 const loadStudentsAndClasses = async () => {
   try {
-    // 这里应该调用相应的API加载学生和班级数据
-    // students.value = await userApi.getStudents()
-    // classes.value = await classApi.getClasses()
+    // 加载班级数据
+    const classroomsData = await classroomApi.getAllClassrooms()
+    classes.value = classroomsData.map(classroom => ({
+      id: classroom.id,
+      name: classroom.name
+    }))
     
-    // 临时模拟数据
-    students.value = []
-    classes.value = []
+    // TODO: 加载学生数据 - 需要实现学生API
+    // 暂时从班级中获取学生信息
+    const allStudents: Student[] = []
+    classroomsData.forEach(classroom => {
+      if (classroom.students) {
+        classroom.students.forEach(student => {
+          if (!allStudents.find(s => s.id === student.id)) {
+            allStudents.push({
+              id: student.id,
+              name: student.username,
+              studentId: student.email || student.username
+            })
+          }
+        })
+      }
+    })
+    students.value = allStudents
+    
   } catch (error) {
     console.error('Failed to load students and classes:', error)
+    ElMessage.error('加载班级和学生信息失败')
   }
 }
 
@@ -362,35 +508,69 @@ const publishExam = async () => {
   try {
     await validateForm()
     
-    await ElMessageBox.confirm(
-      '确定要发布这个考试吗？发布后学生将可以参加考试。',
-      '确认发布',
-      {
-        confirmButtonText: '确定发布',
-        cancelButtonText: '取消',
-        type: 'warning'
+    // 如果选择了指定班级，需要先选择班级
+    if (form.accessType === 'CLASS') {
+      if (form.selectedClasses.length === 0) {
+        ElMessage.warning('请先选择要发布考试的班级')
+        return
       }
-    )
+      
+      await ElMessageBox.confirm(
+        `确定要发布考试到所选的 ${form.selectedClasses.length} 个班级吗？发布后学生将可以参加考试。`,
+        '确认发布',
+        {
+          confirmButtonText: '确定发布',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      )
+    } else {
+      await ElMessageBox.confirm(
+        '确定要发布这个考试吗？发布后学生将可以参加考试。',
+        '确认发布',
+        {
+          confirmButtonText: '确定发布',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      )
+    }
     
     publishing.value = true
     
+    // 先保存考试基本信息
     const updateData: ExamUpdateRequest = {
       title: form.title,
       description: form.description,
-      status: 'PUBLISHED',
+      status: 'DRAFT', // 先保持草稿状态
       duration: form.duration,
       startTime: form.startTime || undefined,
       endTime: form.endTime || undefined
     }
     
     await examApi.updateExam(examId.value, updateData)
+    
+    // 如果选择了班级，更新考试班级
+    if (form.accessType === 'CLASS' && form.selectedClasses.length > 0) {
+      await examApi.updateExamClassrooms(examId.value, form.selectedClasses)
+    }
+    
+    // 最后发布考试
+    await examApi.publishExam(examId.value)
+    
     ElMessage.success('考试发布成功')
     router.push(`/exams/${examId.value}`)
     
   } catch (error: any) {
     if (error !== 'cancel') {
       console.error('Failed to publish exam:', error)
-      ElMessage.error('发布考试失败')
+      
+      // 处理特定的验证错误
+      if (error.code === 422) {
+        ElMessage.warning(error.message || '考试必须包含至少一个题目才能发布')
+      } else {
+        ElMessage.error(error.message || '发布考试失败')
+      }
     }
   } finally {
     publishing.value = false
@@ -399,6 +579,43 @@ const publishExam = async () => {
 
 const goBack = () => {
   router.back()
+}
+
+// 班级相关方法
+const getClassNameById = (classId: number) => {
+  const cls = classes.value.find(c => c.id === classId)
+  return cls ? cls.name : '未知班级'
+}
+
+const getClassStudentCount = (classId: number) => {
+  // 从学生列表中统计属于该班级的学生数量
+  // 这里简化处理，实际应该从班级的学生列表中获取
+  return students.value.filter(student => 
+    // 这里需要根据实际的数据结构来判断学生属于哪个班级
+    // 暂时返回总学生数的估算值
+    true
+  ).length
+}
+
+const showClassMembers = async (classId: number) => {
+  try {
+    const classroom = await classroomApi.getClassroom(classId)
+    selectedClassroomForMembers.value = classroom
+    showMembersDialog.value = true
+  } catch (error) {
+    console.error('获取班级成员失败:', error)
+    ElMessage.error('获取班级成员失败')
+  }
+}
+
+// 切换班级选择状态
+const toggleClassSelection = (classId: number) => {
+  const index = form.selectedClasses.indexOf(classId)
+  if (index > -1) {
+    form.selectedClasses.splice(index, 1)
+  } else {
+    form.selectedClasses.push(classId)
+  }
 }
 
 onMounted(() => {
@@ -453,5 +670,60 @@ onMounted(() => {
   gap: 16px;
   padding: 24px 0;
   border-top: 1px solid #e4e7ed;
+}
+
+.selected-classes-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.all-classes-preview {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.class-preview-card {
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.selectable-class {
+  cursor: pointer;
+}
+
+.selectable-class:hover {
+  border-color: #409eff;
+  box-shadow: 0 2px 12px 0 rgba(64, 158, 255, 0.15);
+}
+
+.selectable-class.selected {
+  border-color: #409eff;
+  background-color: #f0f9ff;
+}
+
+.class-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 500;
+}
+
+.class-preview-content {
+  color: #666;
+  font-size: 14px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.mb-4 {
+  margin-bottom: 16px;
 }
 </style>

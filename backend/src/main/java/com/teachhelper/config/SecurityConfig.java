@@ -76,8 +76,20 @@ public class SecurityConfig {
                 // Dev endpoints (需要认证)
                 .requestMatchers("/api/dev/**").hasRole("ADMIN")
                 
-                // Teacher and Admin can manage exams and questions
-                .requestMatchers("/api/exams/**", "/api/questions/**").hasAnyRole("TEACHER", "ADMIN")
+                // Teacher and Admin can manage exams and questions, Students can view exams for taking
+                .requestMatchers("/api/exams", "/api/exams/").hasAnyRole("TEACHER", "ADMIN", "STUDENT") // 学生可以查看考试列表
+                .requestMatchers("/api/exams/student/**").hasRole("STUDENT") // 学生专用API路径，必须在其他规则之前
+                .requestMatchers("/api/exams/available").hasRole("STUDENT") // 学生可以查看可参加的考试
+                .requestMatchers("/api/exams/*/take").hasAnyRole("TEACHER", "ADMIN", "STUDENT") // 学生可以参加考试（如果需要专门的API）
+                .requestMatchers("/api/exams/*/statistics").hasAnyRole("TEACHER", "ADMIN") // 统计信息仅限教师和管理员
+                .requestMatchers("/api/exams/*/classrooms").hasAnyRole("TEACHER", "ADMIN") // 班级管理仅限教师和管理员
+                .requestMatchers("/api/exams/*/publish").hasAnyRole("TEACHER", "ADMIN") // 发布考试仅限教师和管理员
+                .requestMatchers("/api/exams/*/unpublish").hasAnyRole("TEACHER", "ADMIN") // 撤销发布仅限教师和管理员
+                .requestMatchers("/api/exams/*/end").hasAnyRole("TEACHER", "ADMIN") // 结束考试仅限教师和管理员
+                .requestMatchers("/api/exams/*").hasAnyRole("TEACHER", "ADMIN", "STUDENT") // 学生可以查看考试基本信息（用于参加考试）
+                .requestMatchers("/api/exams/**").hasAnyRole("TEACHER", "ADMIN") // 其他考试管理功能仅限教师和管理员
+                .requestMatchers("/api/questions/exam/*/take").hasAnyRole("TEACHER", "ADMIN", "STUDENT") // 学生可以在参加考试时获取题目
+                .requestMatchers("/api/questions/**").hasAnyRole("TEACHER", "ADMIN") // 其他题目管理功能仅限教师和管理员
                 
                 // Evaluation endpoints
                 .requestMatchers("/api/evaluations/**").hasAnyRole("TEACHER", "ADMIN")

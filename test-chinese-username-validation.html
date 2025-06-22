@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中文用户名验证测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .test-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            padding: 10px;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+        }
+        .test-input {
+            flex: 1;
+            margin-right: 15px;
+        }
+        input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .test-result {
+            min-width: 150px;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .test-button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        .test-button:hover {
+            background: #0056b3;
+        }
+        .explanation {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 10px 15px;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>中文用户名验证测试</h1>
+    
+    <div class="explanation">
+        <strong>测试说明：</strong>
+        <br>• 用户名支持中文、英文、数字和下划线
+        <br>• 长度限制：3-50个字符
+        <br>• 不能使用保留词：admin, root, system, administrator, teacher, student, 管理员, 教师, 学生, 系统
+    </div>
+
+    <div class="test-container">
+        <h3>前端验证测试</h3>
+        <p>测试前端JavaScript验证逻辑</p>
+        
+        <div class="test-item">
+            <div class="test-input">
+                <label>输入用户名：</label>
+                <input type="text" id="testUsername" placeholder="请输入用户名进行测试">
+            </div>
+            <button class="test-button" onclick="testUsername()">验证</button>
+            <div id="frontendResult" class="test-result">等待测试</div>
+        </div>
+    </div>
+
+    <div class="test-container">
+        <h3>预设测试用例</h3>
+        <div id="presetTests"></div>
+        <button class="test-button" onclick="runAllTests()">运行所有测试</button>
+    </div>
+
+    <div class="test-container">
+        <h3>后端API测试</h3>
+        <p>测试后端注册API的中文用户名支持</p>
+        
+        <div class="test-item">
+            <div class="test-input">
+                <label>用户名：</label>
+                <input type="text" id="apiUsername" value="测试用户" placeholder="用于API测试的用户名">
+            </div>
+            <div class="test-input">
+                <label>邮箱：</label>
+                <input type="email" id="apiEmail" value="test@example.com" placeholder="邮箱地址">
+            </div>
+            <button class="test-button" onclick="testApiRegister()">测试注册API</button>
+            <div id="apiResult" class="test-result">等待测试</div>
+        </div>
+    </div>
+
+    <script>
+        // 模拟前端验证逻辑（从registerSecurity.ts复制）
+        const USERNAME_PATTERN = /^[\u4e00-\u9fa5a-zA-Z0-9_]{3,50}$/;
+        const RESERVED_WORDS = ['admin', 'root', 'system', 'administrator', 'teacher', 'student', '管理员', '教师', '学生', '系统'];
+
+        function validateUsername(username) {
+            if (!username) {
+                return '用户名不能为空';
+            }
+            
+            if (!USERNAME_PATTERN.test(username)) {
+                return '用户名只能包含中文、英文、数字和下划线，长度3-50个字符';
+            }
+            
+            // 检查保留词
+            const lowerUsername = username.toLowerCase();
+            for (const reserved of RESERVED_WORDS) {
+                if (lowerUsername === reserved.toLowerCase() || username === reserved) {
+                    return '用户名不能使用保留词';
+                }
+            }
+            
+            return null;
+        }
+
+        function testUsername() {
+            const username = document.getElementById('testUsername').value;
+            const result = validateUsername(username);
+            const resultElement = document.getElementById('frontendResult');
+            
+            if (result) {
+                resultElement.textContent = result;
+                resultElement.className = 'test-result error';
+            } else {
+                resultElement.textContent = '✅ 验证通过';
+                resultElement.className = 'test-result success';
+            }
+        }
+
+        // 预设测试用例
+        const testCases = [
+            { username: '张三', expected: 'success', description: '纯中文姓名' },
+            { username: 'john', expected: 'success', description: '纯英文' },
+            { username: '张三ABC', expected: 'success', description: '中英文混合' },
+            { username: '用户123', expected: 'success', description: '中文数字混合' },
+            { username: 'user_test', expected: 'success', description: '英文下划线' },
+            { username: '测试_用户', expected: 'success', description: '中文下划线' },
+            { username: '张', expected: 'error', description: '用户名过短' },
+            { username: 'ab', expected: 'error', description: '英文过短' },
+            { username: '管理员', expected: 'error', description: '中文保留词' },
+            { username: 'admin', expected: 'error', description: '英文保留词' },
+            { username: 'ADMIN', expected: 'error', description: '大写保留词' },
+            { username: '教师', expected: 'error', description: '中文保留词-教师' },
+            { username: '学生', expected: 'error', description: '中文保留词-学生' },
+            { username: '张三@测试', expected: 'error', description: '包含特殊字符' },
+            { username: '测试用户测试用户测试用户测试用户测试用户测试用户测试用户测试用户', expected: 'error', description: '用户名过长' }
+        ];
+
+        function runAllTests() {
+            const container = document.getElementById('presetTests');
+            container.innerHTML = '';
+            
+            testCases.forEach((testCase, index) => {
+                const result = validateUsername(testCase.username);
+                const isSuccess = (result === null && testCase.expected === 'success') || 
+                                (result !== null && testCase.expected === 'error');
+                
+                const testItem = document.createElement('div');
+                testItem.className = 'test-item';
+                testItem.innerHTML = `
+                    <div class="test-input">
+                        <strong>${testCase.description}</strong><br>
+                        用户名: "${testCase.username}"
+                    </div>
+                    <div class="test-result ${isSuccess ? 'success' : 'error'}">
+                        ${isSuccess ? '✅ 通过' : '❌ 失败'}<br>
+                        ${result || '验证通过'}
+                    </div>
+                `;
+                container.appendChild(testItem);
+            });
+        }
+
+        async function testApiRegister() {
+            const username = document.getElementById('apiUsername').value;
+            const email = document.getElementById('apiEmail').value;
+            const resultElement = document.getElementById('apiResult');
+            
+            try {
+                const response = await fetch('http://localhost:8080/api/auth/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        email: email,
+                        password: 'Test123456',
+                        roles: ['STUDENT']
+                    })
+                });
+
+                if (response.ok) {
+                    const result = await response.text();
+                    resultElement.textContent = `✅ 注册成功: ${result}`;
+                    resultElement.className = 'test-result success';
+                } else {
+                    const error = await response.text();
+                    resultElement.textContent = `❌ 注册失败: ${error}`;
+                    resultElement.className = 'test-result error';
+                }
+            } catch (error) {
+                resultElement.textContent = `❌ 网络错误: ${error.message}`;
+                resultElement.className = 'test-result error';
+            }
+        }
+
+        // 页面加载时运行所有测试
+        window.addEventListener('load', () => {
+            runAllTests();
+        });
+
+        // 监听输入框变化，实时验证
+        document.getElementById('testUsername').addEventListener('input', testUsername);
+    </script>
+</body>
+</html>

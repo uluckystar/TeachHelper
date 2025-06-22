@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>测试登录中文用户名验证</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .test-item {
+            margin: 15px 0;
+            padding: 15px;
+            border-left: 4px solid #409eff;
+            background-color: #f0f9ff;
+        }
+        .success {
+            border-left-color: #67c23a;
+            background-color: #f0f9ff;
+        }
+        .error {
+            border-left-color: #f56c6c;
+            background-color: #fef0f0;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            border-bottom: 2px solid #409eff;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #606266;
+            margin-top: 30px;
+        }
+        .test-input {
+            padding: 10px;
+            border: 1px solid #dcdfe6;
+            border-radius: 4px;
+            width: 300px;
+            margin-right: 10px;
+        }
+        .test-button {
+            padding: 10px 20px;
+            background-color: #409eff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .result {
+            margin-top: 10px;
+            font-weight: bold;
+        }
+        .success .result {
+            color: #67c23a;
+        }
+        .error .result {
+            color: #f56c6c;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔧 登录中文用户名验证修复测试</h1>
+    
+    <div class="test-container">
+        <h2>📝 测试说明</h2>
+        <p>本页面测试登录页面中文用户名验证的修复效果。修复后应该支持：</p>
+        <ul>
+            <li>✅ 中文用户名最少2个字符（如：王平）</li>
+            <li>✅ 英文用户名最少3个字符（如：abc）</li>
+            <li>✅ 混合用户名合理长度（如：张san）</li>
+            <li>❌ 保留词验证</li>
+        </ul>
+    </div>
+
+    <div class="test-container">
+        <h2>🧪 用户名验证测试</h2>
+        <p>输入用户名进行测试：</p>
+        <input type="text" id="usernameInput" class="test-input" placeholder="输入用户名进行测试" />
+        <button onclick="testUsername()" class="test-button">测试验证</button>
+        <div id="testResult"></div>
+    </div>
+
+    <div class="test-container">
+        <h2>📊 预设测试用例</h2>
+        <div id="testCases"></div>
+    </div>
+
+    <script>
+        // 模拟登录验证函数（与实际代码一致）
+        const validateRegistration = {
+            username: (username) => {
+                if (!username) {
+                    return '用户名不能为空'
+                }
+                
+                // 检查字符是否合法（中文、英文、数字、下划线）
+                const validCharPattern = /^[\u4e00-\u9fff\u3400-\u4dbfa-zA-Z0-9_]+$/
+                if (!validCharPattern.test(username)) {
+                    return '用户名只能包含中文、英文、数字和下划线'
+                }
+                
+                // 检查长度：中文字符2-50个，英文字符3-50个
+                const chineseCharCount = (username.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length
+                const totalLength = username.length
+                
+                if (totalLength > 50) {
+                    return '用户名长度不能超过50个字符'
+                }
+                
+                // 如果包含中文字符，最少2个字符
+                if (chineseCharCount > 0) {
+                    if (totalLength < 2) {
+                        return '包含中文的用户名至少需要2个字符'
+                    }
+                } else {
+                    // 纯英文数字组合，最少3个字符
+                    if (totalLength < 3) {
+                        return '英文用户名至少需要3个字符'
+                    }
+                }
+                
+                // 检查保留词
+                const reservedWords = ['admin', 'root', 'system', 'administrator', 'teacher', 'student', '管理员', '教师', '学生', '系统']
+                const lowerUsername = username.toLowerCase()
+                for (const reserved of reservedWords) {
+                    if (lowerUsername === reserved.toLowerCase() || username === reserved) {
+                        return '用户名不能使用保留词'
+                    }
+                }
+                
+                return null
+            }
+        }
+
+        function testUsername() {
+            const input = document.getElementById('usernameInput')
+            const result = document.getElementById('testResult')
+            const username = input.value
+            
+            const error = validateRegistration.username(username)
+            
+            if (error) {
+                result.innerHTML = `<div class="result" style="color: #f56c6c;">❌ ${error}</div>`
+            } else {
+                result.innerHTML = `<div class="result" style="color: #67c23a;">✅ 用户名验证通过</div>`
+            }
+        }
+
+        function runTestCases() {
+            const testCases = [
+                { input: '王平', expected: 'success', description: '2个中文字符' },
+                { input: '张三丰', expected: 'success', description: '3个中文字符' },
+                { input: '李', expected: 'error', description: '1个中文字符（应该失败）' },
+                { input: 'abc', expected: 'success', description: '3个英文字符' },
+                { input: 'ab', expected: 'error', description: '2个英文字符（应该失败）' },
+                { input: '张san', expected: 'success', description: '中英混合' },
+                { input: 'user123', expected: 'success', description: '英文+数字' },
+                { input: '王_ping', expected: 'success', description: '中文+下划线+英文' },
+                { input: 'admin', expected: 'error', description: '保留词（应该失败）' },
+                { input: '管理员', expected: 'error', description: '中文保留词（应该失败）' },
+                { input: 'user@123', expected: 'error', description: '包含非法字符@（应该失败）' }
+            ]
+
+            const container = document.getElementById('testCases')
+            container.innerHTML = ''
+
+            testCases.forEach((testCase, index) => {
+                const error = validateRegistration.username(testCase.input)
+                const isSuccess = !error
+                const expectedSuccess = testCase.expected === 'success'
+                const passed = isSuccess === expectedSuccess
+
+                const div = document.createElement('div')
+                div.className = `test-item ${passed ? 'success' : 'error'}`
+                div.innerHTML = `
+                    <strong>测试 ${index + 1}: ${testCase.description}</strong><br>
+                    输入: "${testCase.input}"<br>
+                    结果: ${passed ? '✅ 通过' : '❌ 失败'}<br>
+                    ${error ? `错误信息: ${error}` : '验证通过'}
+                `
+                container.appendChild(div)
+            })
+        }
+
+        // 页面加载时运行测试
+        window.onload = runTestCases
+    </script>
+</body>
+</html>

@@ -29,7 +29,7 @@ import jakarta.validation.constraints.Size;
 public class User extends BaseEntity implements UserDetails {
     
     @NotBlank
-    @Size(min = 3, max = 50)
+    @Size(min = 2, max = 50)
     @Column(unique = true, nullable = false)
     private String username;
     

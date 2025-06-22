@@ -19,9 +19,16 @@
         <template #header>
           <div class="card-header">
             <span>考试信息</span>
-            <el-tag :type="getStatusTagType(examResult.status)" size="large">
-              {{ getStatusText(examResult.status) }}
-            </el-tag>
+            <div class="header-actions">
+              <el-button type="primary" @click="goToAnswers">
+                <el-icon><Document /></el-icon>
+                查看答卷详情
+              </el-button>
+              <el-button @click="goBack">
+                <el-icon><ArrowLeft /></el-icon>
+                返回
+              </el-button>
+            </div>
           </div>
         </template>
         
@@ -163,19 +170,70 @@
     </div>
 
     <div v-else-if="!loading">
-      <el-empty description="未找到考试结果" />
+      <!-- 未参加考试的状态 -->
+      <div v-if="examResult && (examResult as any).status === 'NOT_STARTED'" class="not-started-container">
+        <el-result
+          icon="info"
+          title="尚未参加考试"
+          sub-title="您还没有参加这个考试，或者还没有提交答案"
+        >
+          <template #extra>
+            <el-button type="primary" @click="goToExam">参加考试</el-button>
+            <el-button @click="goBack">返回我的考试</el-button>
+          </template>
+        </el-result>
+      </div>
+      
+      <!-- 已提交但未评分的状态 -->
+      <div v-else-if="examResult && (examResult as any).status === 'SUBMITTED'" class="submitted-container">
+        <el-result
+          icon="success"
+          title="答案已提交"
+          sub-title="您的答案已成功提交，请等待老师评分"
+        >
+          <template #extra>
+            <el-button type="primary" @click="refreshResult">刷新结果</el-button>
+            <el-button @click="goBack">返回我的考试</el-button>
+          </template>
+        </el-result>
+        
+        <!-- 显示基本信息 -->
+        <el-card v-if="examResult" class="exam-info-card">
+          <template #header>
+            <div class="card-header">
+              <span>考试信息</span>
+            </div>
+          </template>
+          
+          <el-descriptions :column="2" border>
+            <el-descriptions-item label="考试标题">{{ examResult.examTitle }}</el-descriptions-item>
+            <el-descriptions-item label="考试描述">{{ examResult.examDescription || '无描述' }}</el-descriptions-item>
+            <el-descriptions-item label="已答题数">{{ examResult.answers?.length || 0 }} 道</el-descriptions-item>
+            <el-descriptions-item label="提交状态">已提交，等待评分</el-descriptions-item>
+          </el-descriptions>
+        </el-card>
+      </div>
+      
+      <!-- 完全没有数据的情况 -->
+      <div v-else class="no-data-container">
+        <el-empty description="未找到考试结果">
+          <el-button type="primary" @click="goBack">返回我的考试</el-button>
+        </el-empty>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Document, ArrowLeft } from '@element-plus/icons-vue'
 import { examResultApi } from '@/api/examResult'
 import type { ExamResult } from '@/types/api'
 
 const route = useRoute()
+const router = useRouter()
 const examId = parseInt(route.params.examId as string)
 
 const loading = ref(false)
@@ -185,10 +243,19 @@ const examResult = ref<ExamResult | null>(null)
 const loadExamResult = async () => {
   loading.value = true
   try {
+    console.log('调用考试结果API，examId:', examId)
+    console.log('请求URL:', `/api/exam-results/student/exam/${examId}`)
     const response = await examResultApi.getStudentExamResult(examId)
+    console.log('API响应:', response)
     examResult.value = response.data
   } catch (error: any) {
     console.error('Failed to load exam result:', error)
+    console.error('错误详情:', {
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      data: error.response?.data,
+      url: error.config?.url
+    })
     ElMessage.error(error.response?.data?.message || '加载考试结果失败')
   } finally {
     loading.value = false
@@ -196,11 +263,21 @@ const loadExamResult = async () => {
 }
 
 const getTotalPossibleScore = () => {
+  // 优先使用后端提供的满分数据
+  if (examResult.value?.totalPossibleScore !== undefined) {
+    return examResult.value.totalPossibleScore
+  }
+  // 后备方案：从答案中计算
   if (!examResult.value?.answers) return 0
   return examResult.value.answers.reduce((total, answer) => total + (answer.maxScore || 0), 0)
 }
 
 const getScorePercentage = () => {
+  // 优先使用后端提供的得分率
+  if (examResult.value?.scorePercentage !== undefined) {
+    return Math.round(examResult.value.scorePercentage)
+  }
+  // 后备方案：自行计算
   const totalPossible = getTotalPossibleScore()
   if (totalPossible === 0) return 0
   return Math.round(((examResult.value?.totalScore || 0) / totalPossible) * 100)
@@ -215,6 +292,11 @@ const getScoreColor = () => {
 }
 
 const getGrade = () => {
+  // 优先使用后端提供的成绩等级
+  if (examResult.value?.grade) {
+    return examResult.value.grade
+  }
+  // 后备方案：根据得分率计算
   const percentage = getScorePercentage()
   if (percentage >= 90) return '优秀'
   if (percentage >= 80) return '良好'
@@ -309,6 +391,22 @@ const downloadResultPDF = async () => {
   } finally {
     downloadLoading.value = false
   }
+}
+
+const goToAnswers = () => {
+  router.push(`/my-exams/${examId}/answers`)
+}
+
+const goToExam = () => {
+  router.push(`/exams/${examId}/take`)
+}
+
+const goBack = () => {
+  router.push('/my-exams')
+}
+
+const refreshResult = () => {
+  loadExamResult()
 }
 
 onMounted(() => {

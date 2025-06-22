@@ -26,9 +26,15 @@
           </el-button>
         </div>
         <div v-else-if="!examFinished" class="exam-timer">
-          <div class="countdown">
+          <div class="countdown" :class="{ 'time-warning': isTimeRunningOut }">
             <el-icon><Clock /></el-icon>
-            考试进行中 - 请完成所有题目
+            <span v-if="exam?.duration">剩余时间：{{ timeLeftDisplay }}</span>
+            <span v-else>考试进行中 - 请完成所有题目</span>
+          </div>
+          <div v-if="autoSubmitted" class="auto-submit-notice">
+            <el-alert type="warning" :closable="false">
+              考试时间到，系统已自动提交
+            </el-alert>
           </div>
         </div>
         <div v-else class="exam-completed">
@@ -188,7 +194,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
@@ -198,10 +204,12 @@ import {
 import { examApi } from '@/api/exam'
 import { questionApi } from '@/api/question'
 import { studentAnswerApi } from '@/api/answer'
+import { useAuthStore } from '@/stores/auth'
 import type { ExamResponse, QuestionResponse, StudentAnswerSubmitRequest } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
 
 // 响应式数据
 const loading = ref(true)
@@ -213,7 +221,10 @@ const answers = ref<Map<number, any>>(new Map())
 const currentQuestionIndex = ref(0)
 const examStarted = ref(false)
 const examFinished = ref(false)
+const autoSubmitted = ref(false)
 const flaggedQuestions = ref<Set<number>>(new Set())
+const timeLeft = ref(0)
+const timeInterval = ref<number | null>(null)
 
 // 计算属性
 const currentQuestion = computed(() => {
@@ -243,7 +254,64 @@ const answeredCount = computed(() => {
   return questions.value.filter(q => isQuestionAnswered(questions.value.indexOf(q))).length
 })
 
+const timeLeftDisplay = computed(() => {
+  const hours = Math.floor(timeLeft.value / 3600)
+  const minutes = Math.floor((timeLeft.value % 3600) / 60)
+  const seconds = timeLeft.value % 60
+  
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+  } else {
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+  }
+})
+
+const isTimeRunningOut = computed(() => {
+  return timeLeft.value <= 300 // 最后5分钟
+})
+
 // 方法
+
+// 本地存储工具函数
+const getExamStorageKey = (examId: number) => `exam_${examId}_${authStore.user?.id || 'unknown'}`
+
+const saveExamStartTime = (examId: number) => {
+  const key = getExamStorageKey(examId)
+  const startTime = new Date().getTime()
+  localStorage.setItem(`${key}_start_time`, startTime.toString())
+  console.log('保存考试开始时间:', new Date(startTime))
+}
+
+const getExamStartTime = (examId: number): number | null => {
+  const key = getExamStorageKey(examId)
+  const startTimeStr = localStorage.getItem(`${key}_start_time`)
+  return startTimeStr ? parseInt(startTimeStr, 10) : null
+}
+
+const clearExamStorage = (examId: number) => {
+  const key = getExamStorageKey(examId)
+  localStorage.removeItem(`${key}_start_time`)
+  console.log('清除考试存储数据')
+}
+
+const calculateRemainingTime = (examId: number, examDuration: number): number => {
+  const startTime = getExamStartTime(examId)
+  if (!startTime) return examDuration * 60 // 如果没有开始时间，返回完整时长
+  
+  const currentTime = new Date().getTime()
+  const elapsedSeconds = Math.floor((currentTime - startTime) / 1000)
+  const remainingSeconds = (examDuration * 60) - elapsedSeconds
+  
+  console.log('计算剩余时间:', {
+    startTime: new Date(startTime),
+    currentTime: new Date(currentTime),
+    elapsedSeconds,
+    remainingSeconds
+  })
+  
+  return Math.max(0, remainingSeconds) // 确保不返回负数
+}
+
 const loadExamData = async () => {
   try {
     const examId = parseInt(route.params.examId as string, 10)
@@ -253,9 +321,24 @@ const loadExamData = async () => {
       return
     }
 
+    // 首先检查学生是否已提交该考试
+    try {
+      const hasSubmitted = await studentAnswerApi.hasCurrentStudentSubmittedExam(examId)
+      if (hasSubmitted) {
+        ElMessage.warning('你已经提交过该考试，不能重复答题')
+        router.push('/my-exams')
+        return
+      }
+    } catch (error) {
+      console.error('检查提交状态失败:', error)
+      ElMessage.error('检查提交状态失败，无法进入考试')
+      router.push('/my-exams')
+      return
+    }
+
     const [examResponse, questionsResponse] = await Promise.all([
       examApi.getExam(examId),
-      questionApi.getQuestionsByExam(examId)
+      questionApi.getQuestionsForTaking(examId) // 使用学生专用的API
     ])
 
     exam.value = examResponse
@@ -269,6 +352,57 @@ const loadExamData = async () => {
         textAnswer: ''
       })
     })
+
+    // 加载已有的答案（如果有的话）
+    try {
+      const existingAnswers = await studentAnswerApi.getMyAnswersByExam(examId)
+      console.log('已有答案:', existingAnswers)
+      
+      existingAnswers.forEach(answer => {
+        const questionId = answer.questionId
+        if (questionId && answers.value.has(questionId)) {
+          const answerText = answer.answerText || ''
+          const currentAnswer = answers.value.get(questionId)!
+          
+          // 根据题目类型恢复答案
+          const question = questions.value.find(q => q.id === questionId)
+          if (question) {
+            if (question.questionType === 'SINGLE_CHOICE') {
+              currentAnswer.selectedOption = answerText
+            } else if (question.questionType === 'MULTIPLE_CHOICE') {
+              currentAnswer.selectedOptions = answerText ? answerText.split(',') : []
+            } else {
+              currentAnswer.textAnswer = answerText
+            }
+          }
+        }
+      })
+      
+      if (existingAnswers.length > 0) {
+        ElMessage.success(`已恢复 ${existingAnswers.length} 道题目的答案`)
+      }
+    } catch (error) {
+      console.error('加载已有答案失败:', error)
+      // 不影响考试进行，只是提示一下
+      console.warn('无法加载之前的答案，从空白状态开始')
+    }
+
+    // 检查是否已经开始过考试
+    const startTime = getExamStartTime(examId)
+    if (startTime && exam.value?.duration) {
+      // 已经开始过考试，恢复计时器
+      examStarted.value = true
+      timeLeft.value = calculateRemainingTime(examId, exam.value.duration)
+      
+      if (timeLeft.value <= 0) {
+        // 时间已到，自动提交
+        autoSubmitExam()
+      } else {
+        // 继续计时
+        startTimer()
+        ElMessage.info(`欢迎回来！考试将从上次离开的地方继续，剩余时间：${timeLeftDisplay.value}`)
+      }
+    }
 
   } catch (error: any) {
     console.error('Failed to load exam data:', error)
@@ -294,12 +428,93 @@ const startExam = async () => {
     )
 
     if (confirmed) {
+      const examId = parseInt(route.params.examId as string, 10)
+      
+      // 保存考试开始时间
+      saveExamStartTime(examId)
+      
       examStarted.value = true
+      startTimer()
     }
   } catch {
     // 用户取消
   } finally {
     starting.value = false
+  }
+}
+
+const startTimer = () => {
+  if (exam.value?.duration) {
+    // 只在第一次开始时设置时间，恢复时不重置
+    if (timeLeft.value === 0) {
+      timeLeft.value = exam.value.duration * 60 // 转换为秒
+    }
+    
+    timeInterval.value = setInterval(() => {
+      timeLeft.value--
+      
+      if (timeLeft.value <= 0) {
+        // 时间到，自动提交
+        autoSubmitExam()
+      } else if (timeLeft.value === 600) {
+        // 剩余10分钟提醒
+        ElMessage.warning('考试剩余10分钟，请抓紧时间完成')
+      } else if (timeLeft.value === 300) {
+        // 剩余5分钟提醒
+        ElMessage.warning('考试剩余5分钟，请抓紧时间完成')
+      }
+    }, 1000)
+  }
+}
+
+const stopTimer = () => {
+  if (timeInterval.value) {
+    clearInterval(timeInterval.value)
+    timeInterval.value = null
+  }
+}
+
+const autoSubmitExam = async () => {
+  if (autoSubmitted.value || examFinished.value) return
+  
+  autoSubmitted.value = true
+  stopTimer()
+  
+  try {
+    ElMessage.warning('考试时间到，系统自动提交试卷')
+    
+    // 自动提交所有已答题目
+    const submitPromises: Promise<any>[] = []
+    
+    questions.value.forEach(question => {
+      const answer = answers.value.get(question.id)
+      if (answer && (answer.textAnswer?.trim() || answer.selectedOption || answer.selectedOptions?.length > 0)) {
+        const submitData: StudentAnswerSubmitRequest = {
+          questionId: question.id,
+          answerText: answer.textAnswer || answer.selectedOption || answer.selectedOptions?.join(',') || '',
+          studentId: authStore.user?.id?.toString() || 'unknown',  // 使用用户ID作为studentId
+          studentName: authStore.user?.username || 'Unknown',
+          studentEmail: authStore.user?.email || ''
+        }
+        submitPromises.push(studentAnswerApi.submitAnswer(submitData))
+      }
+    })
+
+    await Promise.all(submitPromises)
+    
+    // 正式提交整个考试
+    const examId = parseInt(route.params.examId as string, 10)
+    await studentAnswerApi.submitExam(examId)
+    
+    // 清除本地存储的考试数据
+    clearExamStorage(examId)
+    
+    examFinished.value = true
+    ElMessage.success('试卷已自动提交')
+
+  } catch (error: any) {
+    console.error('Auto submit exam failed:', error)
+    ElMessage.error('自动提交失败，请手动提交')
   }
 }
 
@@ -327,13 +542,26 @@ const submitExam = async () => {
         const submitData: StudentAnswerSubmitRequest = {
           questionId: question.id,
           answerText: answer.textAnswer || answer.selectedOption || answer.selectedOptions?.join(',') || '',
-          studentId: 'STUDENT_001' // 这里应该从认证状态获取
+          studentId: authStore.user?.id?.toString() || 'unknown',  // 使用用户ID作为studentId
+          studentName: authStore.user?.username || 'Unknown',
+          studentEmail: authStore.user?.email || ''
         }
         submitPromises.push(studentAnswerApi.submitAnswer(submitData))
       }
     })
 
     await Promise.all(submitPromises)
+    
+    // 停止计时器
+    stopTimer()
+    
+    // 正式提交整个考试
+    const examId = parseInt(route.params.examId as string, 10)
+    await studentAnswerApi.submitExam(examId)
+    
+    // 清除本地存储的考试数据
+    clearExamStorage(examId)
+    
     examFinished.value = true
     ElMessage.success('试卷提交成功')
 
@@ -428,6 +656,10 @@ const goToMyExams = () => {
 // 生命周期
 onMounted(() => {
   loadExamData()
+})
+
+onUnmounted(() => {
+  stopTimer()
 })
 
 // 监听路由变化防止意外离开
@@ -662,6 +894,28 @@ watch(() => route.path, (newPath, oldPath) => {
   padding: 40px;
 }
 
+/* 时间提醒相关样式 */
+.countdown.time-warning {
+  color: #e6a23c !important;
+  animation: pulse 1s infinite;
+}
+
+.auto-submit-notice {
+  margin-top: 12px;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
 @media (max-width: 768px) {
   .exam-content {
     grid-template-columns: 1fr;
@@ -850,6 +1104,10 @@ watch(() => route.path, (newPath, oldPath) => {
   color: #303133;
 }
 
+.question-options {
+  margin-top: 15px;
+}
+
 .option-item {
   display: block;
   margin-bottom: 15px;
@@ -885,6 +1143,28 @@ watch(() => route.path, (newPath, oldPath) => {
 
 .loading-container {
   padding: 40px;
+}
+
+/* 时间提醒相关样式 */
+.countdown.time-warning {
+  color: #e6a23c !important;
+  animation: pulse 1s infinite;
+}
+
+.auto-submit-notice {
+  margin-top: 12px;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 1;
+  }
 }
 
 @media (max-width: 768px) {

@@ -133,9 +133,14 @@
         </el-form-item>
         <el-form-item label="角色" prop="roles">
           <el-checkbox-group v-model="userForm.roles">
-            <el-checkbox label="ADMIN">管理员</el-checkbox>
             <el-checkbox label="TEACHER">教师</el-checkbox>
             <el-checkbox label="STUDENT">学生</el-checkbox>
+            <el-checkbox 
+              v-if="canCreateAdmin" 
+              label="ADMIN"
+            >
+              管理员
+            </el-checkbox>
           </el-checkbox-group>
         </el-form-item>
         <el-form-item label="状态" prop="status">
@@ -156,9 +161,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { Search, Plus, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useAuthStore } from '@/stores/auth'
+
 // 添加用户类型接口
 interface UserInfo {
   id: number
@@ -178,6 +185,14 @@ interface UserForm {
   roles: string[]
   status: string
 }
+
+// 获取认证store
+const authStore = useAuthStore()
+
+// 检查当前用户是否可以创建管理员
+const canCreateAdmin = computed(() => {
+  return authStore.user?.roles?.includes('ADMIN') || false
+})
 
 // 模拟 API 调用
 const mockApi = {

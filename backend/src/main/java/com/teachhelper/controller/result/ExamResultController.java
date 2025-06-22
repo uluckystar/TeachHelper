@@ -45,10 +45,41 @@ public class ExamResultController {
     @PreAuthorize("hasRole('STUDENT')")
     public ResponseEntity<ExamResultResponse> getStudentExamResult(@PathVariable Long examId) {
         try {
+            System.out.println("=== 学生考试结果API调用开始 ===");
+            System.out.println("examId: " + examId);
+            
             User currentUser = authService.getCurrentUser(); 
-            List<StudentAnswer> answers = studentAnswerService.getAnswersByExamIdAndStudentId(examId, currentUser.getId());
+            System.out.println("当前用户: " + currentUser.getUsername());
+            System.out.println("用户角色: " + currentUser.getRoles());
+            
+            // 通过用户名查找学生记录
+            List<StudentAnswer> answers = studentAnswerService.getAnswersByExamIdAndUsername(examId, currentUser.getUsername());
+            System.out.println("找到的答案数量: " + answers.size());
+            
             if (answers.isEmpty()) {
-                return ResponseEntity.notFound().build();
+                System.out.println("学生尚未答题，返回空结果而非404");
+                
+                // 创建基本的响应对象
+                ExamResultResponse response = new ExamResultResponse();
+                response.setExamId(examId);
+                response.setStudentId(currentUser.getId());
+                response.setStudentName(currentUser.getUsername());
+                response.setAnswers(List.of());
+                response.setTotalScore(0.0);
+                response.setAnsweredQuestions(0); // 设置答题数量为0
+                response.setStatus("NOT_STARTED"); // 添加状态标识
+                
+                // 添加考试信息
+                try {
+                    var exam = examService.getExamById(examId);
+                    response.setExamTitle(exam.getTitle());
+                    response.setExamDescription(exam.getDescription());
+                    System.out.println("考试信息: " + exam.getTitle());
+                } catch (Exception e) {
+                    System.out.println("获取考试信息失败: " + e.getMessage());
+                }
+                
+                return ResponseEntity.ok(response);
             }
 
             List<StudentAnswerResponse> answerResponses = answers.stream()
@@ -60,16 +91,53 @@ public class ExamResultController {
                 .mapToDouble(StudentAnswerResponse::getScore)
                 .sum();
             
+            // 计算总分（满分）
+            double totalPossibleScore = answerResponses.stream()
+                .mapToDouble(ar -> ar.getMaxScore() != null ? ar.getMaxScore() : 0.0)
+                .sum();
+            
+            // 计算得分率
+            double scorePercentage = totalPossibleScore > 0 ? (totalScore / totalPossibleScore) * 100.0 : 0.0;
+            
+            // 计算成绩等级
+            String grade = calculateGrade(scorePercentage);
+            
+            System.out.println("总分: " + totalScore + "/" + totalPossibleScore + " (" + String.format("%.1f", scorePercentage) + "%) - " + grade);
+            
             ExamResultResponse response = new ExamResultResponse();
             response.setExamId(examId);
-            response.setUserId(currentUser.getId()); // 使用 setUserId
-            response.setStudentName(currentUser.getUsername()); // 假设User实体有getUsername
+            response.setStudentId(currentUser.getId()); // 修复：使用 setStudentId 而不是 setUserId
+            response.setStudentName(currentUser.getUsername());
             response.setAnswers(answerResponses);
             response.setTotalScore(totalScore);
-            // response.setExamTitle(examService.getExamById(examId).getTitle()); // 视情况添加
+            response.setTotalPossibleScore(totalPossibleScore);
+            response.setScorePercentage(scorePercentage);
+            response.setGrade(grade);
+            response.setAnsweredQuestions(answerResponses.size()); // 设置答题数量
+            
+            // 判断评分状态
+            boolean allEvaluated = answerResponses.stream().allMatch(ar -> ar.isEvaluated());
+            response.setStatus(allEvaluated ? "EVALUATED" : "SUBMITTED");
+            System.out.println("考试状态: " + response.getStatus() + " (已评分答案数: " + 
+                answerResponses.stream().mapToInt(ar -> ar.isEvaluated() ? 1 : 0).sum() + "/" + answerResponses.size() + ")");
+            
+            // 添加考试信息
+            try {
+                var exam = examService.getExamById(examId);
+                response.setExamTitle(exam.getTitle());
+                response.setExamDescription(exam.getDescription());
+                System.out.println("考试标题: " + exam.getTitle());
+            } catch (Exception e) {
+                System.out.println("获取考试信息失败: " + e.getMessage());
+                // 忽略获取考试信息的错误
+            }
 
+            System.out.println("=== 学生考试结果API调用成功 ===");
             return ResponseEntity.ok(response);
         } catch (Exception e) {
+            System.out.println("=== 学生考试结果API调用失败 ===");
+            System.out.println("错误: " + e.getMessage());
+            e.printStackTrace();
             // Log exception e.g. logger.error("Error getting student exam result", e);
             return ResponseEntity.status(500).body(null); 
         }
@@ -235,6 +303,23 @@ public class ExamResultController {
         } catch (Exception e) {
             // Log exception
             return ResponseEntity.status(500).build();
+        }
+    }
+    
+    /**
+     * 根据得分率计算成绩等级
+     */
+    private String calculateGrade(double scorePercentage) {
+        if (scorePercentage >= 90) {
+            return "优秀";
+        } else if (scorePercentage >= 80) {
+            return "良好";
+        } else if (scorePercentage >= 70) {
+            return "中等";
+        } else if (scorePercentage >= 60) {
+            return "及格";
+        } else {
+            return "不及格";
         }
     }
 }

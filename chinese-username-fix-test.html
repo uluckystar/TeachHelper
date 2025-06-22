@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中文用户名修复验证</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .test-case {
+            margin-bottom: 15px;
+            padding: 15px;
+            border: 1px solid #e1e5e9;
+            border-radius: 6px;
+        }
+        .test-input {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            padding: 8px 16px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .result {
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        .regex-test {
+            font-family: monospace;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>中文用户名修复验证</h1>
+    
+    <div class="test-container">
+        <h3>正则表达式对比测试</h3>
+        <div class="regex-test">
+            <strong>原正则表达式:</strong> /^[\\u4e00-\\u9fa5a-zA-Z0-9_]{3,50}$/<br>
+            <strong>新正则表达式:</strong> /^[\\u4e00-\\u9fff\\u3400-\\u4dbfa-zA-Z0-9_]{3,50}$/
+        </div>
+        
+        <div class="test-case">
+            <strong>测试 "王平"</strong>
+            <div class="test-input">
+                <input type="text" id="test1" value="王平" readonly>
+                <button onclick="testRegex('test1')">测试</button>
+            </div>
+            <div id="result1" class="result" style="display: none;"></div>
+        </div>
+        
+        <div class="test-case">
+            <strong>测试 "张三"</strong>
+            <div class="test-input">
+                <input type="text" id="test2" value="张三" readonly>
+                <button onclick="testRegex('test2')">测试</button>
+            </div>
+            <div id="result2" class="result" style="display: none;"></div>
+        </div>
+        
+        <div class="test-case">
+            <strong>测试 "李四ABC123"</strong>
+            <div class="test-input">
+                <input type="text" id="test3" value="李四ABC123" readonly>
+                <button onclick="testRegex('test3')">测试</button>
+            </div>
+            <div id="result3" class="result" style="display: none;"></div>
+        </div>
+        
+        <div class="test-case">
+            <strong>自定义测试</strong>
+            <div class="test-input">
+                <input type="text" id="custom" placeholder="输入要测试的用户名">
+                <button onclick="testRegex('custom')">测试</button>
+            </div>
+            <div id="resultCustom" class="result" style="display: none;"></div>
+        </div>
+    </div>
+
+    <div class="test-container">
+        <h3>完整验证逻辑测试</h3>
+        <p>包含保留词检查和长度验证</p>
+        
+        <div class="test-case">
+            <strong>测试保留词 "管理员"</strong>
+            <div class="test-input">
+                <input type="text" id="reserved1" value="管理员" readonly>
+                <button onclick="testFullValidation('reserved1')">完整验证</button>
+            </div>
+            <div id="resultReserved1" class="result" style="display: none;"></div>
+        </div>
+        
+        <div class="test-case">
+            <strong>测试过短用户名 "王"</strong>
+            <div class="test-input">
+                <input type="text" id="short1" value="王" readonly>
+                <button onclick="testFullValidation('short1')">完整验证</button>
+            </div>
+            <div id="resultShort1" class="result" style="display: none;"></div>
+        </div>
+        
+        <div class="test-case">
+            <strong>自定义完整验证</strong>
+            <div class="test-input">
+                <input type="text" id="fullCustom" placeholder="输入要完整验证的用户名">
+                <button onclick="testFullValidation('fullCustom')">完整验证</button>
+            </div>
+            <div id="resultFullCustom" class="result" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        // 新的正则表达式
+        const newPattern = /^[\u4e00-\u9fff\u3400-\u4dbfa-zA-Z0-9_]{3,50}$/;
+        const oldPattern = /^[\u4e00-\u9fa5a-zA-Z0-9_]{3,50}$/;
+        
+        // 保留词列表
+        const reservedWords = ['admin', 'root', 'system', 'administrator', 'teacher', 'student', '管理员', '教师', '学生', '系统'];
+
+        function testRegex(inputId) {
+            const input = document.getElementById(inputId);
+            const username = input.value;
+            const resultId = inputId === 'custom' ? 'resultCustom' : `result${inputId.replace('test', '')}`;
+            const resultElement = document.getElementById(resultId);
+            
+            const oldResult = oldPattern.test(username);
+            const newResult = newPattern.test(username);
+            
+            let message = `用户名: "${username}"\n`;
+            message += `原正则表达式: ${oldResult ? '✅ 通过' : '❌ 失败'}\n`;
+            message += `新正则表达式: ${newResult ? '✅ 通过' : '❌ 失败'}\n`;
+            
+            // 显示字符详情
+            message += `字符详情: ${username.split('').map(char => {
+                const code = char.charCodeAt(0);
+                const hex = code.toString(16).toUpperCase();
+                return `${char}(U+${hex})`;
+            }).join(', ')}`;
+            
+            resultElement.textContent = message;
+            resultElement.className = `result ${newResult ? 'success' : 'error'}`;
+            resultElement.style.display = 'block';
+        }
+
+        function validateUsername(username) {
+            if (!username) {
+                return '用户名不能为空';
+            }
+            
+            if (!newPattern.test(username)) {
+                return '用户名只能包含中文、英文、数字和下划线，长度3-50个字符';
+            }
+            
+            // 检查保留词
+            const lowerUsername = username.toLowerCase();
+            for (const reserved of reservedWords) {
+                if (lowerUsername === reserved.toLowerCase() || username === reserved) {
+                    return '用户名不能使用保留词';
+                }
+            }
+            
+            return null;
+        }
+
+        function testFullValidation(inputId) {
+            const input = document.getElementById(inputId);
+            const username = input.value;
+            const resultId = inputId === 'fullCustom' ? 'resultFullCustom' : `result${inputId.charAt(0).toUpperCase() + inputId.slice(1)}`;
+            const resultElement = document.getElementById(resultId);
+            
+            const error = validateUsername(username);
+            
+            if (error) {
+                resultElement.textContent = `❌ ${error}`;
+                resultElement.className = 'result error';
+            } else {
+                resultElement.textContent = `✅ 验证通过`;
+                resultElement.className = 'result success';
+            }
+            
+            resultElement.style.display = 'block';
+        }
+
+        // 页面加载时自动运行测试
+        window.addEventListener('load', () => {
+            // 自动测试预设用例
+            setTimeout(() => {
+                ['test1', 'test2', 'test3'].forEach(id => {
+                    testRegex(id);
+                });
+                
+                ['reserved1', 'short1'].forEach(id => {
+                    testFullValidation(id);
+                });
+            }, 500);
+        });
+    </script>
+</body>
+</html>

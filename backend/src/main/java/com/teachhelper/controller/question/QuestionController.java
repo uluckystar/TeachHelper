@@ -200,13 +200,72 @@ public class QuestionController {
     }
     
     @GetMapping("/exam/{examId}")
-    @Operation(summary = "获取考试的所有题目", description = "根据考试ID获取该考试的所有题目")
+    @Operation(summary = "获取考试的所有题目", description = "根据考试ID获取该考试的所有题目（教师和管理员）")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('TEACHER')")
     public ResponseEntity<List<QuestionResponse>> getQuestionsByExam(@PathVariable Long examId) {
-        List<Question> questions = questionService.getQuestionsByExamId(examId);
-        List<QuestionResponse> responses = questions.stream()
-            .map(this::convertToResponse)
-            .collect(Collectors.toList());
-        return ResponseEntity.ok(responses);
+        System.out.println("=== 获取考试题目权限检查（管理端）===");
+        System.out.println("考试ID: " + examId);
+        
+        // 首先验证用户是否有权限访问这个考试
+        try {
+            Exam exam = examService.getExamById(examId); // 这个方法包含详细的权限验证
+            System.out.println("权限验证通过，考试标题: " + exam.getTitle());
+        } catch (Exception e) {
+            System.err.println("权限验证失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .header("X-Error-Message", e.getMessage())
+                .build();
+        }
+        
+        try {
+            List<Question> questions = questionService.getQuestionsByExamId(examId);
+            System.out.println("成功获取题目数量: " + questions.size());
+            
+            List<QuestionResponse> responses = questions.stream()
+                .map(this::convertToResponse)
+                .collect(Collectors.toList());
+            return ResponseEntity.ok(responses);
+        } catch (Exception e) {
+            System.err.println("获取题目失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+    
+    @GetMapping("/exam/{examId}/take")
+    @Operation(summary = "获取考试题目（参加考试）", description = "学生参加考试时获取题目，只返回题目内容不包含答案")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('TEACHER') or hasRole('STUDENT')")
+    public ResponseEntity<List<QuestionResponse>> getQuestionsForTakingExam(@PathVariable Long examId) {
+        System.out.println("=== 学生参加考试获取题目 ===");
+        System.out.println("考试ID: " + examId);
+        
+        // 首先验证用户是否有权限访问这个考试
+        try {
+            Exam exam = examService.getExamById(examId); // 这个方法包含详细的权限验证
+            System.out.println("权限验证通过，考试标题: " + exam.getTitle());
+        } catch (Exception e) {
+            System.err.println("权限验证失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .header("X-Error-Message", e.getMessage())
+                .build();
+        }
+        
+        try {
+            List<Question> questions = questionService.getQuestionsByExamId(examId);
+            System.out.println("成功获取题目数量: " + questions.size());
+            
+            // 为学生参加考试准备题目，不包含参考答案
+            List<QuestionResponse> responses = questions.stream()
+                .map(this::convertToResponseForTaking)
+                .collect(Collectors.toList());
+            return ResponseEntity.ok(responses);
+        } catch (Exception e) {
+            System.err.println("获取题目失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
     
     @PutMapping("/{id}")
@@ -646,6 +705,51 @@ public class QuestionController {
         return response;
     }
     
+    /**
+     * 转换题目为学生参加考试时的响应，不包含参考答案和评分标准
+     */
+    private QuestionResponse convertToResponseForTaking(Question question) {
+        QuestionResponse response = new QuestionResponse();
+        response.setId(question.getId());
+        response.setTitle(question.getTitle());
+        response.setContent(question.getContent());
+        response.setQuestionType(question.getQuestionType());
+        response.setMaxScore(question.getMaxScore().doubleValue());
+        // 不设置参考答案 - response.setReferenceAnswer(null);
+        response.setCreatedAt(question.getCreatedAt());
+        response.setUpdatedAt(question.getUpdatedAt());
+        
+        // 转换选择题选项，但不包含正确答案信息
+        if (question.getOptions() != null && !question.getOptions().isEmpty()) {
+            List<QuestionOptionDTO> optionDTOs = question.getOptions().stream()
+                .map(option -> {
+                    QuestionOptionDTO dto = new QuestionOptionDTO();
+                    dto.setId(option.getId());
+                    dto.setContent(option.getContent());
+                    // 不设置正确答案标识 - dto.setIsCorrect(null);
+                    dto.setOptionOrder(option.getOptionOrder());
+                    return dto;
+                })
+                .collect(Collectors.toList());
+            response.setOptions(optionDTOs);
+        }
+        
+        if (question.getExam() != null) {
+            response.setExamId(question.getExam().getId());
+            response.setExamTitle(question.getExam().getTitle());
+        }
+        
+        // 不包含评分标准信息
+        // response.setRubricCriteria(null);
+        
+        // 不包含答案统计数据
+        response.setTotalAnswers(0);
+        response.setEvaluatedAnswers(0);
+        response.setAverageScore(0.0);
+        
+        return response;
+    }
+
     // 选择性替换评分标准相关接口
     @PostMapping("/{questionId}/replace-rubrics-selective")
     @Operation(summary = "选择性替换评分标准", description = "用户可以选择性地替换生成的评分标准")

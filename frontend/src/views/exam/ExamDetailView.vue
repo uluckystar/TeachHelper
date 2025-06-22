@@ -15,7 +15,7 @@
             </template>
           </el-skeleton>
         </el-col>
-        <el-col :span="8" class="header-actions-col">
+        <el-col :span="8" class="header-actions-col" v-if="authStore.isTeacher || authStore.isAdmin">
           <div class="header-actions">
             <el-button 
               type="primary" 
@@ -50,6 +50,10 @@
               </el-button>
               <template #dropdown>
                 <el-dropdown-menu>
+                  <el-dropdown-item command="publish" icon="VideoPlay" v-if="exam?.status === 'DRAFT'">发布考试</el-dropdown-item>
+                  <el-dropdown-item command="unpublish" icon="VideoPause" v-if="exam?.status === 'PUBLISHED'">撤销发布</el-dropdown-item>
+                  <el-dropdown-item command="end" icon="VideoOff" v-if="exam?.status === 'PUBLISHED' || exam?.status === 'IN_PROGRESS'">结束考试</el-dropdown-item>
+                  <el-dropdown-item command="classrooms" icon="School" divided>调整班级</el-dropdown-item>
                   <el-dropdown-item command="edit" icon="Edit">编辑考试</el-dropdown-item>
                   <el-dropdown-item command="export" icon="Download">导出考试</el-dropdown-item>
                   <el-dropdown-item command="delete" icon="Delete" divided>删除考试</el-dropdown-item>
@@ -77,11 +81,25 @@
             <el-descriptions-item label="考试标题">
               {{ exam?.title }}
             </el-descriptions-item>
-            <el-descriptions-item label="创建者">
-              {{ exam?.createdBy }}
+            <el-descriptions-item label="考试状态">
+              <el-tag :type="getStatusTagType(exam?.status)" effect="dark">
+                {{ getStatusDisplayText(exam?.status) }}
+              </el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="考试描述" :span="2">
               {{ exam?.description || '暂无描述' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="开始时间">
+              {{ exam?.startTime ? formatDate(exam.startTime) : '未设置' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="结束时间">
+              {{ exam?.endTime ? formatDate(exam.endTime) : '未设置' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="考试时长">
+              {{ exam?.duration ? `${exam.duration} 分钟` : '未设置' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="创建者">
+              {{ exam?.createdBy }}
             </el-descriptions-item>
             <el-descriptions-item label="创建时间">
               {{ formatDate(exam?.createdAt) }}
@@ -90,6 +108,42 @@
               {{ formatDate(exam?.updatedAt) }}
             </el-descriptions-item>
           </el-descriptions>
+        </el-card>
+
+        <!-- 考试班级信息 -->
+        <el-card class="classrooms-card" shadow="never" v-if="examClassrooms && examClassrooms.length > 0">
+          <template #header>
+            <div class="card-header">
+              <span>考试班级</span>
+              <el-button size="small" icon="School" @click="handleDropdownCommand('classrooms')">管理班级</el-button>
+            </div>
+          </template>
+          
+          <div class="classrooms-list">
+            <div 
+              v-for="classroom in examClassrooms" 
+              :key="classroom.id"
+              class="classroom-item"
+            >
+              <div class="classroom-info">
+                <div class="classroom-header">
+                  <h4>{{ classroom.name }}</h4>
+                  <el-tag size="small">{{ classroom.classCode }}</el-tag>
+                </div>
+                <div class="classroom-stats">
+                  <span>学生数: {{ classroom.studentCount || 0 }}</span>
+                  <el-button 
+                    size="small" 
+                    type="primary" 
+                    link
+                    @click="showClassroomMembers(classroom)"
+                  >
+                    查看成员
+                  </el-button>
+                </div>
+              </div>
+            </div>
+          </div>
         </el-card>
 
         <!-- 题目列表 -->
@@ -181,8 +235,8 @@
         </el-card>
       </el-col>
 
-      <!-- 右侧：统计信息 -->
-      <el-col :span="8">
+      <!-- 右侧：统计信息 - 仅教师/管理员可见 -->
+      <el-col :span="8" v-if="authStore.isTeacher || authStore.isAdmin">
         <!-- 考试统计 -->
         <el-card class="stats-card" shadow="never">
           <template #header>
@@ -341,6 +395,168 @@
         </span>
       </template>
     </el-dialog>
+
+    <!-- 班级调整/发布对话框 -->
+    <el-dialog
+      v-model="showClassroomDialog"
+      :title="isPublishMode ? '发布考试 - 选择班级' : '调整考试班级'"
+      width="700px"
+      @close="resetClassroomDialog"
+    >
+      <div class="classroom-management">
+        <el-form label-width="80px">
+          <el-form-item label="目标班级">
+            <el-select
+              v-model="selectedClassroomIds"
+              multiple
+              placeholder="选择要发布考试的班级（可多选）"
+              style="width: 100%"
+              :loading="classroomLoading"
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+            >
+              <el-option
+                v-for="classroom in availableClassrooms"
+                :key="classroom.id"
+                :label="`${classroom.name} (${classroom.classCode})`"
+                :value="classroom.id"
+              >
+                <div class="classroom-option">
+                  <span class="classroom-name">{{ classroom.name }}</span>
+                  <span class="classroom-code">({{ classroom.classCode }})</span>
+                  <span class="classroom-students">{{ classroom.studentCount }}人</span>
+                </div>
+              </el-option>
+            </el-select>
+            <div class="form-help">
+              不选择班级时，考试将对所有用户可见（仅管理员）
+            </div>
+          </el-form-item>
+        </el-form>
+
+        <!-- 可选班级列表 -->
+        <el-divider>所有可选班级</el-divider>
+        <div v-if="availableClassrooms.length === 0" class="empty-state">
+          <el-empty description="暂无可选班级" size="small" />
+        </div>
+        <div v-else class="available-classrooms">
+          <el-card
+            v-for="classroom in availableClassrooms"
+            :key="classroom.id"
+            class="classroom-card selectable-classroom"
+            shadow="hover"
+            :class="{ selected: selectedClassroomIds.includes(classroom.id) }"
+            @click="toggleClassroomSelection(classroom.id)"
+          >
+            <div class="classroom-info">
+              <div class="classroom-header">
+                <el-checkbox 
+                  :model-value="selectedClassroomIds.includes(classroom.id)"
+                  @change="toggleClassroomSelection(classroom.id)"
+                  @click.stop
+                >
+                  <h4>{{ classroom.name }}</h4>
+                </el-checkbox>
+                <el-tag size="small">{{ classroom.classCode }}</el-tag>
+              </div>
+              <div class="classroom-stats">
+                <span>学生数量: {{ classroom.studentCount }}</span>
+                <el-button
+                  size="small"
+                  type="primary"
+                  link
+                  @click.stop="showClassroomMembers(classroom)"
+                >
+                  查看成员
+                </el-button>
+              </div>
+            </div>
+          </el-card>
+        </div>
+
+        <!-- 当前班级列表 -->
+        <el-divider>当前考试班级</el-divider>
+        <div v-if="examClassrooms.length === 0" class="empty-state">
+          <el-empty description="未设置目标班级" size="small" />
+        </div>
+        <div v-else class="current-classrooms">
+          <el-card
+            v-for="classroom in examClassrooms"
+            :key="classroom.id"
+            class="classroom-card"
+            shadow="hover"
+          >
+            <div class="classroom-info">
+              <div class="classroom-header">
+                <h4>{{ classroom.name }}</h4>
+                <el-tag size="small">{{ classroom.classCode }}</el-tag>
+              </div>
+              <div class="classroom-stats">
+                <span>学生数量: {{ classroom.studentCount }}</span>
+                <el-button
+                  size="small"
+                  type="primary"
+                  link
+                  @click="showClassroomMembers(classroom)"
+                >
+                  查看成员
+                </el-button>
+              </div>
+            </div>
+          </el-card>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showClassroomDialog = false">取消</el-button>
+        <el-button 
+          type="primary" 
+          @click="updateExamClassrooms" 
+          :loading="updateClassroomLoading"
+        >
+          {{ isPublishMode ? '发布考试' : '保存' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 班级成员查看对话框 -->
+    <el-dialog
+      v-model="showMembersDialog"
+      title="班级成员"
+      width="600px"
+    >
+      <div v-if="selectedClassroomForMembers">
+        <el-descriptions :column="2" border class="mb-4">
+          <el-descriptions-item label="班级名称">
+            {{ selectedClassroomForMembers.name }}
+          </el-descriptions-item>
+          <el-descriptions-item label="班级代码">
+            <el-tag>{{ selectedClassroomForMembers.classCode }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="学生数量" :span="2">
+            {{ selectedClassroomForMembers.studentCount }} 人
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <el-table
+          :data="selectedClassroomForMembers.students"
+          style="width: 100%"
+          size="small"
+          max-height="300"
+        >
+          <el-table-column prop="username" label="用户名" />
+          <el-table-column prop="email" label="邮箱" />
+          <el-table-column prop="joinedAt" label="加入时间">
+            <template #default="{ row }">
+              {{ new Date(row.joinedAt).toLocaleDateString('zh-CN') }}
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <template #footer>
+        <el-button @click="showMembersDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -367,10 +583,13 @@ import { examApi } from '@/api/exam'
 import { questionApi } from '@/api/question'
 import { answerApi } from '@/api/answer'
 import { rubricApi } from '@/api/rubric'
+import { classroomApi, type ClassroomResponse } from '@/api/classroom'
+import { useAuthStore } from '@/stores/auth'
 import type { ExamResponse, ExamStatistics, QuestionResponse } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
 
 // 响应式数据
 const loading = ref(true)
@@ -381,6 +600,17 @@ const statistics = ref<ExamStatistics | null>(null)
 const questions = ref<QuestionResponse[]>([])
 const importDialogVisible = ref(false)
 const selectedFile = ref<File | null>(null)
+
+// 班级管理相关
+const showClassroomDialog = ref(false)
+const showMembersDialog = ref(false)
+const classroomLoading = ref(false)
+const updateClassroomLoading = ref(false)
+const availableClassrooms = ref<ClassroomResponse[]>([])
+const examClassrooms = ref<ClassroomResponse[]>([])
+const selectedClassroomIds = ref<number[]>([])
+const selectedClassroomForMembers = ref<ClassroomResponse | null>(null)
+const isPublishMode = ref(false) // 是否处于发布模式
 
 // 计算属性
 const examId = computed(() => {
@@ -396,6 +626,13 @@ const examId = computed(() => {
 
 // 生命周期
 onMounted(async () => {
+  // 权限检查：如果是学生角色，重定向到学生专用页面
+  if (authStore.isStudent) {
+    ElMessage.info('正在跳转到学生考试详情页面...')
+    router.replace(`/my-exams/${examId.value}`)
+    return
+  }
+  
   await loadExamData()
 })
 
@@ -404,16 +641,29 @@ const loadExamData = async () => {
   try {
     loading.value = true
     
-    // 并行加载考试详情、题目列表和统计信息
-    const [examData, questionsData, statisticsData] = await Promise.all([
+    // 加载基础数据（考试详情和题目列表）
+    const [examData, questionsData] = await Promise.all([
       examApi.getExam(examId.value),
-      questionApi.getQuestionsByExam(examId.value),
-      examApi.getExamStatistics(examId.value).catch(() => null) // 统计信息可能不存在
+      questionApi.getQuestionsByExam(examId.value)
     ])
     
     exam.value = examData
     questions.value = questionsData
-    statistics.value = statisticsData
+    
+    // 只有教师和管理员才加载统计信息和班级信息
+    if (authStore.isTeacher || authStore.isAdmin) {
+      try {
+        const [statisticsData, classroomsData] = await Promise.all([
+          examApi.getExamStatistics(examId.value).catch(() => null),
+          examApi.getExamClassrooms(examId.value).catch(() => [])
+        ])
+        statistics.value = statisticsData
+        examClassrooms.value = classroomsData
+      } catch (error) {
+        console.warn('Failed to load statistics or classroom data:', error)
+        // 这些数据加载失败不影响主要功能
+      }
+    }
     
   } catch (error) {
     console.error('Failed to load exam data:', error)
@@ -424,6 +674,12 @@ const loadExamData = async () => {
 }
 
 const refreshStatistics = async () => {
+  // 只有教师和管理员可以刷新统计信息
+  if (!authStore.isTeacher && !authStore.isAdmin) {
+    ElMessage.warning('没有权限查看统计信息')
+    return
+  }
+  
   try {
     statisticsLoading.value = true
     statistics.value = await examApi.getExamStatistics(examId.value)
@@ -588,8 +844,20 @@ const manageQuestionRubric = (questionId: number) => {
   router.push(`/questions/${questionId}/rubric`)
 }
 
-const handleDropdownCommand = (command: string) => {
+const handleDropdownCommand = async (command: string) => {
   switch (command) {
+    case 'publish':
+      await publishExam()
+      break
+    case 'unpublish':
+      await unpublishExam()
+      break
+    case 'end':
+      await endExam()
+      break
+    case 'classrooms':
+      await openClassroomDialog()
+      break
     case 'edit':
       router.push(`/exams/${examId.value}/edit`)
       break
@@ -667,10 +935,202 @@ const confirmImport = async () => {
   }
 }
 
+// 考试状态管理方法
+const publishExam = async () => {
+  try {
+    // 设置为发布模式并打开班级选择对话框
+    isPublishMode.value = true
+    await openClassroomDialog()
+  } catch (error: any) {
+    isPublishMode.value = false
+    if (error !== 'cancel') {
+      console.error('发布考试失败:', error)
+      ElMessage.error('发布考试失败')
+    }
+  }
+}
+
+const unpublishExam = async () => {
+      try {
+        await ElMessageBox.confirm(
+          '确定要撤销发布此考试吗？撤销后考试将变为草稿状态。',
+          '确认撤销',
+          {
+            confirmButtonText: '撤销',
+            cancelButtonText: '取消',
+            type: 'warning'
+          }
+        )
+    
+    const updatedExam = await examApi.unpublishExam(examId.value)
+    exam.value = updatedExam
+    ElMessage.success('撤销发布成功')
+    loadExamData()
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      console.error('撤销发布失败:', error)
+      ElMessage.error('撤销发布失败')
+    }
+  }
+}
+
+const endExam = async () => {
+      try {
+        await ElMessageBox.confirm(
+          '确定要结束此考试吗？结束后将不再接受新的答案。',
+          '确认结束',
+          {
+            confirmButtonText: '结束',
+            cancelButtonText: '取消',
+            type: 'warning'
+          }
+        )
+    
+    const updatedExam = await examApi.endExam(examId.value)
+    exam.value = updatedExam
+    ElMessage.success('考试已结束')
+    loadExamData()
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      console.error('结束考试失败:', error)
+      ElMessage.error('结束考试失败')
+    }
+  }
+}
+
+const openClassroomDialog = async () => {
+  try {
+    classroomLoading.value = true
+    
+    // 并行加载班级列表和当前考试班级
+    const [allClassrooms, currentClassrooms] = await Promise.all([
+      classroomApi.getAllClassrooms(),
+      examApi.getExamClassrooms(examId.value)
+    ])
+    
+    availableClassrooms.value = allClassrooms
+    examClassrooms.value = currentClassrooms
+    selectedClassroomIds.value = currentClassrooms.map(c => c.id)
+    
+    showClassroomDialog.value = true
+  } catch (error) {
+    console.error('加载班级信息失败:', error)
+    ElMessage.error('加载班级信息失败')
+  } finally {
+    classroomLoading.value = false
+  }
+}
+
+const updateExamClassrooms = async () => {
+  try {
+    updateClassroomLoading.value = true
+    
+    if (isPublishMode.value) {
+      // 发布模式：检查是否选择了班级
+      if (selectedClassroomIds.value.length === 0) {
+        ElMessage.warning('请选择至少一个班级')
+        return
+      }
+      
+      // 确认发布
+      await ElMessageBox.confirm(
+        `确定要发布此考试到所选的 ${selectedClassroomIds.value.length} 个班级吗？发布后学生将可以参加考试。`,
+        '确认发布',
+        {
+          confirmButtonText: '发布',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      )
+
+      // 先更新班级，再发布考试
+      await examApi.updateExamClassrooms(examId.value, selectedClassroomIds.value)
+      const updatedExam = await examApi.publishExam(examId.value)
+      exam.value = updatedExam
+      ElMessage.success('考试发布成功')
+    } else {
+      // 普通调整班级模式
+      await examApi.updateExamClassrooms(examId.value, selectedClassroomIds.value)
+      exam.value = await examApi.getExam(examId.value)
+      ElMessage.success('班级调整成功')
+    }
+    
+    // 重新加载考试班级信息
+    examClassrooms.value = await examApi.getExamClassrooms(examId.value)
+    
+    showClassroomDialog.value = false
+    isPublishMode.value = false
+    loadExamData()
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      console.error(isPublishMode.value ? '发布考试失败:' : '调整班级失败:', error)
+      
+      // 处理特定的验证错误
+      if (error.code === 422 && isPublishMode.value) {
+        ElMessage.warning(error.message || '考试必须包含至少一个题目才能发布')
+      } else {
+        ElMessage.error(error.message || (isPublishMode.value ? '发布考试失败' : '调整班级失败'))
+      }
+    }
+    isPublishMode.value = false
+  } finally {
+    updateClassroomLoading.value = false
+  }
+}
+
+// 切换班级选择状态
+const toggleClassroomSelection = (classroomId: number) => {
+  const index = selectedClassroomIds.value.indexOf(classroomId)
+  if (index > -1) {
+    selectedClassroomIds.value.splice(index, 1)
+  } else {
+    selectedClassroomIds.value.push(classroomId)
+  }
+}
+
+const showClassroomMembers = async (classroom: ClassroomResponse) => {
+  try {
+    selectedClassroomForMembers.value = await classroomApi.getClassroom(classroom.id)
+    showMembersDialog.value = true
+  } catch (error) {
+    console.error('获取班级成员失败:', error)
+    ElMessage.error('获取班级成员失败')
+  }
+}
+
+const resetClassroomDialog = () => {
+  selectedClassroomIds.value = []
+  examClassrooms.value = []
+  availableClassrooms.value = []
+  isPublishMode.value = false
+}
+
 // 辅助方法
 const formatDate = (dateString?: string) => {
   if (!dateString) return 'N/A'
   return new Date(dateString).toLocaleString('zh-CN')
+}
+
+const getStatusDisplayText = (status?: string) => {
+  const statusMap = {
+    'DRAFT': '草稿',
+    'PUBLISHED': '已发布',
+    'IN_PROGRESS': '进行中',
+    'ENDED': '已结束',
+    'CANCELLED': '已取消'
+  }
+  return statusMap[status as keyof typeof statusMap] || status || '未知'
+}
+
+const getStatusTagType = (status?: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' => {
+  const typeMap: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = {
+    'DRAFT': 'info',
+    'PUBLISHED': 'primary',
+    'IN_PROGRESS': 'warning',
+    'ENDED': 'success',
+    'CANCELLED': 'danger'
+  }
+  return typeMap[status as keyof typeof typeMap] || 'info'
 }
 
 const getQuestionTypeText = (type: string) => {
@@ -879,5 +1339,151 @@ const getEvaluatedCount = (questionId: number) => {
 
 .upload-demo {
   margin: 20px 0;
+}
+
+/* 班级管理相关样式 */
+.classroom-management {
+  padding: 16px 0;
+}
+
+.form-help {
+  color: #909399;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.classroom-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.classroom-name {
+  font-weight: 500;
+}
+
+.classroom-code {
+  color: #909399;
+  margin-left: 8px;
+}
+
+.classroom-students {
+  color: #409eff;
+  font-size: 12px;
+}
+
+.current-classrooms {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.available-classrooms {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.classroom-card {
+  border: 1px solid #e4e7ed;
+  transition: all 0.3s ease;
+}
+
+.selectable-classroom {
+  cursor: pointer;
+}
+
+.selectable-classroom:hover {
+  border-color: #409eff;
+  box-shadow: 0 2px 12px 0 rgba(64, 158, 255, 0.15);
+}
+
+.selectable-classroom.selected {
+  border-color: #409eff;
+  background-color: #f0f9ff;
+}
+
+.classroom-info {
+  padding: 8px;
+}
+
+.classroom-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.classroom-header h4 {
+  margin: 0;
+  font-size: 16px;
+  color: #303133;
+  font-weight: 500;
+}
+
+.classroom-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  color: #606266;
+}
+
+.mb-4 {
+  margin-bottom: 16px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 20px;
+}
+
+/* 班级信息卡片样式 */
+.classrooms-card {
+  margin-bottom: 24px;
+}
+
+.classrooms-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.classroom-item {
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  padding: 16px;
+  background-color: #fafafa;
+  transition: all 0.3s ease;
+}
+
+.classroom-item:hover {
+  border-color: #409eff;
+  background-color: #f0f9ff;
+}
+
+.classroom-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.classroom-header h4 {
+  margin: 0;
+  font-size: 16px;
+  color: #303133;
+  font-weight: 500;
+}
+
+.classroom-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  color: #606266;
 }
 </style>

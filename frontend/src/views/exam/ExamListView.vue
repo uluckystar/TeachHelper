@@ -2,15 +2,30 @@
   <div class="exam-management">
     <div class="page-header">
       <div class="header-content">
-        <h1>考试管理中心</h1>
-        <el-button
-          v-if="authStore.isTeacher || authStore.isAdmin"
-          type="primary"
-          @click="$router.push('/exams/create')"
-        >
-          <el-icon><Plus /></el-icon>
-          创建考试
-        </el-button>
+        <h1 v-if="authStore.isTeacher || authStore.isAdmin">考试管理中心</h1>
+        <div v-else>
+          <h1>参加考试</h1>
+          <p class="page-description">浏览和参加当前可用的考试</p>
+        </div>
+        <div class="header-actions">
+          <el-button
+            v-if="authStore.isTeacher || authStore.isAdmin"
+            type="primary"
+            @click="$router.push('/exams/create')"
+          >
+            <el-icon><Plus /></el-icon>
+            创建考试
+          </el-button>
+          <el-button
+            v-if="authStore.isStudent"
+            type="success"
+            plain
+            @click="$router.push('/my-exams')"
+          >
+            <el-icon><User /></el-icon>
+            我的考试
+          </el-button>
+        </div>
       </div>
     </div>
 
@@ -232,8 +247,62 @@
         <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <div class="action-buttons">
-              <!-- 查看按钮始终显示 -->
+              <!-- 学生查看操作 -->
+              <template v-if="authStore.isStudent">
+                <!-- 学生根据考试状态显示不同按钮 -->
+                <el-button
+                  v-if="row.canTake"
+                  size="small"
+                  type="primary"
+                  @click="takeExam(row.id)"
+                >
+                  <el-icon><Edit /></el-icon>
+                  参加考试
+                </el-button>
+                <el-button
+                  v-else-if="row.status === 'PUBLISHED' && row.canTake === false"
+                  size="small"
+                  type="success"
+                  disabled
+                >
+                  <el-icon><Check /></el-icon>
+                  已提交
+                </el-button>
+                <el-button
+                  v-else-if="row.status === 'ENDED' || row.status === 'EVALUATED'"
+                  size="small"
+                  type="info"
+                  @click="viewStudentResult(row.id)"
+                >
+                  <el-icon><View /></el-icon>
+                  查看结果
+                </el-button>
+                <el-button
+                  v-else
+                  size="small"
+                  type="info"
+                  plain
+                  disabled
+                >
+                  <el-icon><View /></el-icon>
+                  未开始
+                </el-button>
+                
+                <!-- 学生专用的考试详情按钮 -->
+                <el-button
+                  size="small"
+                  type="default"
+                  plain
+                  @click="viewStudentExamDetail(row.id)"
+                >
+                  <el-icon><InfoFilled /></el-icon>
+                  查看详情
+                </el-button>
+              </template>
+
+              <!-- 教师/管理员的查看按钮 -->
               <el-button
+                v-else
                 size="small"
                 type="info"
                 plain
@@ -326,19 +395,6 @@
                   </el-button>
                 </template>
               </template>
-              
-              <!-- 学生操作 -->
-              <template v-else>
-                <el-button
-                  v-if="canTakeExam(row)"
-                  size="small"
-                  type="primary"
-                  @click="takeExam(row.id)"
-                >
-                  <el-icon><CaretRight /></el-icon>
-                  开始考试
-                </el-button>
-              </template>
             </div>
           </template>
         </el-table-column>
@@ -357,6 +413,183 @@
         />
       </div>
     </el-card>
+
+    <!-- 发布考试 - 班级选择对话框 -->
+    <el-dialog
+      v-model="showPublishDialog"
+      title="发布考试 - 选择班级"
+      width="700px"
+    >
+      <div v-if="currentExam" class="publish-exam-dialog">
+        <el-alert
+          :title="`正在发布考试：${currentExam.title}`"
+          type="info"
+          :closable="false"
+          style="margin-bottom: 20px;"
+        />
+        
+        <el-form label-width="80px">
+          <el-form-item label="目标班级" required>
+            <el-select
+              v-model="selectedClassroomIds"
+              multiple
+              placeholder="选择要发布考试的班级（可多选）"
+              style="width: 100%"
+              :loading="classroomLoading"
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+            >
+              <el-option
+                v-for="classroom in availableClassrooms"
+                :key="classroom.id"
+                :label="`${classroom.name} (${classroom.classCode})`"
+                :value="classroom.id"
+              >
+                <div class="classroom-option">
+                  <span class="classroom-name">{{ classroom.name }}</span>
+                  <span class="classroom-code">({{ classroom.classCode }})</span>
+                  <span class="classroom-students">{{ classroom.studentCount }}人</span>
+                </div>
+              </el-option>
+            </el-select>
+            <div class="form-help">
+              选择要发布考试的班级，只有这些班级的学生能看到考试
+            </div>
+          </el-form-item>
+        </el-form>
+
+        <!-- 所有可选班级 -->
+        <el-divider>所有可选班级</el-divider>
+        <div v-if="availableClassrooms.length === 0" class="empty-state">
+          <el-empty description="暂无可选班级" size="small" />
+        </div>
+        <div v-else class="available-classrooms">
+          <el-card
+            v-for="classroom in availableClassrooms"
+            :key="classroom.id"
+            class="classroom-card selectable-classroom"
+            shadow="hover"
+            :class="{ selected: selectedClassroomIds.includes(classroom.id) }"
+            @click="toggleClassroomSelection(classroom.id)"
+          >
+            <div class="classroom-info">
+              <div class="classroom-header">
+                <el-checkbox 
+                  :model-value="selectedClassroomIds.includes(classroom.id)"
+                  @change="toggleClassroomSelection(classroom.id)"
+                  @click.stop
+                >
+                  <h4>{{ classroom.name }}</h4>
+                </el-checkbox>
+                <el-tag size="small">{{ classroom.classCode }}</el-tag>
+              </div>
+              <div class="classroom-stats">
+                <span>学生数量: {{ classroom.studentCount }}</span>
+                <el-button
+                  size="small"
+                  type="primary"
+                  link
+                  @click.stop="showClassroomMembers(classroom)"
+                >
+                  查看成员
+                </el-button>
+              </div>
+            </div>
+          </el-card>
+        </div>
+
+        <!-- 已选班级预览 -->
+        <div v-if="selectedClassroomIds.length > 0">
+          <el-divider>已选班级 ({{ selectedClassroomIds.length }})</el-divider>
+          <div class="selected-classrooms">
+            <el-card
+              v-for="classroomId in selectedClassroomIds"
+              :key="classroomId"
+              class="classroom-card"
+              shadow="hover"
+            >
+              <div class="classroom-info">
+                <div class="classroom-header">
+                  <h4>{{ getClassroomById(classroomId)?.name }}</h4>
+                  <el-tag size="small">{{ getClassroomById(classroomId)?.classCode }}</el-tag>
+                </div>
+                <div class="classroom-stats">
+                  <span>学生数量: {{ getClassroomById(classroomId)?.studentCount }}</span>
+                  <el-button
+                    size="small"
+                    type="primary"
+                    link
+                    @click="showClassroomMembers(getClassroomById(classroomId)!)"
+                  >
+                    查看成员
+                  </el-button>
+                </div>
+              </div>
+            </el-card>
+          </div>
+        </div>
+      </div>
+      
+      <template #footer>
+        <el-button @click="showPublishDialog = false">取消</el-button>
+        <el-button 
+          type="primary" 
+          @click="confirmPublishExam" 
+          :loading="publishLoading"
+          :disabled="selectedClassroomIds.length === 0"
+        >
+          发布考试
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 班级成员查看对话框 -->
+    <el-dialog
+      v-model="showMembersDialog"
+      title="班级成员"
+      width="600px"
+    >
+      <div v-if="selectedClassroomForMembers">
+        <el-descriptions :column="2" border class="mb-4">
+          <el-descriptions-item label="班级名称">
+            {{ selectedClassroomForMembers.name }}
+          </el-descriptions-item>
+          <el-descriptions-item label="班级代码">
+            <el-tag>{{ selectedClassroomForMembers.classCode }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="学生数量" :span="2">
+            {{ selectedClassroomForMembers.studentCount }} 人
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <el-divider>学生列表</el-divider>
+        <div v-if="selectedClassroomForMembers.students && selectedClassroomForMembers.students.length > 0">
+          <el-table :data="selectedClassroomForMembers.students" stripe>
+            <el-table-column prop="username" label="姓名" />
+            <el-table-column prop="email" label="邮箱" />
+            <el-table-column label="角色">
+              <template #default="scope">
+                <el-tag 
+                  v-for="role in scope.row.roles" 
+                  :key="role" 
+                  size="small"
+                  :type="role === 'STUDENT' ? 'primary' : 'info'"
+                >
+                  {{ role === 'STUDENT' ? '学生' : role }}
+                </el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <div v-else class="empty-state">
+          <el-empty description="该班级暂无学生" size="small" />
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showMembersDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -379,13 +612,18 @@ import {
   Monitor,
   Clock,
   Loading,
-  CircleCheck
+  CircleCheck,
+  Check,
+  InfoFilled,
+  User
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { examApi } from '@/api/exam'
+import { classroomApi, type ClassroomResponse } from '@/api/classroom'
 import { evaluationApi } from '@/api/evaluation'
 import { questionApi } from '@/api/question'
 import { rubricApi } from '@/api/rubric'
+import { studentAnswerApi } from '@/api/answer'
 import type { Exam } from '@/types/api'
 
 const router = useRouter()
@@ -393,6 +631,16 @@ const authStore = useAuthStore()
 
 const loading = ref(false)
 const exams = ref<Exam[]>([])
+
+// 班级选择相关数据
+const showPublishDialog = ref(false)
+const publishLoading = ref(false)
+const classroomLoading = ref(false)
+const currentExam = ref<Exam | null>(null)
+const availableClassrooms = ref<ClassroomResponse[]>([])
+const selectedClassroomIds = ref<number[]>([])
+const showMembersDialog = ref(false)
+const selectedClassroomForMembers = ref<ClassroomResponse | null>(null)
 
 const filters = reactive({
   status: '',
@@ -427,10 +675,49 @@ onMounted(() => {
 const loadExams = async () => {
   try {
     loading.value = true
-    // 使用 getAllExams 替代不存在的 getMyExams 和 getExams 方法
-    const response = await examApi.getAllExams(pagination.page - 1, pagination.size)
-    exams.value = response
-    pagination.total = response.length // 暂时使用数组长度，后续需要后端支持分页响应
+    
+    console.log('=== loadExams Debug ===')
+    console.log('authStore.isStudent:', authStore.isStudent)
+    console.log('authStore.isTeacher:', authStore.isTeacher)
+    console.log('authStore.isAdmin:', authStore.isAdmin)
+    console.log('authStore.user:', authStore.user)
+    console.log('pagination:', pagination)
+    
+    if (authStore.isStudent) {
+      console.log('学生端：调用 examApi.getAvailableExams()')
+      // 学生使用专用的可参加考试API，只获取PUBLISHED状态的考试
+      const response = await examApi.getAvailableExams()
+      
+      console.log('学生端：getAvailableExams 响应:', response)
+      
+      // 检查每个考试的提交状态
+      const examsWithStatus = await Promise.all(
+        response.map(async (exam) => {
+          try {
+            const hasSubmitted = await studentAnswerApi.hasCurrentStudentSubmittedExam(exam.id)
+            return {
+              ...exam,
+              canTake: exam.status === 'PUBLISHED' && !hasSubmitted
+            }
+          } catch (error) {
+            console.error(`检查考试 ${exam.id} 提交状态失败:`, error)
+            return {
+              ...exam,
+              canTake: false // 出错时保守处理
+            }
+          }
+        })
+      )
+      exams.value = examsWithStatus
+      pagination.total = examsWithStatus.length
+    } else {
+      console.log('教师/管理员端：调用 examApi.getAllExams()', pagination.page - 1, pagination.size)
+      // 教师/管理员使用全量考试API
+      const response = await examApi.getAllExams(pagination.page - 1, pagination.size)
+      exams.value = response
+      pagination.total = response.length
+    }
+    
   } catch (error) {
     console.error('Failed to load exams:', error)
     ElMessage.error('加载考试列表失败')
@@ -500,13 +787,49 @@ const getStatusText = (status: string) => {
 }
 
 const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleString('zh-CN')
+  if (!dateString) {
+    return '未设定'
+  }
+  try {
+    const date = new Date(dateString)
+    // 检查日期是否有效（不是1970年）
+    if (isNaN(date.getTime()) || date.getFullYear() < 2000) {
+      return '未设定'
+    }
+    return date.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    })
+  } catch (error) {
+    console.error('Date formatting error:', error, dateString)
+    return '时间格式错误'
+  }
 }
 
 const viewExam = (examId: number) => {
   router.push(`/exams/${examId}`)
 }
 
+// 学生参加考试
+const takeExam = (examId: number) => {
+  router.push(`/exams/${examId}/take`)
+}
+
+// 学生查看考试结果
+const viewStudentResult = (examId: number) => {
+  router.push(`/my-exams/${examId}/result`)
+}
+
+// 学生查看考试详情
+const viewStudentExamDetail = (examId: number) => {
+  router.push(`/my-exams/${examId}`)
+}
+
+// 教师/管理员操作方法
 const editExam = (examId: number) => {
   router.push(`/exams/${examId}/edit`)
 }
@@ -628,24 +951,89 @@ const checkRubricAndStartEvaluation = async (examId: number) => {
 
 const publishExam = async (exam: Exam) => {
   try {
+    currentExam.value = exam
+    
+    // 加载班级数据
+    classroomLoading.value = true
+    const classrooms = await classroomApi.getAllClassrooms()
+    availableClassrooms.value = classrooms
+    selectedClassroomIds.value = []
+    
+    // 显示班级选择对话框
+    showPublishDialog.value = true
+  } catch (error) {
+    console.error('Failed to load classrooms:', error)
+    ElMessage.error('加载班级信息失败')
+  } finally {
+    classroomLoading.value = false
+  }
+}
+
+const confirmPublishExam = async () => {
+  if (!currentExam.value) return
+  
+  try {
+    if (selectedClassroomIds.value.length === 0) {
+      ElMessage.warning('请选择至少一个班级')
+      return
+    }
+    
     await ElMessageBox.confirm(
-      `确定发布考试"${exam.title}"吗？发布后将无法修改。`,
+      `确定发布考试"${currentExam.value.title}"到所选的 ${selectedClassroomIds.value.length} 个班级吗？发布后学生将可以参加考试。`,
       '确认发布',
       {
-        confirmButtonText: '确定',
+        confirmButtonText: '确定发布',
         cancelButtonText: '取消',
         type: 'warning'
       }
     )
     
-    await examApi.publishExam(exam.id)
+    publishLoading.value = true
+    
+    // 先更新班级，再发布考试
+    await examApi.updateExamClassrooms(currentExam.value.id, selectedClassroomIds.value)
+    await examApi.publishExam(currentExam.value.id)
+    
     ElMessage.success('考试发布成功')
+    showPublishDialog.value = false
     loadExams()
   } catch (error: any) {
     if (error !== 'cancel') {
       console.error('Failed to publish exam:', error)
-      ElMessage.error('发布考试失败')
+      
+      // 处理特定的验证错误
+      if (error.code === 422) {
+        ElMessage.warning(error.message || '考试必须包含至少一个题目才能发布')
+      } else {
+        ElMessage.error(error.message || '发布考试失败')
+      }
     }
+  } finally {
+    publishLoading.value = false
+  }
+}
+
+const showClassroomMembers = async (classroom: ClassroomResponse) => {
+  try {
+    selectedClassroomForMembers.value = await classroomApi.getClassroom(classroom.id)
+    showMembersDialog.value = true
+  } catch (error) {
+    console.error('获取班级成员失败:', error)
+    ElMessage.error('获取班级成员失败')
+  }
+}
+
+const getClassroomById = (classroomId: number) => {
+  return availableClassrooms.value.find(c => c.id === classroomId)
+}
+
+// 切换班级选择状态
+const toggleClassroomSelection = (classroomId: number) => {
+  const index = selectedClassroomIds.value.indexOf(classroomId)
+  if (index > -1) {
+    selectedClassroomIds.value.splice(index, 1)
+  } else {
+    selectedClassroomIds.value.push(classroomId)
   }
 }
 
@@ -683,20 +1071,6 @@ const deleteExam = async (examId: number) => {
   }
 }
 
-const canTakeExam = (exam: Exam) => {
-  // 暂时返回 true，因为后端还没有实现相关字段
-  // 后续当后端添加 status、startTime、endTime 字段后，可以恢复原有的逻辑：
-  // const now = new Date()
-  // const startTime = new Date(exam.startTime)
-  // const endTime = new Date(exam.endTime)
-  // return exam.status === 'PUBLISHED' && now >= startTime && now <= endTime
-  return true
-}
-
-const takeExam = (examId: number) => {
-  router.push(`/exams/${examId}/take`)
-}
-
 // AI批阅相关方法
 const goToPaperGeneration = () => {
   router.push('/paper-generation')
@@ -724,19 +1098,34 @@ const goToTaskMonitor = () => {
 
 .page-header {
   margin-bottom: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
 }
 
 .header-content {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  flex: 1;
 }
 
 .header-content h1 {
-  margin: 0;
+  margin: 0 0 8px 0;
   color: #303133;
   font-size: 24px;
   font-weight: 500;
+}
+
+.page-description {
+  margin: 0;
+  color: #909399;
+  font-size: 14px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 12px;
 }
 
 /* 功能卡片样式 */
@@ -883,6 +1272,106 @@ const goToTaskMonitor = () => {
   margin-top: 20px;
   display: flex;
   justify-content: center;
+}
+
+/* 发布对话框样式 */
+.publish-exam-dialog {
+  .form-help {
+    margin-top: 8px;
+    color: #666;
+    font-size: 14px;
+  }
+}
+
+.classroom-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.classroom-name {
+  font-weight: 500;
+}
+
+.classroom-code {
+  color: #666;
+  margin-left: 8px;
+}
+
+.classroom-students {
+  color: #909399;
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.selected-classrooms {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.available-classrooms {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.classroom-card {
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.selectable-classroom {
+  cursor: pointer;
+}
+
+.selectable-classroom:hover {
+  border-color: #409eff;
+  box-shadow: 0 2px 12px 0 rgba(64, 158, 255, 0.15);
+}
+
+.selectable-classroom.selected {
+  border-color: #409eff;
+  background-color: #f0f9ff;
+}
+
+.classroom-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.classroom-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.classroom-header h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.classroom-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #666;
+  font-size: 14px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.mb-4 {
+  margin-bottom: 16px;
 }
 
 /* 响应式样式 */

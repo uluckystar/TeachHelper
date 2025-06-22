@@ -44,7 +44,7 @@
         
         <el-form-item label="确认密码" prop="confirmPassword">
           <el-input
-            v-model="confirmPassword"
+            v-model="registerForm.confirmPassword"
             type="password"
             placeholder="请再次输入密码"
             show-password
@@ -53,10 +53,9 @@
         </el-form-item>
         
         <el-form-item label="角色" prop="roles">
-          <el-select v-model="selectedRole" placeholder="请选择角色" style="width: 100%">
+          <el-select v-model="registerForm.roles" placeholder="请选择角色" style="width: 100%" multiple :multiple-limit="1">
             <el-option label="学生" value="STUDENT" />
             <el-option label="教师" value="TEACHER" />
-            <el-option label="管理员" value="ADMIN" />
           </el-select>
         </el-form-item>
         
@@ -83,26 +82,70 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { reactive, ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import type { RegisterRequest } from '@/types/api'
+import { validateRegistration, securityChecks } from '@/utils/registerSecurity'
 
 const router = useRouter()
 const authStore = useAuthStore()
 
 const registerFormRef = ref<FormInstance>()
 const loading = ref(false)
-const confirmPassword = ref('')
-const selectedRole = ref('STUDENT')
 
-const registerForm = reactive<RegisterRequest>({
+// 获取可用的角色选项
+const availableRoles = computed(() => {
+  return securityChecks.getAvailableRoles(null) // null表示公开注册
+})
+
+// 本地表单对象（包含确认密码字段）
+const registerForm = reactive({
   username: '',
   email: '',
   password: '',
-  roles: []
+  confirmPassword: '',
+  roles: [] as string[]
 })
+
+// 监听密码字段变化，自动重新验证确认密码
+watch(() => registerForm.password, () => {
+  if (registerForm.confirmPassword && registerFormRef.value) {
+    registerFormRef.value.validateField('confirmPassword')
+  }
+})
+
+const validatePassword = (rule: any, value: any, callback: any) => {
+  const error = validateRegistration.password(value)
+  if (error) {
+    callback(new Error(error))
+  } else {
+    // 如果确认密码已经输入，重新验证确认密码
+    if (registerForm.confirmPassword && registerFormRef.value) {
+      registerFormRef.value.validateField('confirmPassword')
+    }
+    callback()
+  }
+}
+
+const validateUsername = (rule: any, value: any, callback: any) => {
+  const error = validateRegistration.username(value)
+  if (error) {
+    callback(new Error(error))
+  } else {
+    callback()
+  }
+}
+
+const validateEmail = (rule: any, value: any, callback: any) => {
+  const error = validateRegistration.email(value)
+  if (error) {
+    callback(new Error(error))
+  } else {
+    callback()
+  }
+}
 
 const validateConfirmPassword = (rule: any, value: any, callback: any) => {
   if (value === '') {
@@ -114,24 +157,30 @@ const validateConfirmPassword = (rule: any, value: any, callback: any) => {
   }
 }
 
+const validateRoles = (rule: any, value: any, callback: any) => {
+  const error = validateRegistration.roles(value)
+  if (error) {
+    callback(new Error(error))
+  } else {
+    callback()
+  }
+}
+
 const registerRules: FormRules = {
   username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 3, max: 20, message: '用户名长度在 3 到 20 个字符', trigger: 'blur' }
+    { required: true, validator: validateUsername, trigger: 'blur' }
   ],
   email: [
-    { required: true, message: '请输入邮箱地址', trigger: 'blur' },
-    { type: 'email', message: '请输入正确的邮箱地址', trigger: 'blur' }
+    { required: true, validator: validateEmail, trigger: 'blur' }
   ],
   password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, message: '密码长度不能少于 6 个字符', trigger: 'blur' }
+    { required: true, validator: validatePassword, trigger: 'blur' }
   ],
   confirmPassword: [
     { required: true, validator: validateConfirmPassword, trigger: 'blur' }
   ],
   roles: [
-    { required: true, message: '请选择角色', trigger: 'change' }
+    { required: true, validator: validateRoles, trigger: 'change' }
   ]
 }
 
@@ -142,18 +191,37 @@ const handleRegister = async () => {
     await registerFormRef.value.validate()
     loading.value = true
     
-    // 设置roles数组
-    registerForm.roles = [selectedRole.value]
+    // 验证角色选择
+    if (!registerForm.roles || registerForm.roles.length === 0 || !['STUDENT', 'TEACHER'].includes(registerForm.roles[0])) {
+      ElMessage.error('请选择有效的角色')
+      return
+    }
     
-    const success = await authStore.register(registerForm)
+    // 构建注册请求对象
+    const registerRequest: RegisterRequest = {
+      username: registerForm.username,
+      email: registerForm.email,
+      password: registerForm.password,
+      roles: registerForm.roles
+    }
+    
+    const success = await authStore.register(registerRequest)
     if (success) {
       ElMessage.success('注册成功，请登录')
       router.push('/login')
     } else {
       ElMessage.error('注册失败，请重试')
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Register validation failed:', error)
+    // 显示具体的错误信息
+    if (error.response?.data?.message) {
+      ElMessage.error(error.response.data.message)
+    } else if (error.message) {
+      ElMessage.error(error.message)
+    } else {
+      ElMessage.error('注册失败，请重试')
+    }
   } finally {
     loading.value = false
   }
@@ -175,8 +243,31 @@ const goToLogin = () => {
 }
 
 .register-card {
-  width: 400px;
+  width: 480px;
+  max-width: 90vw;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  overflow: visible;
+}
+
+/* 确保表单项有足够的间距和错误提示显示空间 */
+:deep(.el-form-item) {
+  margin-bottom: 28px;
+}
+
+/* 确保错误提示完整显示，不被遮挡 */
+:deep(.el-form-item__error) {
+  position: static !important;
+  padding-top: 4px;
+  line-height: 1.4;
+  word-wrap: break-word;
+  white-space: normal;
+  max-width: 100%;
+  font-size: 12px;
+  z-index: 1000;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin-top: 2px;
 }
 
 .card-header {

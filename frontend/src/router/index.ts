@@ -47,7 +47,8 @@ const router = createRouter({
           path: 'exams/:id',
           name: 'ExamDetail',
           component: () => import('@/views/exam/ExamDetailView.vue'),
-          props: true
+          props: true,
+          meta: { roles: ['ADMIN', 'TEACHER'] }
         },
         {
           path: 'exams/:id/edit',
@@ -215,6 +216,27 @@ const router = createRouter({
           meta: { roles: ['STUDENT'] }
         },
         {
+          path: 'my-exams/:examId',
+          name: 'StudentExamDetail',
+          component: () => import('@/views/student/StudentExamDetailView.vue'),
+          props: true,
+          meta: { roles: ['STUDENT'] }
+        },
+        {
+          path: 'my-exams/:examId/result',
+          name: 'StudentExamResult',
+          component: () => import('@/views/student/StudentExamResultView.vue'),
+          props: true,
+          meta: { roles: ['STUDENT'] }
+        },
+        {
+          path: 'my-exams/:examId/answers',
+          name: 'StudentExamAnswers',
+          component: () => import('@/views/student/StudentExamAnswersView.vue'),
+          props: true,
+          meta: { roles: ['STUDENT'] }
+        },
+        {
           path: 'users',
           name: 'UserManagement',
           component: () => import('@/views/admin/UserManagementView.vue'),
@@ -243,6 +265,12 @@ const router = createRouter({
           name: 'GradeLevelManagement',
           component: () => import('@/views/admin/GradeLevelManagementView.vue'),
           meta: { roles: ['ADMIN'] }
+        },
+        {
+          path: 'classrooms',
+          name: 'ClassroomManagement',
+          component: () => import('@/views/admin/ClassroomManagementView.vue'),
+          meta: { roles: ['ADMIN', 'TEACHER'] }
         },
         {
           path: 'profile',
@@ -322,14 +350,8 @@ const router = createRouter({
           props: true,
           meta: { roles: ['ADMIN', 'TEACHER'] }
         },
-        // 学生考试结果路由
-        {
-          path: 'exams/:examId/result',
-          name: 'StudentExamResult',
-          component: () => import('@/views/student/StudentExamResultView.vue'),
-          props: true,
-          meta: { roles: ['STUDENT'] }
-        }
+        // 学生考试结果路由 - 移除重复的路由定义
+        // 正确的路由应该是在学生功能区域: my-exams/:examId/result
       ]
     },
     {
@@ -402,8 +424,7 @@ router.beforeEach(async (to: any, from: any, next: any) => {
     next('/')
     return
   }
-  
-  // 检查角色权限
+   // 检查角色权限
   if (to.meta.roles && authStore.user) {
     const hasRole = (to.meta.roles as string[]).some(role => authStore.user?.roles?.includes(role))
     if (!hasRole) {
@@ -417,7 +438,32 @@ router.beforeEach(async (to: any, from: any, next: any) => {
       return
     }
   }
-  
+
+  // 特殊检查：学生进入考试页面时，检查是否已提交
+  if (to.name === 'TakeExam' && authStore.user?.roles?.includes('STUDENT')) {
+    const examId = parseInt(to.params.examId as string)
+    if (examId) {
+      try {
+        const { studentAnswerApi } = await import('@/api/answer')
+        const hasSubmitted = await studentAnswerApi.hasCurrentStudentSubmittedExam(examId)
+        if (hasSubmitted) {
+          if (import.meta.env.DEV) {
+            console.log('Route guard: Student has already submitted exam', { examId })
+          }
+          // 重定向到我的考试页面，显示提示信息
+          next({
+            path: '/my-exams',
+            query: { message: 'already_submitted', examId: examId.toString() }
+          })
+          return
+        }
+      } catch (error) {
+        console.error('Route guard: Failed to check exam submission status', error)
+        // 如果检查失败，允许进入但在页面内处理
+      }
+    }
+  }
+
   if (import.meta.env.DEV) {
     console.log('Route guard: Navigation allowed')
   }

@@ -64,18 +64,63 @@ public class AuthService {
             throw new RuntimeException("邮箱已被注册！");
         }
         
+        // Validate roles - only allow TEACHER and STUDENT registration
+        Set<Role> roles = registerRequest.getRoles();
+        if (roles == null || roles.isEmpty()) {
+            roles = Set.of(Role.STUDENT); // Default to STUDENT role
+        } else {
+            // Check if any invalid roles are being requested
+            for (Role role : roles) {
+                if (role == Role.ADMIN) {
+                    throw new RuntimeException("不允许通过注册创建管理员账户！");
+                }
+                if (role != Role.TEACHER && role != Role.STUDENT) {
+                    throw new RuntimeException("只允许注册教师或学生角色！");
+                }
+            }
+        }
+        
         // Create new user
         User user = new User();
         user.setUsername(registerRequest.getUsername());
         user.setEmail(registerRequest.getEmail());
         user.setPassword(passwordEncoder.encode(registerRequest.getPassword()));
-        
-        // Set default role if not provided
-        Set<Role> roles = registerRequest.getRoles();
-        if (roles == null || roles.isEmpty()) {
-            roles = Set.of(Role.TEACHER); // Default role
-        }
         user.setRoles(roles);
+        
+        // Set default properties for new users
+        user.setEnabled(true);
+        user.setLlmApiCallLimitPerDay(100); // Default API call limit
+        user.setLlmApiCallCountToday(0);
+        
+        return userRepository.save(user);
+    }
+    
+    /**
+     * 管理员专用注册方法
+     * 只能由管理员调用，用于创建新的管理员账户
+     */
+    public User registerAdmin(RegisterRequest registerRequest) {
+        // Check if username exists
+        if (userRepository.existsByUsername(registerRequest.getUsername())) {
+            throw new RuntimeException("用户名已存在！");
+        }
+        
+        // Check if email exists
+        if (userRepository.existsByEmail(registerRequest.getEmail())) {
+            throw new RuntimeException("邮箱已被注册！");
+        }
+        
+        // Create new admin user
+        User user = new User();
+        user.setUsername(registerRequest.getUsername());
+        user.setEmail(registerRequest.getEmail());
+        user.setPassword(passwordEncoder.encode(registerRequest.getPassword()));
+        user.setRoles(Set.of(Role.ADMIN)); // Force admin role
+        
+        // Set default properties for new admin users
+        user.setEnabled(true);
+        user.setLlmApiCallLimitPerDay(500); // Higher limit for admins
+        user.setLlmApiCallCountToday(0);
         
         return userRepository.save(user);
     }

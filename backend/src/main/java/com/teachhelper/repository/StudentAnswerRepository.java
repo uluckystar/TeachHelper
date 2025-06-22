@@ -79,13 +79,26 @@ public interface StudentAnswerRepository extends JpaRepository<StudentAnswer, Lo
     @Query("SELECT AVG(sa.score) FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.isEvaluated = true")
     double findAverageScoreByExamId(@Param("examId") Long examId);
 
+    @Query("SELECT MAX(sa.score) FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.isEvaluated = true")
+    Double findMaxScoreByExamId(@Param("examId") Long examId);
+
+    @Query("SELECT MIN(sa.score) FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.isEvaluated = true")
+    Double findMinScoreByExamId(@Param("examId") Long examId);
+
     boolean existsByStudentStudentIdAndQuestionId(String studentId, Long questionId);
+    
+    // 查找现有的学生答案（用于更新）
+    @Query("SELECT sa FROM StudentAnswer sa WHERE sa.student.studentId = :studentId AND sa.question.id = :questionId")
+    StudentAnswer findByStudentStudentIdAndQuestionId(@Param("studentId") String studentId, @Param("questionId") Long questionId);
     
     @Query("SELECT COUNT(DISTINCT sa.student.id) FROM StudentAnswer sa WHERE sa.question.exam.id = :examId")
     long countDistinctStudentByQuestionExamId(@Param("examId") Long examId);
     
     @Query("SELECT sa FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.student.id = :studentId ORDER BY sa.createdAt")
     List<StudentAnswer> findByQuestionExamIdAndStudentId(@Param("examId") Long examId, @Param("studentId") Long studentId);
+    
+    @Query("SELECT sa FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.student.studentId = :studentId ORDER BY sa.createdAt")
+    List<StudentAnswer> findByQuestionExamIdAndStudentStudentId(@Param("examId") Long examId, @Param("studentId") String studentId);
     
     // 带FETCH JOIN的查询方法，用于批量评估时避免LazyInitializationException
     @Query("SELECT sa FROM StudentAnswer sa " +
@@ -101,4 +114,18 @@ public interface StudentAnswerRepository extends JpaRepository<StudentAnswer, Lo
            "JOIN FETCH sa.student s " +
            "WHERE sa.id = :answerId")
     StudentAnswer findByIdWithFetch(@Param("answerId") Long answerId);
+    
+    // 检查学生是否已提交指定考试的方法
+    @Query("SELECT COUNT(sa) > 0 FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.student.studentId = :studentId")
+    boolean existsByQuestionExamIdAndStudentStudentId(@Param("examId") Long examId, @Param("studentId") String studentId);
+    
+    // 通过 users.username 查询学生答案 (使用原生SQL)
+    @Query(value = "SELECT sa.* FROM student_answers sa " +
+                   "JOIN students s ON sa.student_id = s.id " +
+                   "JOIN users u ON s.student_id = u.id " +
+                   "JOIN questions q ON sa.question_id = q.id " +
+                   "WHERE q.exam_id = :examId AND u.username = :username " +
+                   "ORDER BY sa.created_at", 
+           nativeQuery = true)
+    List<StudentAnswer> findByQuestionExamIdAndUsername(@Param("examId") Long examId, @Param("username") String username);
 }

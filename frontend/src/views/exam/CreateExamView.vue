@@ -140,10 +140,13 @@ const handleSubmit = async () => {
     await examFormRef.value.validate()
     loading.value = true
     
-    // 只发送后端需要的字段
+    // 创建考试请求，包含时间字段
     const createRequest: ExamCreateRequest = {
       title: examForm.title,
-      description: examForm.description
+      description: examForm.description,
+      duration: examForm.duration,
+      startTime: examForm.startTime,
+      endTime: examForm.endTime
     }
     
     const exam = await examApi.createExam(createRequest)
@@ -183,5 +186,69 @@ const handleCancel = () => {
   color: #909399;
   font-size: 12px;
   margin-left: 8px;
+}
+
+.classroom-selection {
+  width: 100%;
+}
+
+.classroom-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.classroom-name {
+  font-weight: 500;
+}
+
+.classroom-code {
+  color: #909399;
+  margin-left: 8px;
+}
+
+.classroom-students {
+  color: #409eff;
+  font-size: 12px;
+}
+
+.selected-classrooms {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.classroom-card {
+  border: 1px solid #e4e7ed;
+}
+
+.classroom-info {
+  padding: 8px;
+}
+
+.classroom-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.classroom-header h4 {
+  margin: 0;
+  font-size: 14px;
+  color: #303133;
+}
+
+.classroom-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #909399;
+}
+
+.mb-4 {
+  margin-bottom: 16px;
 }
 </style>

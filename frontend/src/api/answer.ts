@@ -121,7 +121,35 @@ export const studentAnswerApi = {
       responseType: 'blob'
     })
     return response.data
-  }
+  },
+
+  // 检查学生是否已提交考试
+  async hasStudentSubmittedExam(examId: number, studentId: number): Promise<boolean> {
+    const response = await api.get<boolean>(`/student-answers/exam/${examId}/student/${studentId}/submitted`)
+    return response.data
+  },
+
+  // 检查当前学生是否已提交考试
+  async hasCurrentStudentSubmittedExam(examId: number): Promise<boolean> {
+    const response = await api.get<boolean>(`/student-answers/exam/${examId}/my-submission-status`)
+    return response.data
+  },
+
+  // 获取当前学生的提交详情
+  async getSubmissionDetail(examId: number): Promise<{
+    submittedAt: string
+    answeredQuestions: number
+    totalQuestions: number
+    score: number | null
+  }> {
+    const response = await api.get(`/student-answers/exam/${examId}/my-submission-detail`)
+    return response.data
+  },
+
+  // 正式提交整个考试
+  async submitExam(examId: number): Promise<void> {
+    await api.post(`/student-answers/exam/${examId}/submit`)
+  },
 }
 
 // 导出answerApi作为默认导出和命名导出

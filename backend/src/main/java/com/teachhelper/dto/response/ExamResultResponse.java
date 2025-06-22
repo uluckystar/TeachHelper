@@ -11,11 +11,16 @@ import com.fasterxml.jackson.annotation.JsonFormat;
 public class ExamResultResponse {
     
     private Long examId;
+    private String examTitle;
+    private String examDescription;
     private Long studentId;
     private String studentName;
     private Double totalScore;
     private Integer answeredQuestions;
     private String status;
+    private Double totalPossibleScore; // 考试满分
+    private Double scorePercentage; // 得分率
+    private String grade; // 成绩等级
     
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime startTime;
@@ -52,6 +57,22 @@ public class ExamResultResponse {
     
     public void setExamId(Long examId) {
         this.examId = examId;
+    }
+    
+    public String getExamTitle() {
+        return examTitle;
+    }
+    
+    public void setExamTitle(String examTitle) {
+        this.examTitle = examTitle;
+    }
+    
+    public String getExamDescription() {
+        return examDescription;
+    }
+    
+    public void setExamDescription(String examDescription) {
+        this.examDescription = examDescription;
     }
     
     public Long getStudentId() {
@@ -124,6 +145,30 @@ public class ExamResultResponse {
 
     public void setAnswers(List<StudentAnswerResponse> answers) {
         this.answers = answers;
+    }
+
+    public Double getTotalPossibleScore() {
+        return totalPossibleScore;
+    }
+
+    public void setTotalPossibleScore(Double totalPossibleScore) {
+        this.totalPossibleScore = totalPossibleScore;
+    }
+
+    public Double getScorePercentage() {
+        return scorePercentage;
+    }
+
+    public void setScorePercentage(Double scorePercentage) {
+        this.scorePercentage = scorePercentage;
+    }
+
+    public String getGrade() {
+        return grade;
+    }
+
+    public void setGrade(String grade) {
+        this.grade = grade;
     }
 
     // Setter for userId, assuming it was missing and named studentId in the constructor

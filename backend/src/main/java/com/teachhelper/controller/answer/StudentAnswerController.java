@@ -2,6 +2,7 @@ package com.teachhelper.controller.answer;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +16,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,6 +34,7 @@ import com.teachhelper.dto.response.StudentAnswerResponse;
 import com.teachhelper.entity.Question;
 import com.teachhelper.entity.Student;
 import com.teachhelper.entity.StudentAnswer;
+import com.teachhelper.service.exam.ExamSubmissionService;
 import com.teachhelper.service.question.QuestionService;
 import com.teachhelper.service.student.StudentAnswerService;
 
@@ -48,6 +52,9 @@ public class StudentAnswerController {
     
     @Autowired
     private QuestionService questionService;
+    
+    @Autowired
+    private ExamSubmissionService examSubmissionService;
     
     @PostMapping
     @Operation(summary = "提交学生答案", description = "学生提交答案")
@@ -134,13 +141,27 @@ public class StudentAnswerController {
     @Operation(summary = "获取我的考试答案", description = "学生获取自己在指定考试中的答案")
     @PreAuthorize("hasRole('STUDENT') or hasRole('TEACHER') or hasRole('ADMIN')")
     public ResponseEntity<List<StudentAnswerResponse>> getMyAnswersByExam(@PathVariable Long examId) {
-        // TODO: 在实际实现中，应该根据当前登录用户过滤答案
-        // 目前暂时返回考试的所有答案，但应该只返回当前学生的答案
-        List<StudentAnswer> answers = studentAnswerService.getAnswersByExamId(examId);
-        List<StudentAnswerResponse> responses = answers.stream()
-            .map(this::convertToResponse)
-            .collect(Collectors.toList());
-        return ResponseEntity.ok(responses);
+        try {
+            // 获取当前登录用户的用户名
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            String currentUsername = authentication.getName();
+            
+            System.out.println("=== getMyAnswersByExam ===");
+            System.out.println("examId: " + examId + ", username: " + currentUsername);
+            
+            // 获取当前学生在指定考试中的答案
+            List<StudentAnswer> answers = studentAnswerService.getAnswersByExamIdAndUsername(examId, currentUsername);
+            List<StudentAnswerResponse> responses = answers.stream()
+                .map(this::convertToResponse)
+                .collect(Collectors.toList());
+                
+            System.out.println("返回答案数量: " + responses.size());
+            return ResponseEntity.ok(responses);
+        } catch (Exception e) {
+            System.out.println("获取我的考试答案失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.ok(List.of()); // 返回空列表而不是错误
+        }
     }
     
     @GetMapping("/unevaluated")
@@ -281,6 +302,77 @@ public class StudentAnswerController {
         }
     }
     
+    @GetMapping("/exam/{examId}/student/{studentId}/submitted")
+    @Operation(summary = "检查学生是否已提交考试", description = "检查指定学生是否已提交指定考试")
+    @PreAuthorize("hasRole('STUDENT') or hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<Boolean> hasStudentSubmittedExam(@PathVariable Long examId, @PathVariable Long studentId) {
+        boolean hasSubmitted = studentAnswerService.hasStudentSubmittedExam(examId, studentId);
+        return ResponseEntity.ok(hasSubmitted);
+    }
+    
+    @GetMapping("/exam/{examId}/my-submission-status")
+    @Operation(summary = "检查当前学生是否已提交考试", description = "学生检查自己是否已提交指定考试")
+    @PreAuthorize("hasRole('STUDENT')")
+    public ResponseEntity<Boolean> hasCurrentStudentSubmittedExam(@PathVariable Long examId) {
+        try {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            String studentId = authentication.getName();
+            
+            System.out.println("=== hasCurrentStudentSubmittedExam ===");
+            System.out.println("examId: " + examId + ", studentId: " + studentId);
+            
+            boolean hasSubmitted = examSubmissionService.hasStudentSubmittedExam(examId, studentId);
+            System.out.println("hasSubmitted: " + hasSubmitted);
+            
+            return ResponseEntity.ok(hasSubmitted);
+        } catch (Exception e) {
+            System.out.println("检查提交状态时出错: " + e.getMessage());
+            e.printStackTrace();
+            // 如果获取用户信息失败，返回false（保守处理）
+            return ResponseEntity.ok(false);
+        }
+    }
+    
+    @GetMapping("/exam/{examId}/my-submission-detail")
+    @Operation(summary = "获取当前学生的提交详情", description = "学生查看自己的考试提交详情")
+    @PreAuthorize("hasRole('STUDENT')")
+    public ResponseEntity<Map<String, Object>> getCurrentStudentSubmissionDetail(@PathVariable Long examId) {
+        try {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            String username = authentication.getName();
+            
+            Map<String, Object> submissionDetail = examSubmissionService.getStudentSubmissionDetail(examId, username);
+            return ResponseEntity.ok(submissionDetail);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", "获取提交详情失败: " + e.getMessage()));
+        }
+    }
+    
+    @PostMapping("/exam/{examId}/submit")
+    @Operation(summary = "正式提交整个考试", description = "学生正式提交整个考试，标记为已完成")
+    @PreAuthorize("hasRole('STUDENT') or hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<Void> submitExam(@PathVariable Long examId) {
+        try {
+            // 获取当前用户
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            String currentUsername = auth.getName();
+            
+            // 获取用户信息来得到用户ID
+            // 由于我们需要用户ID来查找学生记录，我们需要另一种方式
+            // 暂时使用用户名，但需要在ExamSubmissionService中处理
+            System.out.println("submitExam called with examId: " + examId + ", username: " + currentUsername);
+            
+            // 通过ExamSubmissionService提交考试
+            examSubmissionService.submitExam(examId, currentUsername, false);
+            
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            System.out.println("submitExam error: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
     private StudentAnswerResponse convertToResponse(StudentAnswer answer) {
         StudentAnswerResponse response = new StudentAnswerResponse();
         response.setId(answer.getId());

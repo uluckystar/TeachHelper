@@ -2,8 +2,11 @@ package com.teachhelper.entity;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -11,6 +14,8 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
@@ -58,12 +63,14 @@ public class Exam extends BaseEntity {
      * 考试开始时间
      */
     @Column(name = "start_time")
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime startTime;
     
     /**
      * 考试结束时间
      */
     @Column(name = "end_time")
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime endTime;
     
     /**
@@ -79,6 +86,19 @@ public class Exam extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by_id", nullable = false)
     private User createdBy;
+    
+    /**
+     * 目标班级列表
+     * 多对多关系，指向此考试发布到的班级列表
+     * 可选字段，如果为空则表示全校考试或未指定班级
+     */
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+        name = "exam_classrooms",
+        joinColumns = @JoinColumn(name = "exam_id"),
+        inverseJoinColumns = @JoinColumn(name = "classroom_id")
+    )
+    private Set<Classroom> targetClassrooms = new HashSet<>();
     
     /**
      * 考试题目列表
@@ -256,6 +276,38 @@ public class Exam extends BaseEntity {
      */
     public void setCreatedBy(User createdBy) {
         this.createdBy = createdBy;
+    }
+    
+    /**
+     * 获取目标班级列表
+     * @return 目标班级列表
+     */
+    public Set<Classroom> getTargetClassrooms() {
+        return targetClassrooms;
+    }
+    
+    /**
+     * 设置目标班级列表
+     * @param targetClassrooms 目标班级列表
+     */
+    public void setTargetClassrooms(Set<Classroom> targetClassrooms) {
+        this.targetClassrooms = targetClassrooms;
+    }
+    
+    /**
+     * 添加目标班级
+     * @param classroom 要添加的班级
+     */
+    public void addTargetClassroom(Classroom classroom) {
+        this.targetClassrooms.add(classroom);
+    }
+    
+    /**
+     * 移除目标班级
+     * @param classroom 要移除的班级
+     */
+    public void removeTargetClassroom(Classroom classroom) {
+        this.targetClassrooms.remove(classroom);
     }
     
     /**

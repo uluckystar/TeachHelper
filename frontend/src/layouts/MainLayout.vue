@@ -25,20 +25,18 @@
             <span>首页</span>
           </el-menu-item>
           
-          <el-sub-menu index="exams">
+          <!-- 教师/管理员考试管理 -->
+          <el-sub-menu v-if="authStore.isTeacher || authStore.isAdmin" index="exams">
             <template #title>
               <el-icon><Document /></el-icon>
               <span>考试管理</span>
             </template>
             <el-menu-item index="/exams">考试管理中心</el-menu-item>
-            <el-menu-item v-if="authStore.isTeacher || authStore.isAdmin" index="/exams/create">
-              创建考试
-            </el-menu-item>
-            <el-menu-item v-if="authStore.isTeacher || authStore.isAdmin" index="/paper-generation">
-              AI试卷生成
-            </el-menu-item>
+            <el-menu-item index="/exams/create">创建考试</el-menu-item>
+            <el-menu-item index="/paper-generation">AI试卷生成</el-menu-item>
           </el-sub-menu>
           
+          <!-- 学生考试功能 -->
           <el-sub-menu v-if="authStore.isStudent" index="student">
             <template #title>
               <el-icon><UserFilled /></el-icon>

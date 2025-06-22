@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中文用户名验证测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .test-case {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        .input-test {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin: 5px;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>中文用户名验证测试</h1>
+    
+    <h2>测试用例</h2>
+    <div id="test-results"></div>
+    
+    <div class="input-test">
+        <h3>手动测试</h3>
+        <input type="text" id="testInput" placeholder="输入用户名进行测试" />
+        <button onclick="testUsername()">验证</button>
+        <div id="manual-result" class="result"></div>
+    </div>
+
+    <script>
+        // 复制前端验证逻辑
+        const validateRegistration = {
+            username: (username) => {
+                if (!username) {
+                    return '用户名不能为空'
+                }
+                
+                // 检查字符是否合法（中文、英文、数字、下划线）
+                const validCharPattern = /^[\u4e00-\u9fff\u3400-\u4dbfa-zA-Z0-9_]+$/
+                if (!validCharPattern.test(username)) {
+                    return '用户名只能包含中文、英文、数字和下划线'
+                }
+                
+                // 检查长度：中文字符2-50个，英文字符3-50个
+                const chineseCharCount = (username.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length
+                const totalLength = username.length
+                
+                if (totalLength > 50) {
+                    return '用户名长度不能超过50个字符'
+                }
+                
+                // 如果包含中文字符，最少2个字符
+                if (chineseCharCount > 0) {
+                    if (totalLength < 2) {
+                        return '包含中文的用户名至少需要2个字符'
+                    }
+                } else {
+                    // 纯英文数字组合，最少3个字符
+                    if (totalLength < 3) {
+                        return '英文用户名至少需要3个字符'
+                    }
+                }
+                
+                // 检查保留词
+                const reservedWords = ['admin', 'root', 'system', 'administrator', 'teacher', 'student', '管理员', '教师', '学生', '系统']
+                const lowerUsername = username.toLowerCase()
+                for (const reserved of reservedWords) {
+                    if (lowerUsername === reserved.toLowerCase() || username === reserved) {
+                        return '用户名不能使用保留词'
+                    }
+                }
+                
+                return null
+            }
+        }
+
+        // 测试用例
+        const testCases = [
+            { username: '王平', expected: null, description: '两个中文字符' },
+            { username: '李小明', expected: null, description: '三个中文字符' },
+            { username: '张三', expected: null, description: '两个中文字符' },
+            { username: '王', expected: '包含中文的用户名至少需要2个字符', description: '一个中文字符（应该失败）' },
+            { username: 'john', expected: null, description: '四个英文字符' },
+            { username: 'ab', expected: '英文用户名至少需要3个字符', description: '两个英文字符（应该失败）' },
+            { username: 'abc', expected: null, description: '三个英文字符' },
+            { username: '王平123', expected: null, description: '中文加数字' },
+            { username: 'user_123', expected: null, description: '英文数字下划线' },
+            { username: '学生', expected: '用户名不能使用保留词', description: '保留词（应该失败）' },
+            { username: 'admin', expected: '用户名不能使用保留词', description: '保留词（应该失败）' },
+            { username: '王@平', expected: '用户名只能包含中文、英文、数字和下划线', description: '包含特殊字符（应该失败）' },
+            { username: '', expected: '用户名不能为空', description: '空用户名（应该失败）' }
+        ]
+
+        function runTests() {
+            const resultsDiv = document.getElementById('test-results')
+            
+            testCases.forEach((testCase, index) => {
+                const result = validateRegistration.username(testCase.username)
+                const passed = result === testCase.expected
+                
+                const div = document.createElement('div')
+                div.className = `test-case ${passed ? 'success' : 'error'}`
+                div.innerHTML = `
+                    <strong>测试 ${index + 1}: ${testCase.description}</strong><br>
+                    输入: "${testCase.username}"<br>
+                    期望结果: ${testCase.expected || '通过'}<br>
+                    实际结果: ${result || '通过'}<br>
+                    状态: ${passed ? '✅ 通过' : '❌ 失败'}
+                `
+                resultsDiv.appendChild(div)
+            })
+        }
+
+        function testUsername() {
+            const input = document.getElementById('testInput').value
+            const result = validateRegistration.username(input)
+            const resultDiv = document.getElementById('manual-result')
+            
+            if (result) {
+                resultDiv.className = 'result error'
+                resultDiv.innerHTML = `❌ 验证失败: ${result}`
+            } else {
+                resultDiv.className = 'result success'
+                resultDiv.innerHTML = '✅ 验证通过！'
+            }
+        }
+
+        // 页面加载时运行测试
+        document.addEventListener('DOMContentLoaded', runTests)
+    </script>
+</body>
+</html>

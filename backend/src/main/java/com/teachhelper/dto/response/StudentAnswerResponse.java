@@ -13,6 +13,7 @@ public class StudentAnswerResponse {
     private Double score;
     private String feedback;
     private boolean isEvaluated;
+    private Double maxScore; // 题目的满分
     private LocalDateTime submittedAt;
     private LocalDateTime evaluatedAt;
     private String evaluator;
@@ -90,6 +91,14 @@ public class StudentAnswerResponse {
     public void setEvaluated(boolean evaluated) {
         isEvaluated = evaluated;
     }
+
+    public Double getMaxScore() {
+        return maxScore;
+    }
+
+    public void setMaxScore(Double maxScore) {
+        this.maxScore = maxScore;
+    }
     
     public LocalDateTime getSubmittedAt() {
         return submittedAt;
@@ -123,6 +132,9 @@ public class StudentAnswerResponse {
             dto.setQuestionId(studentAnswer.getQuestion().getId());
             dto.setQuestionTitle(studentAnswer.getQuestion().getTitle()); // Assuming Question entity has getTitle()
             dto.setQuestionContent(studentAnswer.getQuestion().getContent()); // Assuming Question entity has getContent()
+            // 设置题目的满分
+            dto.setMaxScore(studentAnswer.getQuestion().getMaxScore() != null ? 
+                studentAnswer.getQuestion().getMaxScore().doubleValue() : 0.0);
         }
         if (studentAnswer.getStudent() != null) {
             // Use Student entity's correct method getName() instead of getUsername()

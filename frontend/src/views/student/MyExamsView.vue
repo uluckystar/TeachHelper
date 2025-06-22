@@ -1,8 +1,16 @@
 <template>
   <div class="my-exams">
     <div class="page-header">
-      <h1>我的考试</h1>
-      <p class="page-description">查看和管理你的考试记录</p>
+      <div class="header-content">
+        <h1>我的考试</h1>
+        <p class="page-description">查看和管理你的考试记录</p>
+      </div>
+      <div class="header-actions">
+        <el-button type="primary" @click="goToExamList">
+          <el-icon><Edit /></el-icon>
+          参加新考试
+        </el-button>
+      </div>
     </div>
 
     <!-- 统计卡片 -->
@@ -86,15 +94,22 @@
           v-for="exam in exams" 
           :key="exam.id"
           class="exam-item"
+          :class="{ 'exam-submitted': exam.hasSubmitted }"
         >
+          <!-- 已提交标识 -->
+          <div v-if="exam.hasSubmitted" class="submitted-badge">
+            <el-icon size="20"><CircleCheckFilled /></el-icon>
+            <span>已提交</span>
+          </div>
+          
           <div class="exam-header">
             <div class="exam-info">
               <h3 class="exam-title">{{ exam.title }}</h3>
               <p class="exam-description">{{ exam.description || '暂无描述' }}</p>
             </div>
             <div class="exam-status">
-              <el-tag :type="getStatusTag(exam.status || '') as any">
-                {{ getStatusText(exam.status || '') }}
+              <el-tag :type="getStatusTag(exam)">
+                {{ getStatusText(exam) }}
               </el-tag>
             </div>
           </div>
@@ -147,28 +162,52 @@
 
           <div class="exam-actions">
             <el-button-group>
+              <!-- 主要操作按钮：参加考试/查看结果 -->
               <el-button 
-                v-if="exam.status === 'PENDING'"
+                v-if="canTakeExam(exam)"
                 type="primary" 
-                @click="startExam(exam.id.toString())"
+                icon="Edit"
+                @click="takeExam(exam.id.toString())"
               >
-                开始考试
+                {{ getExamActionText(exam) }}
               </el-button>
+              
+              <!-- 已提交状态按钮（禁用） -->
               <el-button 
-                v-if="exam.status === 'IN_PROGRESS'"
-                type="warning" 
-                @click="continueExam(exam.id.toString())"
+                v-if="exam.hasSubmitted && !canViewResult(exam)"
+                type="success" 
+                icon="CircleCheckFilled"
+                disabled
               >
-                继续考试
+                已提交
               </el-button>
+              
+              <!-- 查看结果按钮 -->
               <el-button 
-                v-if="exam.status === 'COMPLETED' || exam.status === 'EVALUATED'"
+                v-if="canViewResult(exam)"
+                type="success"
+                icon="View"
                 @click="viewResults(exam.id.toString())"
               >
-                查看结果
+                查看成绩
               </el-button>
-              <el-button @click="viewExamDetail(exam.id.toString())">
-                考试详情
+              
+              <!-- 查看答案按钮：仅在教师允许时显示 -->
+              <el-button 
+                v-if="canViewAnswers(exam)"
+                type="info"
+                icon="Document"
+                @click="viewMyAnswers(exam.id.toString())"
+              >
+                查看答卷
+              </el-button>
+              
+              <!-- 考试信息按钮：改为更明确的名称 -->
+              <el-button 
+                icon="InfoFilled"
+                @click="viewExamDetail(exam.id.toString())"
+              >
+                考试信息
               </el-button>
             </el-button-group>
           </div>
@@ -180,12 +219,15 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { 
   Document, 
   CircleCheckFilled, 
   Clock, 
-  TrendCharts 
+  TrendCharts,
+  Edit,
+  View,
+  InfoFilled
 } from '@element-plus/icons-vue'
 import { examApi } from '@/api/exam'
 import { ElMessage } from 'element-plus'
@@ -199,9 +241,11 @@ interface StudentExam extends Omit<ExamResponse, 'status'> {
   myScore?: number
   completedAt?: string
   timeUsed?: string
+  hasSubmitted?: boolean  // 新增：是否已提交
 }
 
 const router = useRouter()
+const route = useRoute()
 
 const loading = ref(false)
 const statusFilter = ref('')
@@ -216,17 +260,34 @@ const stats = ref({
 const loadExams = async () => {
   loading.value = true
   try {
-    const params = statusFilter.value ? { status: statusFilter.value } : {}
-    const response = await examApi.getMyExams(params)
-    exams.value = response.data || []
+    // 使用学生专用的考试列表API
+    const response = await examApi.getStudentExams()
+    exams.value = response || []
+    
+    // 为每个考试检查提交状态
+    const { studentAnswerApi } = await import('@/api/answer')
+    const submissionChecks = exams.value.map(async (exam: StudentExam) => {
+      try {
+        exam.hasSubmitted = await studentAnswerApi.hasCurrentStudentSubmittedExam(exam.id)
+      } catch (error) {
+        console.error('检查考试提交状态失败:', error)
+        exam.hasSubmitted = false
+      }
+    })
+    await Promise.all(submissionChecks)
+    
+    // 如果有状态筛选，在前端过滤
+    if (statusFilter.value) {
+      exams.value = exams.value.filter((exam: any) => exam.status === statusFilter.value)
+    }
     
     // 计算统计信息
     stats.value.totalExams = exams.value.length
     stats.value.completedExams = exams.value.filter((exam: any) => 
-      ['COMPLETED', 'EVALUATED'].includes(exam.status)
+      ['COMPLETED', 'EVALUATED', 'ENDED'].includes(exam.status) || exam.hasSubmitted
     ).length
     stats.value.pendingExams = exams.value.filter((exam: any) => 
-      exam.status === 'PENDING'
+      exam.status === 'PUBLISHED' && !exam.hasSubmitted
     ).length
     
     const scores = exams.value
@@ -248,36 +309,70 @@ const goToExamList = () => {
   router.push('/exams')
 }
 
-const startExam = (examId: string) => {
-  router.push(`/exams/${examId}/take`)
-}
-
-const continueExam = (examId: string) => {
+const takeExam = (examId: string) => {
   router.push(`/exams/${examId}/take`)
 }
 
 const viewResults = (examId: string) => {
-  router.push(`/exams/${examId}/results`)
+  router.push(`/my-exams/${examId}/result`)
+}
+
+const viewMyAnswers = (examId: string) => {
+  router.push(`/my-exams/${examId}/answers`)
 }
 
 const viewExamDetail = (examId: string) => {
-  router.push(`/exams/${examId}`)
+  // 使用学生专用的考试详情页面
+  router.push(`/my-exams/${examId}`)
 }
 
-const getStatusTag = (status: string) => {
-  const map: Record<string, string> = {
+// 判断是否可以参加考试
+const canTakeExam = (exam: StudentExam) => {
+  // 如果已经提交过，不能再参加
+  if (exam.hasSubmitted) return false
+  
+  return exam.status === 'PUBLISHED' || exam.status === 'IN_PROGRESS' || exam.status === 'PENDING'
+}
+
+// 判断是否可以查看结果
+const canViewResult = (exam: StudentExam) => {
+  return exam.status === 'COMPLETED' || exam.status === 'EVALUATED' || exam.status === 'ENDED'
+}
+
+// 判断是否可以查看答案
+const canViewAnswers = (exam: StudentExam) => {
+  // 只有已完成且教师允许查看答案时才显示，避免与查看成绩重复
+  return (exam.status === 'COMPLETED' || exam.status === 'EVALUATED' || exam.status === 'ENDED') &&
+         exam.myScore !== null && exam.myScore !== undefined
+}
+
+// 获取考试操作按钮文本
+const getExamActionText = (exam: StudentExam) => {
+  if (exam.hasSubmitted) return '已提交'
+  if (exam.status === 'PENDING') return '开始考试'
+  if (exam.status === 'IN_PROGRESS') return '继续考试'
+  if (exam.status === 'PUBLISHED') return '参加考试'
+  return '查看考试'
+}
+
+const getStatusTag = (exam: StudentExam): 'success' | 'info' | 'warning' | 'danger' | 'primary' => {
+  if (exam.hasSubmitted) return 'success'
+  
+  const map: Record<string, 'success' | 'info' | 'warning' | 'danger' | 'primary'> = {
     'PENDING': 'info',
     'IN_PROGRESS': 'warning',
     'COMPLETED': 'primary',
     'EVALUATED': 'success',
     'DRAFT': 'info',
-    'PUBLISHED': 'success',
-    'ENDED': 'warning'
+    'PUBLISHED': 'warning',
+    'ENDED': 'danger'
   }
-  return map[status] || 'info'
+  return map[exam.status || ''] || 'info'
 }
 
-const getStatusText = (status: string) => {
+const getStatusText = (exam: StudentExam) => {
+  if (exam.hasSubmitted) return '已提交'
+  
   const map: Record<string, string> = {
     'PENDING': '待开始',
     'IN_PROGRESS': '进行中',
@@ -287,7 +382,7 @@ const getStatusText = (status: string) => {
     'PUBLISHED': '可参加',
     'ENDED': '已结束'
   }
-  return map[status] || status
+  return map[exam.status || ''] || exam.status || '未知'
 }
 
 const formatDate = (dateString: string) => {
@@ -296,6 +391,11 @@ const formatDate = (dateString: string) => {
 }
 
 onMounted(() => {
+  // 检查是否有来自路由守卫的提示信息
+  if (route.query.message === 'already_submitted') {
+    ElMessage.warning('你已经提交过该考试，不能重复参加')
+  }
+  
   loadExams()
 })
 </script>
@@ -307,19 +407,27 @@ onMounted(() => {
 }
 
 .page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
   margin-bottom: 24px;
 }
 
-.page-header h1 {
+.header-content h1 {
   margin: 0 0 8px 0;
   font-size: 24px;
   font-weight: 600;
+  color: #303133;
 }
 
 .page-description {
   margin: 0;
-  color: #666;
+  color: #909399;
   font-size: 14px;
+}
+
+.header-actions {
+  flex-shrink: 0;
 }
 
 .stats-row {
@@ -388,11 +496,39 @@ onMounted(() => {
   border-radius: 8px;
   padding: 20px;
   transition: all 0.3s;
+  position: relative;
 }
 
 .exam-item:hover {
   border-color: #409eff;
   box-shadow: 0 2px 8px rgba(64, 158, 255, 0.1);
+}
+
+/* 已提交的考试样式 */
+.exam-item.exam-submitted {
+  background-color: #f0f9ff;
+  border-color: #67c23a;
+}
+
+.exam-item.exam-submitted:hover {
+  border-color: #67c23a;
+  box-shadow: 0 2px 8px rgba(103, 194, 58, 0.1);
+}
+
+/* 已提交标识 */
+.submitted-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: #67c23a;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  z-index: 10;
 }
 
 .exam-header {

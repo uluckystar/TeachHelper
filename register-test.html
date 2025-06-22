@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>注册功能测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .result {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 13px;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+    </style>
+</head>
+<body>
+    <h1>注册功能测试</h1>
+    
+    <div class="test-container">
+        <h3>前端注册功能测试</h3>
+        <p>测试前端Vue页面的注册功能，包括密码确认验证</p>
+        
+        <div class="form-group">
+            <label>测试URL:</label>
+            <input type="text" id="frontendUrl" value="http://localhost:5173/register" readonly>
+        </div>
+        
+        <button onclick="openFrontend()">打开前端注册页面</button>
+        
+        <div class="result info" style="margin-top: 15px;">
+            <strong>测试步骤：</strong><br>
+            1. 点击上面的按钮打开前端注册页面<br>
+            2. 尝试输入不同的密码和确认密码<br>
+            3. 观察是否显示"两次输入密码不一致"错误<br>
+            4. 确保密码一致时错误消失<br>
+            5. 测试其他安全验证（用户名格式、密码强度等）
+        </div>
+    </div>
+
+    <div class="test-container">
+        <h3>后端API直接测试</h3>
+        <form id="testForm">
+            <div class="form-group">
+                <label>用户名:</label>
+                <input type="text" name="username" value="testuser123" required>
+            </div>
+            
+            <div class="form-group">
+                <label>邮箱:</label>
+                <input type="email" name="email" value="testuser123@example.com" required>
+            </div>
+            
+            <div class="form-group">
+                <label>密码:</label>
+                <input type="password" name="password" value="Test123456" required>
+            </div>
+            
+            <div class="form-group">
+                <label>角色:</label>
+                <select name="role" required>
+                    <option value="STUDENT">学生</option>
+                    <option value="TEACHER">教师</option>
+                </select>
+            </div>
+            
+            <button type="submit">测试注册API</button>
+        </form>
+        
+        <div id="apiResult" class="result" style="display: none;"></div>
+    </div>
+
+    <div class="test-container">
+        <h3>安全性测试</h3>
+        <div class="form-group">
+            <button onclick="testAdminRegister()">测试管理员注册（应该失败）</button>
+        </div>
+        <div class="form-group">
+            <button onclick="testWeakPassword()">测试弱密码（应该失败）</button>
+        </div>
+        <div class="form-group">
+            <button onclick="testReservedUsername()">测试保留用户名（应该失败）</button>
+        </div>
+        
+        <div id="securityResult" class="result" style="display: none;"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8080/api';
+
+        function showResult(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `result ${type}`;
+            element.style.display = 'block';
+        }
+
+        function openFrontend() {
+            const url = document.getElementById('frontendUrl').value;
+            window.open(url, '_blank');
+        }
+
+        async function testRegister(data, description) {
+            try {
+                const response = await fetch(`${API_BASE}/auth/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.text();
+                
+                if (response.ok) {
+                    return `✅ ${description} - 成功: ${result}`;
+                } else {
+                    return `❌ ${description} - 失败 (${response.status}): ${result}`;
+                }
+            } catch (error) {
+                return `❌ ${description} - 网络错误: ${error.message}`;
+            }
+        }
+
+        document.getElementById('testForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            
+            const data = {
+                username: formData.get('username'),
+                email: formData.get('email'),
+                password: formData.get('password'),
+                roles: [formData.get('role')]
+            };
+
+            const result = await testRegister(data, '正常注册');
+            showResult('apiResult', result, result.includes('✅') ? 'success' : 'error');
+        });
+
+        async function testAdminRegister() {
+            const data = {
+                username: 'testadmin',
+                email: 'testadmin@example.com',
+                password: 'Admin123456',
+                roles: ['ADMIN']
+            };
+            
+            const result = await testRegister(data, '管理员注册');
+            showResult('securityResult', result, result.includes('❌') ? 'success' : 'error');
+        }
+
+        async function testWeakPassword() {
+            const data = {
+                username: 'testweakpass',
+                email: 'testweakpass@example.com',
+                password: '123456',
+                roles: ['STUDENT']
+            };
+            
+            const result = await testRegister(data, '弱密码注册');
+            showResult('securityResult', result, result.includes('❌') ? 'success' : 'error');
+        }
+
+        async function testReservedUsername() {
+            const data = {
+                username: 'admin',
+                email: 'reserved@example.com',
+                password: 'Test123456',
+                roles: ['STUDENT']
+            };
+            
+            const result = await testRegister(data, '保留用户名注册');
+            showResult('securityResult', result, result.includes('❌') ? 'success' : 'error');
+        }
+
+        // 页面加载时检查服务状态
+        window.addEventListener('load', async () => {
+            try {
+                const response = await fetch(`${API_BASE}/auth/test`, { method: 'GET' });
+                console.log('后端服务状态检查完成');
+            } catch (error) {
+                console.log('❌ 后端服务连接失败，请确保服务已启动');
+            }
+        });
+    </script>
+</body>
+</html>

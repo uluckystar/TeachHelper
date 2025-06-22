@@ -1,6 +1,7 @@
 package com.teachhelper.service.question;
 
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -65,8 +66,17 @@ public class QuestionService {
     
     @Transactional(readOnly = true)
     public Question getQuestionById(Long id) {
-        return questionRepository.findById(id)
+        // 首先获取题目基本信息和选项
+        Question question = questionRepository.findByIdWithOptions(id)
             .orElseThrow(() -> new ResourceNotFoundException("Question not found with id: " + id));
+        
+        // 然后获取评分标准（通过单独查询避免 MultipleBagFetchException）
+        Optional<Question> questionWithCriteria = questionRepository.findByIdWithCriteria(id);
+        if (questionWithCriteria.isPresent()) {
+            question.setRubricCriteria(questionWithCriteria.get().getRubricCriteria());
+        }
+        
+        return question;
     }
     
     @Transactional(readOnly = true)
@@ -76,7 +86,25 @@ public class QuestionService {
     
     @Transactional(readOnly = true)
     public List<Question> getQuestionsByExamId(Long examId) {
-        return questionRepository.findByExamId(examId);
+        // 首先获取题目基本信息和选项
+        List<Question> questions = questionRepository.findByExamIdWithOptions(examId);
+        
+        // 然后为每个题目获取评分标准
+        if (!questions.isEmpty()) {
+            List<Question> questionsWithCriteria = questionRepository.findByExamIdWithCriteria(examId);
+            
+            // 将评分标准合并到对应的题目中
+            for (Question question : questions) {
+                for (Question questionWithCriteria : questionsWithCriteria) {
+                    if (question.getId().equals(questionWithCriteria.getId())) {
+                        question.setRubricCriteria(questionWithCriteria.getRubricCriteria());
+                        break;
+                    }
+                }
+            }
+        }
+        
+        return questions;
     }
     
     // Rubric Criteria Management

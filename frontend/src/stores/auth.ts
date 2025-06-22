@@ -72,12 +72,22 @@ export const useAuthStore = defineStore('auth', {
 
     async register(userData: RegisterRequest): Promise<boolean> {
       try {
+        // 验证角色只能是学生或教师
+        if (userData.roles && userData.roles.length > 0) {
+          const validRoles = ['STUDENT', 'TEACHER']
+          const hasInvalidRole = userData.roles.some(role => !validRoles.includes(role))
+          if (hasInvalidRole) {
+            throw new Error('只允许注册学生或教师角色')
+          }
+        }
+        
         await authApi.register(userData)
         // 注册成功后，不会自动登录，需要手动登录
         return true
-      } catch (error) {
+      } catch (error: any) {
         console.error('Registration failed:', error)
-        return false
+        // 将错误抛给调用者处理
+        throw error
       }
     },
 

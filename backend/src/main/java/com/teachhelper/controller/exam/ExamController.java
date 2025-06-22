@@ -1,7 +1,9 @@
 package com.teachhelper.controller.exam;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,10 +29,14 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.teachhelper.dto.request.ExamCreateRequest;
+import com.teachhelper.dto.response.ClassroomResponse;
 import com.teachhelper.dto.response.ExamResponse;
 import com.teachhelper.dto.response.ExamStatistics;
 import com.teachhelper.entity.Exam;
 import com.teachhelper.entity.ExamStatus;
+import com.teachhelper.entity.Role;
+import com.teachhelper.entity.User;
+import com.teachhelper.service.auth.AuthService;
 import com.teachhelper.service.exam.ExamService;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -40,59 +46,120 @@ import jakarta.validation.Valid;
 @RestController
 @RequestMapping("/api/exams")
 @Tag(name = "考试管理", description = "考试的创建、查询、修改、删除等操作")
-@PreAuthorize("hasRole('ADMIN') or hasRole('TEACHER')")
 public class ExamController {
     
     @Autowired
     private ExamService examService;
     
+    @Autowired
+    private AuthService authService;
+    
     @PostMapping
-    @Operation(summary = "创建考试", description = "创建新的考试")
+    @Operation(summary = "创建考试", description = "创建新的考试，可选择发布到指定班级")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('TEACHER')")
     public ResponseEntity<ExamResponse> createExam(@Valid @RequestBody ExamCreateRequest examRequest) {
-        Exam exam = examService.createExam(examRequest.getTitle(), examRequest.getDescription());
+        Exam exam = examService.createExam(
+            examRequest.getTitle(), 
+            examRequest.getDescription(), 
+            examRequest.getTargetClassroomIds(),
+            examRequest.getDuration(),
+            examRequest.getStartTime(),
+            examRequest.getEndTime()
+        );
         ExamResponse response = convertToResponse(exam);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
     
     @GetMapping("/{id}")
     @Operation(summary = "获取考试详情", description = "根据ID获取考试详细信息")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('TEACHER') or hasRole('STUDENT')")
     public ResponseEntity<ExamResponse> getExam(@PathVariable Long id) {
-        Exam exam = examService.getExamById(id);
-        ExamResponse response = convertToResponse(exam);
-        return ResponseEntity.ok(response);
+        try {
+            System.out.println("=== ExamController.getExam 调试信息 ===");
+            System.out.println("请求考试ID: " + id);
+            
+            Exam exam = examService.getExamById(id);
+            ExamResponse response = convertToResponse(exam);
+            
+            System.out.println("成功获取考试: " + exam.getTitle());
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            System.err.println("获取考试失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .header("X-Error-Message", e.getMessage())
+                .build();
+        }
     }
     
     @GetMapping
-    @Operation(summary = "获取考试列表", description = "获取当前用户的所有考试，支持分页")
+    @Operation(summary = "获取考试列表", description = "根据用户角色获取考试列表：学生看到已发布的考试，教师和管理员看到自己创建的考试")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('TEACHER') or hasRole('STUDENT')")
     public ResponseEntity<List<ExamResponse>> getAllExams(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
         
-        if (page < 0 || size <= 0) {
-            return ResponseEntity.badRequest().build();
-        }
-        
-        if (size > 100) {
-            size = 100; // 限制最大页面大小
-        }
-        
-        List<ExamResponse> responses;
-        if (page == 0 && size == 10) {
-            // 不分页，返回所有考试
-            List<Exam> exams = examService.getAllExamsByCurrentUser();
-            responses = exams.stream()
-                .map(this::convertToResponse)
-                .collect(Collectors.toList());
-        } else {
+        try {
+            System.out.println("=== ExamController.getAllExams 调试信息 ===");
+            System.out.println("请求参数 - page: " + page + ", size: " + size);
+            
+            if (page < 0 || size <= 0) {
+                return ResponseEntity.badRequest().build();
+            }
+            
+            if (size > 100) {
+                size = 100; // 限制最大页面大小
+            }
+            
+            // 获取当前用户
+            User currentUser = authService.getCurrentUser();
+            System.out.println("当前用户: " + currentUser.getUsername() + ", 角色: " + currentUser.getRoles());
+            boolean isStudent = currentUser.getRoles().contains(Role.STUDENT);
+            
+            List<ExamResponse> responses;
+            if (page == 0 && size == 10) {
+                // 不分页，返回所有考试
+                List<Exam> exams;
+                if (isStudent) {
+                    // 学生看到所有已发布的考试
+                    System.out.println("学生用户，获取可用考试列表");
+                    exams = examService.getAllAvailableExams();
+                    System.out.println("获取到考试数量: " + exams.size());
+                } else {
+                    // 教师和管理员看到自己创建的考试
+                    System.out.println("教师/管理员用户，获取自己创建的考试");
+                    exams = examService.getAllExamsByCurrentUser();
+                    System.out.println("获取到考试数量: " + exams.size());
+                }
+                responses = exams.stream()
+                    .map(this::convertToResponse)
+                    .collect(Collectors.toList());
+            } else {
             // 分页查询
             Pageable pageable = PageRequest.of(page, size);
-            Page<Exam> examPage = examService.getExamsByCurrentUser(pageable);
+            Page<Exam> examPage;
+            if (isStudent) {
+                // 学生看到所有已发布的考试
+                examPage = examService.getAvailableExams(pageable);
+            } else {
+                // 教师和管理员看到自己创建的考试
+                examPage = examService.getExamsByCurrentUser(pageable);
+            }
             responses = examPage.stream()
                 .map(this::convertToResponse)
                 .collect(Collectors.toList());
         }
         
+        System.out.println("返回考试数量: " + responses.size());
         return ResponseEntity.ok(responses);
+        
+        } catch (Exception e) {
+            System.err.println("获取考试列表失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .header("X-Error-Message", e.getMessage())
+                .build();
+        }
     }
     
     @PutMapping("/{id}")
@@ -100,7 +167,14 @@ public class ExamController {
     public ResponseEntity<ExamResponse> updateExam(
             @PathVariable Long id,
             @Valid @RequestBody ExamCreateRequest examRequest) {
-        Exam exam = examService.updateExam(id, examRequest.getTitle(), examRequest.getDescription());
+        Exam exam = examService.updateExam(
+            id, 
+            examRequest.getTitle(), 
+            examRequest.getDescription(),
+            examRequest.getDuration(),
+            examRequest.getStartTime(),
+            examRequest.getEndTime()
+        );
         ExamResponse response = convertToResponse(exam);
         return ResponseEntity.ok(response);
     }
@@ -120,6 +194,78 @@ public class ExamController {
             .map(this::convertToResponse)
             .collect(Collectors.toList());
         return ResponseEntity.ok(responses);
+    }
+    
+    @GetMapping("/student")
+    @Operation(summary = "获取学生考试列表", description = "获取当前学生可参与的考试列表")
+    @PreAuthorize("hasRole('STUDENT')")
+    public ResponseEntity<List<ExamResponse>> getStudentExams() {
+        List<Exam> exams = examService.getAllAvailableExams();
+        List<ExamResponse> responses = exams.stream()
+            .map(this::convertToResponse)
+            .collect(Collectors.toList());
+        return ResponseEntity.ok(responses);
+    }
+    
+    @GetMapping("/student/my-exams")
+    @Operation(summary = "获取学生的所有考试", description = "获取当前学生的所有相关考试，包括可参加、已结束、已评估的考试")
+    @PreAuthorize("hasRole('STUDENT')")
+    public ResponseEntity<List<ExamResponse>> getAllStudentExams() {
+        try {
+            System.out.println("=== ExamController.getAllStudentExams 调试信息 ===");
+            
+            User currentUser = authService.getCurrentUser();
+            System.out.println("当前用户: " + currentUser.getUsername() + ", 角色: " + currentUser.getRoles());
+            
+            List<Exam> exams = examService.getAllStudentExams();
+            System.out.println("获取到学生考试数量: " + exams.size());
+            
+            List<ExamResponse> responses = exams.stream()
+                .map(this::convertToResponse)
+                .collect(Collectors.toList());
+            return ResponseEntity.ok(responses);
+        } catch (Exception e) {
+            System.err.println("获取学生考试失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .header("X-Error-Message", e.getMessage())
+                .build();
+        }
+    }
+    
+    @GetMapping("/available")
+    @Operation(summary = "获取可参加的考试", description = "获取学生可以参加的考试（仅已发布状态）")
+    @PreAuthorize("hasRole('STUDENT')")
+    public ResponseEntity<List<ExamResponse>> getAvailableExams() {
+        try {
+            System.out.println("=== ExamController.getAvailableExams 调试信息 ===");
+            
+            User currentUser = authService.getCurrentUser();
+            System.out.println("当前用户: " + currentUser.getUsername() + ", 角色: " + currentUser.getRoles());
+            
+            List<Exam> exams = examService.getAllAvailableExams();
+            System.out.println("获取到可用考试数量: " + exams.size());
+            
+            List<ExamResponse> responses = exams.stream()
+                .map(this::convertToResponse)
+                .collect(Collectors.toList());
+            return ResponseEntity.ok(responses);
+        } catch (Exception e) {
+            System.err.println("获取可用考试失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .header("X-Error-Message", e.getMessage())
+                .build();
+        }
+    }
+    
+    @GetMapping("/{examId}/student")
+    @Operation(summary = "获取学生考试详情", description = "获取当前学生的考试详情，包含答题状态")
+    @PreAuthorize("hasRole('STUDENT')")
+    public ResponseEntity<ExamResponse> getStudentExamDetail(@PathVariable Long examId) {
+        Exam exam = examService.getExamById(examId);
+        ExamResponse response = convertToResponse(exam);
+        return ResponseEntity.ok(response);
     }
     
     // 导入导出功能
@@ -155,29 +301,62 @@ public class ExamController {
     // 考试状态管理
     @PostMapping("/{examId}/publish")
     @Operation(summary = "发布考试", description = "将草稿状态的考试发布，使学生可以参加")
-    public ResponseEntity<ExamResponse> publishExam(@PathVariable Long examId) {
+    public ResponseEntity<?> publishExam(@PathVariable Long examId) {
         try {
+            // 先检查考试是否包含题目
+            Exam exam = examService.getExamById(examId);
+            
+            // 检查题目数量
+            boolean hasQuestions = false;
+            try {
+                hasQuestions = exam.getQuestions() != null && !exam.getQuestions().isEmpty();
+            } catch (Exception e) {
+                // 如果懒加载失败，通过统计信息检查
+                try {
+                    ExamStatistics stats = examService.getExamStatistics(examId);
+                    hasQuestions = stats.getTotalQuestions() > 0;
+                } catch (Exception ex) {
+                    hasQuestions = false;
+                }
+            }
+            
+            if (!hasQuestions) {
+                // 返回友好的错误提示，而不是抛出异常
+                Map<String, Object> errorResponse = new HashMap<>();
+                errorResponse.put("success", false);
+                errorResponse.put("code", 422);
+                errorResponse.put("message", "考试必须包含至少一个题目才能发布");
+                errorResponse.put("data", null);
+                return ResponseEntity.status(422).body(errorResponse);
+            }
+            
             // 添加详细日志以调试状态问题
-            Exam examBeforePublish = examService.getExamById(examId);
             System.out.println("=== 发布考试调试信息 ===");
             System.out.println("考试ID: " + examId);
-            System.out.println("发布前数据库中的原始状态: " + examBeforePublish.getStatus());
+            System.out.println("发布前数据库中的原始状态: " + exam.getStatus());
             
             // 计算前端显示的动态状态
-            ExamResponse beforeResponse = convertToResponse(examBeforePublish);
+            ExamResponse beforeResponse = convertToResponse(exam);
             System.out.println("前端显示的动态状态: " + beforeResponse.getStatus());
             
-            Exam exam = examService.publishExam(examId);
-            ExamResponse response = convertToResponse(exam);
+            Exam publishedExam = examService.publishExam(examId);
+            ExamResponse response = convertToResponse(publishedExam);
             
-            System.out.println("发布后数据库中的状态: " + exam.getStatus());
+            System.out.println("发布后数据库中的状态: " + publishedExam.getStatus());
             System.out.println("=== 发布考试调试信息结束 ===");
             
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             System.err.println("发布考试时发生错误: " + e.getMessage());
             e.printStackTrace();
-            return ResponseEntity.badRequest().build();
+            
+            // 返回详细的错误信息
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("code", 400);
+            errorResponse.put("message", e.getMessage());
+            errorResponse.put("data", null);
+            return ResponseEntity.status(400).body(errorResponse);
         }
     }
 
@@ -193,15 +372,66 @@ public class ExamController {
         }
     }
 
+    @PostMapping("/{examId}/unpublish")
+    @Operation(summary = "撤销发布考试", description = "将已发布的考试撤销发布，重新变为草稿状态")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('TEACHER')")
+    public ResponseEntity<ExamResponse> unpublishExam(@PathVariable Long examId) {
+        try {
+            Exam exam = examService.unpublishExam(examId);
+            ExamResponse response = convertToResponse(exam);
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    @PutMapping("/{examId}/classrooms")
+    @Operation(summary = "调整考试班级", description = "调整考试发布的目标班级列表")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('TEACHER')")
+    public ResponseEntity<ExamResponse> updateExamClassrooms(
+            @PathVariable Long examId,
+            @RequestBody List<Long> classroomIds) {
+        try {
+            Exam exam = examService.updateExamClassrooms(examId, classroomIds);
+            ExamResponse response = convertToResponse(exam);
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    @GetMapping("/{examId}/classrooms")
+    @Operation(summary = "获取考试班级信息", description = "获取考试发布的班级列表及班级成员信息")
+    public ResponseEntity<List<ClassroomResponse>> getExamClassrooms(@PathVariable Long examId) {
+        try {
+            List<ClassroomResponse> classrooms = examService.getExamClassrooms(examId);
+            return ResponseEntity.ok(classrooms);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+    
     // 考试统计功能
     @GetMapping("/{examId}/statistics")
     @Operation(summary = "获取考试统计", description = "获取考试的详细统计信息")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('TEACHER') or hasRole('STUDENT')")
     public ResponseEntity<ExamStatistics> getExamStatistics(@PathVariable Long examId) {
         try {
+            System.out.println("=== ExamController.getExamStatistics 调试信息 ===");
+            System.out.println("请求考试统计，考试ID: " + examId);
+            
+            // 先验证权限
+            examService.getExamById(examId); // 这会检查权限
+            
             ExamStatistics statistics = examService.getExamStatistics(examId);
+            System.out.println("成功获取考试统计信息");
             return ResponseEntity.ok(statistics);
         } catch (RuntimeException e) {
-            return ResponseEntity.badRequest().build();
+            System.err.println("获取考试统计失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .header("X-Error-Message", e.getMessage())
+                .build();
         }
     }
 
@@ -222,6 +452,23 @@ public class ExamController {
         // Note: This should delegate to StudentAnswerService, not ExamService
         // For now, return a placeholder response
         return ResponseEntity.ok("答案导入功能暂未实现，请使用 /api/student-answers/import/exam/{examId} 端点");
+    }
+
+    @PostMapping("/check-expired")
+    @Operation(summary = "手动检查过期考试", description = "手动触发检查并结束过期的考试（用于测试和调试）")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> checkExpiredExams() {
+        try {
+            int endedCount = examService.autoEndExpiredExams();
+            Map<String, Object> result = new HashMap<>();
+            result.put("message", "检查完成");
+            result.put("endedCount", endedCount);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            Map<String, Object> error = new HashMap<>();
+            error.put("error", "检查失败: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+        }
     }
 
     private ExamResponse convertToResponse(Exam exam) {
@@ -278,7 +525,7 @@ public class ExamController {
             response.setEvaluatedAnswers(0);
         }
         
-        // 动态设置AI评估状态
+        // 动态设置AI评估状态 - 但要尊重数据库中的真实状态
         ExamStatus dynamicStatus = determineDynamicStatus(exam, totalAnswers, evaluatedAnswers);
         response.setStatus(dynamicStatus);
         
@@ -287,29 +534,44 @@ public class ExamController {
     
     /**
      * 根据考试实际情况动态确定AI评估状态
+     * 但要尊重考试的基本状态（如已结束、已发布等）
      */
     private ExamStatus determineDynamicStatus(Exam exam, long totalAnswers, long evaluatedAnswers) {
-        // 如果没有答案，根据原始状态返回
+        ExamStatus originalStatus = exam.getStatus() != null ? exam.getStatus() : ExamStatus.DRAFT;
+        
+        // 如果考试已经结束（ENDED）或已评估（EVALUATED），不要覆盖这些状态
+        if (originalStatus == ExamStatus.ENDED || originalStatus == ExamStatus.EVALUATED) {
+            // 对于已结束的考试，如果所有答案都已评估完成，可以更新为 EVALUATED
+            if (originalStatus == ExamStatus.ENDED && totalAnswers > 0 && evaluatedAnswers >= totalAnswers) {
+                return ExamStatus.EVALUATED;
+            }
+            // 否则保持原状态
+            return originalStatus;
+        }
+        
+        // 如果是草稿或已发布状态，且没有答案，返回原始状态
         if (totalAnswers == 0) {
-            return exam.getStatus() != null ? exam.getStatus() : ExamStatus.DRAFT;
+            return originalStatus;
         }
         
-        // 如果有答案但还没有评估，说明处于待评估状态
-        if (totalAnswers > 0 && evaluatedAnswers == 0) {
-            return ExamStatus.IN_PROGRESS; // 使用IN_PROGRESS代替PENDING_EVALUATION
+        // 只有在原始状态允许的情况下，才根据评估情况动态调整
+        if (originalStatus == ExamStatus.PUBLISHED) {
+            // 已发布的考试，如果有答案但还没有评估，可以显示为进行中
+            if (totalAnswers > 0 && evaluatedAnswers == 0) {
+                return ExamStatus.IN_PROGRESS;
+            }
+            // 如果有答案且部分评估完成，但不是全部，说明还在评估中
+            if (totalAnswers > 0 && evaluatedAnswers > 0 && evaluatedAnswers < totalAnswers) {
+                return ExamStatus.IN_PROGRESS;
+            }
         }
         
-        // 如果有答案且部分评估完成，但不是全部，说明还在评估中
-        if (totalAnswers > 0 && evaluatedAnswers > 0 && evaluatedAnswers < totalAnswers) {
-            return ExamStatus.IN_PROGRESS;
-        }
-        
-        // 如果所有答案都已评估完成
-        if (totalAnswers > 0 && evaluatedAnswers >= totalAnswers) {
+        // 如果所有答案都已评估完成，可以设置为已评估（但不覆盖已结束状态）
+        if (totalAnswers > 0 && evaluatedAnswers >= totalAnswers && originalStatus != ExamStatus.ENDED) {
             return ExamStatus.EVALUATED;
         }
         
-        // 默认情况，根据原始状态返回
-        return exam.getStatus() != null ? exam.getStatus() : ExamStatus.DRAFT;
+        // 默认情况，返回原始状态
+        return originalStatus;
     }
 }

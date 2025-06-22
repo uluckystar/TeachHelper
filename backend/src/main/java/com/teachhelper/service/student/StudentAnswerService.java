@@ -22,6 +22,7 @@ import com.teachhelper.entity.Question;
 import com.teachhelper.entity.Student;
 import com.teachhelper.entity.StudentAnswer;
 import com.teachhelper.exception.ResourceNotFoundException;
+import com.teachhelper.repository.ExamSubmissionRepository;
 import com.teachhelper.repository.QuestionRepository;
 import com.teachhelper.repository.StudentAnswerRepository;
 import com.teachhelper.repository.StudentRepository;
@@ -39,6 +40,9 @@ public class StudentAnswerService {
     @Autowired
     private QuestionRepository questionRepository;
     
+    @Autowired
+    private ExamSubmissionRepository examSubmissionRepository;
+    
     public StudentAnswer submitAnswer(StudentAnswer studentAnswer) {
         // Validate question exists
         Question question = questionRepository.findById(studentAnswer.getQuestion().getId())
@@ -51,10 +55,20 @@ public class StudentAnswerService {
         Student student = findOrCreateStudent(studentAnswer.getStudent());
         studentAnswer.setStudent(student);
         
-        // Set submission timestamp
-        studentAnswer.setCreatedAt(LocalDateTime.now());
+        // 检查是否已存在该学生对该题目的答案
+        StudentAnswer existingAnswer = studentAnswerRepository.findByStudentStudentIdAndQuestionId(
+            student.getStudentId(), question.getId());
         
-        return studentAnswerRepository.save(studentAnswer);
+        if (existingAnswer != null) {
+            // 更新现有答案
+            existingAnswer.setAnswerText(studentAnswer.getAnswerText());
+            existingAnswer.setCreatedAt(LocalDateTime.now()); // 更新提交时间
+            return studentAnswerRepository.save(existingAnswer);
+        } else {
+            // 创建新答案
+            studentAnswer.setCreatedAt(LocalDateTime.now());
+            return studentAnswerRepository.save(studentAnswer);
+        }
     }
     
     public StudentAnswer updateAnswer(Long id, StudentAnswer answerDetails) {
@@ -159,6 +173,20 @@ public class StudentAnswerService {
         return studentAnswerRepository.findAverageScoreByExamId(examId);
     }
 
+    /**
+     * 获取指定考试的最高分（仅已评估的答案）
+     */
+    public Double getMaxScoreByExamId(Long examId) {
+        return studentAnswerRepository.findMaxScoreByExamId(examId);
+    }
+
+    /**
+     * 获取指定考试的最低分（仅已评估的答案）
+     */
+    public Double getMinScoreByExamId(Long examId) {
+        return studentAnswerRepository.findMinScoreByExamId(examId);
+    }
+
     // Batch operations
     public List<StudentAnswer> submitAnswersInBatch(List<StudentAnswer> answers) {
         // Process each answer to ensure proper student and question references
@@ -186,14 +214,101 @@ public class StudentAnswerService {
                 .orElseThrow(() -> new ResourceNotFoundException("Student not found"));
         }
         
-        // Try to find by student ID
-        Optional<Student> existingStudent = studentRepository.findByStudentId(student.getStudentId());
-        if (existingStudent.isPresent()) {
-            return existingStudent.get();
+        // 检查studentId是否为数字（用户ID）
+        String studentId = student.getStudentId();
+        
+        // 如果 studentId 为空或无效，需要处理
+        if (studentId == null || studentId.trim().isEmpty()) {
+            System.out.println("警告：学生记录缺少学号，尝试从邮箱查找现有记录");
+            if (student.getEmail() != null && !student.getEmail().trim().isEmpty()) {
+                Optional<Student> existingByEmail = studentRepository.findByEmail(student.getEmail());
+                if (existingByEmail.isPresent()) {
+                    Student existing = existingByEmail.get();
+                    // 如果现有记录也没有学号，生成一个
+                    if (existing.getStudentId() == null || existing.getStudentId().trim().isEmpty()) {
+                        String generatedStudentId = generateStudentId(existing);
+                        existing.setStudentId(generatedStudentId);
+                        existing = studentRepository.save(existing);
+                        System.out.println("为现有学生生成学号: " + generatedStudentId);
+                    }
+                    return existing;
+                }
+            }
+            
+            // 生成新的学号
+            studentId = generateStudentId(student);
+            student.setStudentId(studentId);
+            System.out.println("为新学生生成学号: " + studentId);
         }
         
-        // Create new student
-        return studentRepository.save(student);
+        if (studentId != null && studentId.matches("\\d+")) {
+            // studentId是数字，这是users表的id，对应students表的student_id字段
+            try {
+                // 直接通过student_id字段查找（student_id = users.id）
+                Optional<Student> existingByUserId = studentRepository.findByStudentId(studentId);
+                if (existingByUserId.isPresent()) {
+                    return existingByUserId.get();
+                }
+            } catch (NumberFormatException e) {
+                // 如果解析失败，继续下面的逻辑
+            }
+        } else {
+            // studentId不是数字，按传统字符串查找
+            Optional<Student> existingStudent = studentRepository.findByStudentId(studentId);
+            if (existingStudent.isPresent()) {
+                return existingStudent.get();
+            }
+        }
+        
+        // Try to find by email as fallback
+        if (student.getEmail() != null && !student.getEmail().trim().isEmpty()) {
+            Optional<Student> existingByEmail = studentRepository.findByEmail(student.getEmail());
+            if (existingByEmail.isPresent()) {
+                Student existing = existingByEmail.get();
+                // 如果现有记录没有学号，更新它
+                if (existing.getStudentId() == null || existing.getStudentId().trim().isEmpty()) {
+                    existing.setStudentId(studentId);
+                    existing = studentRepository.save(existing);
+                    System.out.println("更新现有学生的学号: " + studentId);
+                }
+                return existing;
+            }
+        }
+        
+        // Create new student only if not found
+        try {
+            return studentRepository.save(student);
+        } catch (Exception e) {
+            // If creation fails due to unique constraint, try to find by email again
+            if (student.getEmail() != null) {
+                Optional<Student> existingByEmail = studentRepository.findByEmail(student.getEmail());
+                if (existingByEmail.isPresent()) {
+                    return existingByEmail.get();
+                }
+            }
+            // Re-throw if it's not a unique constraint issue
+            throw e;
+        }
+    }
+    
+    /**
+     * 为学生生成学号
+     */
+    private String generateStudentId(Student student) {
+        // 如果有邮箱，可以从邮箱中提取用户名部分作为学号基础
+        if (student.getEmail() != null && !student.getEmail().trim().isEmpty()) {
+            String emailPrefix = student.getEmail().split("@")[0];
+            // 如果邮箱前缀是数字，直接使用
+            if (emailPrefix.matches("\\d+")) {
+                return emailPrefix;
+            }
+            // 否则添加时间戳确保唯一性
+            return emailPrefix + "_" + System.currentTimeMillis() % 100000;
+        }
+        
+        // 如果没有邮箱，使用姓名 + 时间戳
+        String name = student.getName() != null ? student.getName().replaceAll("\\s+", "") : "student";
+        return name + "_" + System.currentTimeMillis() % 100000;
     }
     
     @Transactional(readOnly = true)
@@ -201,6 +316,22 @@ public class StudentAnswerService {
         return studentAnswerRepository.existsByStudentStudentIdAndQuestionId(studentId, questionId);
     }
     
+    /**
+     * 检查学生是否已提交指定考试（基于 ExamSubmission 表）
+     */
+    @Transactional(readOnly = true)
+    public boolean hasStudentSubmittedExam(Long examId, Long studentId) {
+        return examSubmissionRepository.existsByExamIdAndStudentId(examId, studentId);
+    }
+    
+    /**
+     * 检查学生是否已提交指定考试（通过 studentId 字符串，基于 ExamSubmission 表）
+     */
+    @Transactional(readOnly = true)
+    public boolean hasStudentSubmittedExam(Long examId, String studentId) {
+        return examSubmissionRepository.existsByExamIdAndStudentStudentId(examId, studentId);
+    }
+
     // Export functionality
     @Transactional(readOnly = true)
     public List<StudentAnswer> getAnswersForExport(Long examId, Long questionId, Boolean evaluated) {
@@ -349,6 +480,21 @@ public class StudentAnswerService {
     }
     
     /**
+     * 根据考试ID和用户名获取答案（通过Student表的关联）
+     */
+    public List<StudentAnswer> getAnswersByExamIdAndUsername(Long examId, String username) {
+        System.out.println("=== StudentAnswerService.getAnswersByExamIdAndUsername ===");
+        System.out.println("examId: " + examId + ", username: " + username);
+        
+        // 通过用户名查询学生答案
+        // 查询逻辑: users.username -> users.id -> students.student_id -> students.id -> student_answers.student_id
+        List<StudentAnswer> answers = studentAnswerRepository.findByQuestionExamIdAndUsername(examId, username);
+        System.out.println("查询到的答案数量: " + answers.size());
+        
+        return answers;
+    }
+    
+    /**
      * 获取答案详情（预加载关联实体，用于批量处理）
      */
     @Transactional(readOnly = true)
@@ -365,5 +511,36 @@ public class StudentAnswerService {
             return List.of();
         }
         return studentAnswerRepository.findByIdInWithFetch(answerIds);
+    }
+    
+    /**
+     * 批量修复没有学号的学生记录
+     */
+    @Transactional
+    public int fixStudentsWithoutStudentId() {
+        System.out.println("=== 开始修复没有学号的学生记录 ===");
+        
+        // 查找所有没有学号或学号为空的学生
+        List<Student> studentsWithoutId = studentRepository.findAll().stream()
+            .filter(s -> s.getStudentId() == null || s.getStudentId().trim().isEmpty())
+            .collect(java.util.stream.Collectors.toList());
+        
+        System.out.println("找到 " + studentsWithoutId.size() + " 个没有学号的学生记录");
+        
+        int fixedCount = 0;
+        for (Student student : studentsWithoutId) {
+            try {
+                String generatedStudentId = generateStudentId(student);
+                student.setStudentId(generatedStudentId);
+                studentRepository.save(student);
+                System.out.println("为学生 " + student.getName() + " 生成学号: " + generatedStudentId);
+                fixedCount++;
+            } catch (Exception e) {
+                System.err.println("修复学生 " + student.getName() + " 的学号时出错: " + e.getMessage());
+            }
+        }
+        
+        System.out.println("=== 学号修复完成，共修复 " + fixedCount + " 个学生记录 ===");
+        return fixedCount;
     }
 }

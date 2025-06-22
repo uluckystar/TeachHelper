@@ -103,7 +103,21 @@ const loginForm = reactive<LoginRequest>({
 const loginRules: FormRules = {
   username: [
     { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 3, max: 20, message: '用户名长度在 3 到 20 个字符', trigger: 'blur' }
+    { 
+      validator: (rule: any, value: string, callback: any) => {
+        // 登录时只需要基本的格式验证，不需要检查保留词
+        if (!value) {
+          callback(new Error('请输入用户名'))
+        } else if (value.length < 2) {
+          callback(new Error('用户名至少需要2个字符'))
+        } else if (value.length > 50) {
+          callback(new Error('用户名不能超过50个字符'))
+        } else {
+          callback()
+        }
+      }, 
+      trigger: 'blur' 
+    }
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },

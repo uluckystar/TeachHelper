@@ -27,6 +27,7 @@ import com.teachhelper.ai.AIEvaluationService;
 import com.teachhelper.service.student.StudentAnswerService;
 import com.teachhelper.service.task.TaskService;
 import com.teachhelper.service.evaluation.BatchEvaluationPreChecker;
+import com.teachhelper.service.exam.ExamService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -52,6 +53,9 @@ public class EvaluationController {
     
     @Autowired
     private BatchEvaluationPreChecker preChecker;
+    
+    @Autowired
+    private ExamService examService;
 
     /**
      * 获取最近的评估任务

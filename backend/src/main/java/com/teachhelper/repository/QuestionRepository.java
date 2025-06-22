@@ -18,6 +18,40 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
     
     List<Question> findByExamId(Long examId);
     
+    /**
+     * 根据考试ID查询题目，预加载选项
+     */
+    @Query("SELECT DISTINCT q FROM Question q " +
+           "LEFT JOIN FETCH q.options " +
+           "WHERE q.exam.id = :examId " +
+           "ORDER BY q.createdAt")
+    List<Question> findByExamIdWithOptions(@Param("examId") Long examId);
+    
+    /**
+     * 根据考试ID查询题目，预加载评分标准
+     */
+    @Query("SELECT DISTINCT q FROM Question q " +
+           "LEFT JOIN FETCH q.rubricCriteria " +
+           "WHERE q.exam.id = :examId " +
+           "ORDER BY q.createdAt")
+    List<Question> findByExamIdWithCriteria(@Param("examId") Long examId);
+    
+    /**
+     * 根据ID查询题目，预加载选项
+     */
+    @Query("SELECT q FROM Question q " +
+           "LEFT JOIN FETCH q.options " +
+           "WHERE q.id = :id")
+    java.util.Optional<Question> findByIdWithOptions(@Param("id") Long id);
+    
+    /**
+     * 根据ID查询题目，预加载评分标准
+     */
+    @Query("SELECT q FROM Question q " +
+           "LEFT JOIN FETCH q.rubricCriteria " +
+           "WHERE q.id = :id")
+    java.util.Optional<Question> findByIdWithCriteria(@Param("id") Long id);
+    
     Page<Question> findByExamId(Long examId, Pageable pageable);
     
     @Query("SELECT q FROM Question q WHERE q.exam.id = :examId AND q.title LIKE %:keyword%")
