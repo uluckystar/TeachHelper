@@ -1,5 +1,5 @@
 // 基础类型定义
-export type QuestionType = 'ESSAY' | 'SHORT_ANSWER' | 'SINGLE_CHOICE' | 'MULTIPLE_CHOICE' | 'TRUE_FALSE' | 'CODING' | 'CASE_ANALYSIS'
+export type QuestionType = 'SINGLE_CHOICE' | 'MULTIPLE_CHOICE' | 'TRUE_FALSE' | 'FILL_BLANK' | 'SHORT_ANSWER' | 'ESSAY' | 'CODING' | 'CASE_ANALYSIS' | 'CALCULATION'
 
 export interface QuestionOption {
   id?: number
@@ -70,6 +70,12 @@ export interface ExamResponse {
   settings?: string[]
 }
 
+// 发布考试响应类型
+export interface ExamPublishResponse {
+  exam: ExamResponse
+  timeMessage?: string
+}
+
 export interface ExamUpdateRequest {
   title: string
   description: string
@@ -101,32 +107,15 @@ export interface StudentAnswerSubmitRequest {
   answerText: string
 }
 
-export interface StudentAnswerResponse {
-  id: number
-  answerText: string
-  score?: number
-  feedback?: string
-  evaluated: boolean
-  evaluatedAt?: string
-  submittedAt: string
-  questionId: number
-  studentId: number
-  examId: number
-  questionContent?: string
-  questionType?: string
-  maxScore?: number
-  // 新增字段以支持现有组件
-  studentName?: string
-  questionTitle?: string
-  questionOptions?: QuestionOption[]
-  referenceAnswer?: string
-  student?: {
-    id: number
-    name: string
-    userId?: number
-    email?: string
-    studentNumber?: string
-  }
+// 分页响应类型
+export interface PageResponse<T> {
+  content: T[]
+  totalElements: number
+  totalPages: number
+  currentPage: number
+  size: number
+  hasNext: boolean
+  hasPrevious: boolean
 }
 
 // 手动评估请求类型
@@ -184,6 +173,15 @@ export interface QuestionResponse {
   updatedAt: string
   options?: QuestionOption[]
   referenceAnswer?: string
+  // 题目来源相关字段 - 新的分类方式
+  sourceType?: 'SELF_CREATED' | 'INTERNET' | 'AI_GENERATED' | 'AI_ORGANIZED'
+  isConfirmed?: boolean // AI整理题目的确认状态
+  questionBankId?: number
+  questionBankName?: string
+  sourceKnowledgeBaseId?: number
+  sourceKnowledgePointId?: number
+  difficulty?: string
+  keywords?: string
   // Statistics properties
   totalAnswers?: number
   evaluatedAnswers?: number
@@ -708,4 +706,65 @@ export interface GradeLevelResponse {
   createdAt: string
   updatedAt: string
   usageCount: number
+}
+
+// 学生试卷响应类型
+export interface StudentExamPaperResponse {
+  studentId: number;
+  studentName: string;
+  studentNumber?: string;
+  studentEmail?: string;
+  examId: number;
+  examTitle: string;
+  answers: StudentAnswerResponse[];
+  totalQuestions: number;
+  answeredQuestions: number;
+  evaluatedAnswers: number;
+  totalScore?: number;
+  maxPossibleScore?: number;
+  scorePercentage?: number;
+  isFullyEvaluated: boolean;
+  submittedAt?: string;
+  lastUpdated?: string;
+}
+
+// 学生答案响应类型增强版 - 统一定义
+export interface StudentAnswerResponse {
+  id: number
+  questionId?: number
+  questionTitle?: string
+  questionContent?: string
+  student?: StudentInfo
+  answerText?: string
+  score?: number
+  feedback?: string
+  evaluated: boolean
+  isEvaluated?: boolean // 兼容后端字段名
+  maxScore?: number
+  submittedAt?: string
+  evaluatedAt?: string
+  evaluator?: string
+  // 向后兼容字段
+  studentId?: number
+  examId?: number
+  questionType?: string
+  studentName?: string
+  questionOptions?: QuestionOption[]
+  referenceAnswer?: string
+}
+
+// 题目库相关类型
+export interface QuestionBank {
+  id: number
+  name: string
+  description?: string
+  subject?: string
+  gradeLevel?: string
+  createdBy: number
+  isPublic: boolean
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+  questions?: Question[]
+  questionCount?: number
 }

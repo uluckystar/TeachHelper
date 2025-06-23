@@ -2,7 +2,9 @@ import api from '@/utils/request'
 import type {
   StudentAnswer,
   StudentAnswerSubmitRequest,
-  StudentAnswerResponse
+  StudentAnswerResponse,
+  PageResponse,
+  StudentExamPaperResponse
 } from '@/types/api'
 
 export const studentAnswerApi = {
@@ -52,6 +54,69 @@ export const studentAnswerApi = {
   // 根据考试ID获取所有答案
   async getAnswersByExam(examId: number): Promise<StudentAnswerResponse[]> {
     const response = await api.get<StudentAnswerResponse[]>(`/student-answers/exam/${examId}`)
+    return response.data
+  },
+
+  // 根据考试ID获取答案（支持分页和筛选）
+  async getAnswersByExamWithFilters(
+    examId: number,
+    page: number = 1,
+    size: number = 20,
+    questionId?: number,
+    evaluated?: boolean,
+    keyword?: string
+  ): Promise<PageResponse<StudentAnswerResponse>> {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      size: size.toString()
+    })
+    
+    if (questionId !== undefined) {
+      params.append('questionId', questionId.toString())
+    }
+    if (evaluated !== undefined) {
+      params.append('evaluated', evaluated.toString())
+    }
+    if (keyword && keyword.trim()) {
+      params.append('keyword', keyword.trim())
+    }
+    
+    const response = await api.get<PageResponse<StudentAnswerResponse>>(`/exams/${examId}/answers?${params}`)
+    return response.data
+  },
+
+  // 按学生分组获取考试答案 - 学生试卷视图
+  async getExamPapers(
+    examId: number,
+    page: number = 1,
+    size: number = 20,
+    studentKeyword?: string
+  ): Promise<PageResponse<StudentExamPaperResponse>> {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      size: size.toString()
+    })
+    
+    if (studentKeyword && studentKeyword.trim()) {
+      params.append('studentKeyword', studentKeyword.trim())
+    }
+    
+    const response = await api.get<PageResponse<StudentExamPaperResponse>>(`/exams/${examId}/papers?${params}`)
+    return response.data
+  },
+
+  // 获取单个学生的试卷详情
+  async getStudentExamPaper(examId: number, studentId: number): Promise<StudentExamPaperResponse> {
+    const response = await api.get<StudentExamPaperResponse>(`/exams/${examId}/papers/${studentId}`)
+    return response.data
+  },
+
+  // 导出学生试卷
+  async exportStudentPaper(examId: number, studentId: number, format: string = 'pdf'): Promise<Blob> {
+    const response = await api.get(`/exams/${examId}/papers/${studentId}/export`, {
+      params: { format },
+      responseType: 'blob'
+    })
     return response.data
   },
 
@@ -149,6 +214,15 @@ export const studentAnswerApi = {
   // 正式提交整个考试
   async submitExam(examId: number): Promise<void> {
     await api.post(`/student-answers/exam/${examId}/submit`)
+  },
+
+  // 手动评估学生答案
+  async manuallyEvaluateAnswer(answerId: number, score: number, feedback: string): Promise<StudentAnswerResponse> {
+    const response = await api.post<StudentAnswerResponse>(`/evaluations/manual/${answerId}`, {
+      score,
+      feedback
+    })
+    return response.data
   },
 }
 

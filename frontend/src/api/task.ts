@@ -114,7 +114,7 @@ export const taskApi = {
   // 批量操作
   // 批量暂停任务
   async batchPauseTasks(filter?: any): Promise<any> {
-    const response = await api.post('/tasks/batch/pause', { filter })
+    const response = await api.post('/tasks/pause-all', filter)
     return response.data
   },
 
@@ -132,9 +132,7 @@ export const taskApi = {
 
   // 清理已完成任务
   async clearCompletedTasks(filter?: any): Promise<any> {
-    const response = await api.delete('/tasks/batch/clear', { 
-      data: { filter } 
-    })
+    const response = await api.delete('/tasks/completed')
     return response.data
   },
 

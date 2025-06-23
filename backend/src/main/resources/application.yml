@@ -9,6 +9,16 @@ spring:
   profiles:
     active: dev  # 激活的配置环境：开发环境
   
+  # JSON序列化配置
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+      adjust-dates-to-context-time-zone: false
+
   # Web MVC 配置
   mvc:
     static-path-pattern: /static/**  # 静态资源路径模式

@@ -49,6 +49,23 @@ public interface StudentAnswerRepository extends JpaRepository<StudentAnswer, Lo
     
     List<StudentAnswer> findByIsEvaluated(boolean isEvaluated);
     
+    // 支持分页和筛选的查询方法
+    @Query("SELECT sa FROM StudentAnswer sa " +
+           "WHERE sa.question.exam.id = :examId " +
+           "AND (:questionId IS NULL OR sa.question.id = :questionId) " +
+           "AND (:evaluated IS NULL OR sa.isEvaluated = :evaluated) " +
+           "AND (:keyword IS NULL OR :keyword = '' OR " +
+           "     LOWER(sa.student.realName) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "     LOWER(sa.student.username) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "     LOWER(sa.student.studentNumber) LIKE LOWER(CONCAT('%', :keyword, '%')))")
+    Page<StudentAnswer> findByExamIdWithFilters(
+        @Param("examId") Long examId,
+        @Param("questionId") Long questionId,
+        @Param("evaluated") Boolean evaluated,
+        @Param("keyword") String keyword,
+        Pageable pageable
+    );
+    
     List<StudentAnswer> findByQuestionIdAndIsEvaluatedFalse(Long questionId);
     
     List<StudentAnswer> findByQuestionIdAndIsEvaluated(Long questionId, boolean isEvaluated);
@@ -85,11 +102,16 @@ public interface StudentAnswerRepository extends JpaRepository<StudentAnswer, Lo
     @Query("SELECT MIN(sa.score) FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.isEvaluated = true")
     Double findMinScoreByExamId(@Param("examId") Long examId);
 
-    boolean existsByStudentStudentIdAndQuestionId(String studentId, Long questionId);
+    // Updated methods to work with User entity directly
+    boolean existsByStudentIdAndQuestionId(Long studentId, Long questionId);
     
-    // 查找现有的学生答案（用于更新）
-    @Query("SELECT sa FROM StudentAnswer sa WHERE sa.student.studentId = :studentId AND sa.question.id = :questionId")
-    StudentAnswer findByStudentStudentIdAndQuestionId(@Param("studentId") String studentId, @Param("questionId") Long questionId);
+    // 查找现有的学生答案（用于更新） - 现在使用User.id
+    @Query("SELECT sa FROM StudentAnswer sa WHERE sa.student.id = :studentId AND sa.question.id = :questionId")
+    StudentAnswer findByStudentIdAndQuestionId(@Param("studentId") Long studentId, @Param("questionId") Long questionId);
+    
+    // 通过学号查找答案（向后兼容）
+    @Query("SELECT sa FROM StudentAnswer sa WHERE sa.student.studentNumber = :studentNumber AND sa.question.id = :questionId")
+    StudentAnswer findByStudentNumberAndQuestionId(@Param("studentNumber") String studentNumber, @Param("questionId") Long questionId);
     
     @Query("SELECT COUNT(DISTINCT sa.student.id) FROM StudentAnswer sa WHERE sa.question.exam.id = :examId")
     long countDistinctStudentByQuestionExamId(@Param("examId") Long examId);
@@ -97,8 +119,8 @@ public interface StudentAnswerRepository extends JpaRepository<StudentAnswer, Lo
     @Query("SELECT sa FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.student.id = :studentId ORDER BY sa.createdAt")
     List<StudentAnswer> findByQuestionExamIdAndStudentId(@Param("examId") Long examId, @Param("studentId") Long studentId);
     
-    @Query("SELECT sa FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.student.studentId = :studentId ORDER BY sa.createdAt")
-    List<StudentAnswer> findByQuestionExamIdAndStudentStudentId(@Param("examId") Long examId, @Param("studentId") String studentId);
+    @Query("SELECT sa FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.student.studentNumber = :studentNumber ORDER BY sa.createdAt")
+    List<StudentAnswer> findByQuestionExamIdAndStudentNumber(@Param("examId") Long examId, @Param("studentNumber") String studentNumber);
     
     // 带FETCH JOIN的查询方法，用于批量评估时避免LazyInitializationException
     @Query("SELECT sa FROM StudentAnswer sa " +
@@ -116,8 +138,8 @@ public interface StudentAnswerRepository extends JpaRepository<StudentAnswer, Lo
     StudentAnswer findByIdWithFetch(@Param("answerId") Long answerId);
     
     // 检查学生是否已提交指定考试的方法
-    @Query("SELECT COUNT(sa) > 0 FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.student.studentId = :studentId")
-    boolean existsByQuestionExamIdAndStudentStudentId(@Param("examId") Long examId, @Param("studentId") String studentId);
+    @Query("SELECT COUNT(sa) > 0 FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.student.studentNumber = :studentNumber")
+    boolean existsByQuestionExamIdAndStudentNumber(@Param("examId") Long examId, @Param("studentNumber") String studentNumber);
     
     // 通过 users.username 查询学生答案 (使用原生SQL)
     @Query(value = "SELECT sa.* FROM student_answers sa " +
@@ -128,4 +150,49 @@ public interface StudentAnswerRepository extends JpaRepository<StudentAnswer, Lo
                    "ORDER BY sa.created_at", 
            nativeQuery = true)
     List<StudentAnswer> findByQuestionExamIdAndUsername(@Param("examId") Long examId, @Param("username") String username);
+    
+    // 按学生分组查询的方法
+    @Query("SELECT sa FROM StudentAnswer sa WHERE sa.question.exam.id = :examId ORDER BY sa.student.id ASC, sa.question.id ASC")
+    List<StudentAnswer> findByQuestionExamIdOrderByStudentIdAscQuestionIdAsc(@Param("examId") Long examId);
+    
+    @Query("SELECT sa FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.student.id = :studentId ORDER BY sa.question.id ASC")
+    List<StudentAnswer> findByQuestionExamIdAndStudentIdOrderByQuestionIdAsc(@Param("examId") Long examId, @Param("studentId") Long studentId);
+    
+    @Query("SELECT sa FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND " +
+           "(LOWER(sa.student.realName) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           " LOWER(sa.student.studentNumber) LIKE LOWER(CONCAT('%', :keyword, '%'))) " +
+           "ORDER BY sa.student.id ASC, sa.question.id ASC")
+    List<StudentAnswer> findByQuestionExamIdAndStudentNameContainingOrStudentStudentNumberContaining(
+        @Param("examId") Long examId, 
+        @Param("keyword") String keyword1, 
+        @Param("keyword") String keyword2
+    );
+    
+    // 分页查询学生试卷信息
+    @Query(value = "SELECT DISTINCT " +
+           "s.id as studentId, " +
+           "s.real_name as studentName, " +
+           "s.student_number as studentNumber, " +
+           "s.email as studentEmail, " +
+           "(SELECT COUNT(DISTINCT q.id) FROM questions q WHERE q.exam_id = :examId) as totalQuestions, " +
+           "(SELECT COUNT(DISTINCT sa2.question_id) FROM student_answers sa2 WHERE sa2.student_id = s.id AND sa2.question_id IN (SELECT id FROM questions WHERE exam_id = :examId)) as answeredQuestions, " +
+           "(SELECT COUNT(*) FROM student_answers sa3 WHERE sa3.student_id = s.id AND sa3.is_evaluated = true AND sa3.question_id IN (SELECT id FROM questions WHERE exam_id = :examId)) as evaluatedAnswers " +
+           "FROM student_answers sa " +
+           "JOIN users s ON sa.student_id = s.id " +
+           "JOIN questions q ON sa.question_id = q.id " +
+           "WHERE q.exam_id = :examId " +
+           "AND (:keyword IS NULL OR :keyword = '' OR " +
+           "     LOWER(s.real_name) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "     LOWER(s.student_number) LIKE LOWER(CONCAT('%', :keyword, '%'))) " +
+           "ORDER BY s.id",
+           countQuery = "SELECT COUNT(DISTINCT s.id) " +
+                       "FROM student_answers sa " +
+                       "JOIN users s ON sa.student_id = s.id " +
+                       "JOIN questions q ON sa.question_id = q.id " +
+                       "WHERE q.exam_id = :examId " +
+                       "AND (:keyword IS NULL OR :keyword = '' OR " +
+                       "     LOWER(s.real_name) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+                       "     LOWER(s.student_number) LIKE LOWER(CONCAT('%', :keyword, '%')))",
+           nativeQuery = true)
+    Page<Object[]> findStudentPapersPagedByExamId(@Param("examId") Long examId, @Param("keyword") String keyword, Pageable pageable);
 }

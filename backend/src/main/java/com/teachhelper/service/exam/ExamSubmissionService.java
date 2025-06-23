@@ -13,13 +13,11 @@ import org.springframework.transaction.annotation.Transactional;
 import com.teachhelper.entity.Exam;
 import com.teachhelper.entity.ExamStatus;
 import com.teachhelper.entity.ExamSubmission;
-import com.teachhelper.entity.Student;
 import com.teachhelper.entity.StudentAnswer;
 import com.teachhelper.entity.User;
 import com.teachhelper.exception.ResourceNotFoundException;
 import com.teachhelper.repository.ExamRepository;
 import com.teachhelper.repository.ExamSubmissionRepository;
-import com.teachhelper.repository.StudentRepository;
 import com.teachhelper.repository.UserRepository;
 import com.teachhelper.service.student.StudentAnswerService;
 
@@ -34,9 +32,6 @@ public class ExamSubmissionService {
     private ExamRepository examRepository;
     
     @Autowired
-    private StudentRepository studentRepository;
-    
-    @Autowired
     private UserRepository userRepository;
     
     @Autowired
@@ -49,60 +44,44 @@ public class ExamSubmissionService {
         Exam exam = examRepository.findById(examId)
             .orElseThrow(() -> new ResourceNotFoundException("考试不存在"));
             
-        // 尝试通过不同方式查找学生
-        Optional<Student> studentOpt = Optional.empty();
-        
         System.out.println("=== ExamSubmissionService.submitExam ===");
         System.out.println("查找学生，传入的标识符: " + studentId);
         
-        // 首先尝试通过student_id查找（数字ID）
+        // 查找用户（现在统一使用User表）
+        Optional<User> userOpt = Optional.empty();
+        
+        // 首先尝试通过用户ID查找（数字ID）
         if (studentId.matches("\\d+")) {
-            System.out.println("传入的是数字ID，通过student_id查找");
-            studentOpt = studentRepository.findByStudentId(studentId);
+            System.out.println("传入的是数字ID，通过user_id查找");
+            userOpt = userRepository.findById(Long.parseLong(studentId));
         } else {
-            // 传入的是用户名，需要通过users表查找然后关联students表
-            System.out.println("传入的是用户名，通过users表查找对应的学生");
-            Optional<User> userOpt = userRepository.findByUsername(studentId);
-            if (userOpt.isPresent()) {
-                User user = userOpt.get();
-                System.out.println("找到用户: " + user.getUsername() + ", ID: " + user.getId());
-                // 通过用户ID查找对应的学生记录
-                studentOpt = studentRepository.findByStudentId(user.getId().toString());
-                if (studentOpt.isEmpty()) {
-                    System.out.println("未找到对应的学生记录，用户ID: " + user.getId());
-                }
-            } else {
-                System.out.println("未找到对应的用户记录，用户名: " + studentId);
-            }
+            // 传入的是用户名
+            System.out.println("传入的是用户名，通过username查找");
+            userOpt = userRepository.findByUsername(studentId);
         }
         
-        if (studentOpt.isEmpty()) {
-            System.out.println("未找到学生记录，studentId: " + studentId);
-            // 尝试所有学生记录进行调试
-            List<Student> allStudents = studentRepository.findAll();
-            System.out.println("数据库中的所有学生：");
-            for (Student s : allStudents) {
-                System.out.println("  Student ID: " + s.getStudentId() + ", Name: " + s.getName() + ", Email: " + s.getEmail());
-            }
-            throw new ResourceNotFoundException("学生不存在，studentId: " + studentId);
+        if (userOpt.isEmpty()) {
+            System.out.println("未找到用户记录，studentId: " + studentId);
+            throw new ResourceNotFoundException("用户不存在，studentId: " + studentId);
         }
-        Student student = studentOpt.get();
-        System.out.println("找到学生记录: " + student.getName() + ", ID: " + student.getId());
         
-        // 使用找到的学生实体ID检查是否已提交（这里很关键！）
-        if (hasStudentSubmittedExam(examId, student.getId())) {
+        User user = userOpt.get();
+        System.out.println("找到用户记录: " + user.getUsername() + ", ID: " + user.getId());
+        
+        // 检查是否已提交
+        if (hasStudentSubmittedExam(examId, user.getId())) {
             throw new IllegalStateException("学生已经提交过该考试");
         }
         
         // 统计答题情况
-        List<StudentAnswer> answers = studentAnswerService.getAnswersByExamIdAndStudentId(examId, student.getId());
+        List<StudentAnswer> answers = studentAnswerService.getAnswersByExamIdAndStudentId(examId, user.getId());
         int totalQuestions = exam.getQuestions() != null ? exam.getQuestions().size() : 0;
         int answeredQuestions = answers.size();
         
         // 创建提交记录
         ExamSubmission submission = new ExamSubmission();
         submission.setExam(exam);
-        submission.setStudent(student);
+        submission.setStudent(user);  // 现在关联User
         submission.setSubmittedAt(LocalDateTime.now());
         submission.setAutoSubmitted(autoSubmitted);
         submission.setTotalQuestions(totalQuestions);
@@ -140,48 +119,37 @@ public class ExamSubmissionService {
         System.out.println("=== ExamSubmissionService.hasStudentSubmittedExam ===");
         System.out.println("examId: " + examId + ", studentId: " + studentId);
         
-        // 使用与submitExam相同的学生查找逻辑
-        Optional<Student> studentOpt = Optional.empty();
+        // 查找用户（现在统一使用User表）
+        Optional<User> userOpt = Optional.empty();
         
-        // 首先尝试通过student_id查找（数字ID）
+        // 首先尝试通过用户ID查找（数字ID）
         if (studentId.matches("\\d+")) {
-            System.out.println("传入的是数字ID，通过student_id查找");
-            studentOpt = studentRepository.findByStudentId(studentId);
+            System.out.println("传入的是数字ID，通过user_id查找");
+            userOpt = userRepository.findById(Long.parseLong(studentId));
         } else {
-            // 传入的是用户名，需要通过users表查找然后关联students表
-            System.out.println("传入的是用户名，通过users表查找对应的学生");
-            Optional<User> userOpt = userRepository.findByUsername(studentId);
-            if (userOpt.isPresent()) {
-                User user = userOpt.get();
-                System.out.println("找到用户: " + user.getUsername() + ", ID: " + user.getId());
-                // 通过用户ID查找对应的学生记录
-                studentOpt = studentRepository.findByStudentId(user.getId().toString());
-                if (studentOpt.isEmpty()) {
-                    System.out.println("未找到对应的学生记录，用户ID: " + user.getId());
-                }
-            } else {
-                System.out.println("未找到对应的用户记录，用户名: " + studentId);
-            }
+            // 传入的是用户名
+            System.out.println("传入的是用户名，通过username查找");
+            userOpt = userRepository.findByUsername(studentId);
         }
         
-        if (studentOpt.isEmpty()) {
-            System.out.println("未找到学生记录，返回false");
+        if (userOpt.isEmpty()) {
+            System.out.println("未找到用户记录，返回false");
             return false;
         }
         
-        Student student = studentOpt.get();
-        System.out.println("找到学生记录: " + student.getName() + ", ID: " + student.getId());
+        User user = userOpt.get();
+        System.out.println("找到用户记录: " + user.getUsername() + ", ID: " + user.getId());
         
-        // 使用学生实体ID检查
-        boolean exists = examSubmissionRepository.existsByExamIdAndStudentId(examId, student.getId());
+        // 使用用户ID检查
+        boolean exists = examSubmissionRepository.existsByExamIdAndStudentId(examId, user.getId());
         System.out.println("exists: " + exists);
         
         // 调试：查看所有提交记录
         List<ExamSubmission> allSubmissions = examSubmissionRepository.findByExamId(examId);
         System.out.println("该考试的所有提交记录数量: " + allSubmissions.size());
         for (ExamSubmission submission : allSubmissions) {
-            System.out.println("  学生ID: " + submission.getStudent().getStudentId() + 
-                             ", 学生姓名: " + submission.getStudent().getName() + 
+            System.out.println("  学生ID: " + submission.getStudent().getId() + 
+                             ", 学生姓名: " + submission.getStudent().getUsername() + 
                              ", 提交时间: " + submission.getSubmittedAt());
         }
         
@@ -201,7 +169,7 @@ public class ExamSubmissionService {
      */
     @Transactional(readOnly = true)
     public Optional<ExamSubmission> getSubmission(Long examId, String studentId) {
-        return examSubmissionRepository.findByExamIdAndStudentStudentId(examId, studentId);
+        return examSubmissionRepository.findByExamIdAndStudentNumber(examId, studentId);
     }
     
     /**
@@ -266,16 +234,17 @@ public class ExamSubmissionService {
      * 获取学生提交详情
      */
     public Map<String, Object> getStudentSubmissionDetail(Long examId, String studentId) {
-        Optional<Student> studentOpt = studentRepository.findByStudentId(studentId);
-        if (studentOpt.isEmpty()) {
-            throw new ResourceNotFoundException("学生不存在");
+        // 现在通过User查找学生
+        Optional<User> userOpt = userRepository.findByUsername(studentId);
+        if (userOpt.isEmpty()) {
+            throw new ResourceNotFoundException("用户不存在");
         }
         
-        Student student = studentOpt.get();
+        User user = userOpt.get();
         
         // 查找提交记录
         Optional<ExamSubmission> submissionOpt = examSubmissionRepository
-            .findByExamIdAndStudentId(examId, student.getId());
+            .findByExamIdAndStudentId(examId, user.getId());
             
         if (submissionOpt.isEmpty()) {
             throw new ResourceNotFoundException("未找到提交记录");

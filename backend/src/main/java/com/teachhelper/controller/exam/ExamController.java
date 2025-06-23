@@ -1,6 +1,8 @@
 package com.teachhelper.controller.exam;
 
 import java.io.IOException;
+import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,12 +34,17 @@ import com.teachhelper.dto.request.ExamCreateRequest;
 import com.teachhelper.dto.response.ClassroomResponse;
 import com.teachhelper.dto.response.ExamResponse;
 import com.teachhelper.dto.response.ExamStatistics;
+import com.teachhelper.dto.response.StudentAnswerResponse;
+import com.teachhelper.dto.response.StudentExamPaperResponse;
 import com.teachhelper.entity.Exam;
 import com.teachhelper.entity.ExamStatus;
 import com.teachhelper.entity.Role;
+import com.teachhelper.entity.StudentAnswer;
 import com.teachhelper.entity.User;
 import com.teachhelper.service.auth.AuthService;
 import com.teachhelper.service.exam.ExamService;
+import com.teachhelper.service.student.StudentAnswerService;
+import com.teachhelper.repository.UserRepository;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -53,6 +60,12 @@ public class ExamController {
     
     @Autowired
     private AuthService authService;
+    
+    @Autowired
+    private StudentAnswerService studentAnswerService;
+    
+    @Autowired
+    private UserRepository userRepository;
     
     @PostMapping
     @Operation(summary = "创建考试", description = "创建新的考试，可选择发布到指定班级")
@@ -306,6 +319,28 @@ public class ExamController {
             // 先检查考试是否包含题目
             Exam exam = examService.getExamById(examId);
             
+            // 检查考试结束时间
+            String timeMessage = "";
+            if (exam.getEndTime() != null) {
+                LocalDateTime now = LocalDateTime.now();
+                if (exam.getEndTime().isBefore(now)) {
+                    timeMessage = "警告：考试结束时间已过期，发布后考试将立即结束";
+                    System.out.println("⚠️ " + timeMessage);
+                } else {
+                    long timeDiffMinutes = java.time.Duration.between(now, exam.getEndTime()).toMinutes();
+                    if (timeDiffMinutes < 60) {
+                        timeMessage = "提醒：考试将在 " + timeDiffMinutes + " 分钟后结束";
+                        System.out.println("⚠️ " + timeMessage);
+                    } else if (timeDiffMinutes < 1440) { // 24小时
+                        timeMessage = "提醒：考试将在 " + (timeDiffMinutes / 60) + " 小时后结束";
+                        System.out.println("⚠️ " + timeMessage);
+                    }
+                }
+            } else {
+                timeMessage = "提醒：考试未设置结束时间，将持续开放";
+                System.out.println("⚠️ " + timeMessage);
+            }
+            
             // 检查题目数量
             boolean hasQuestions = false;
             try {
@@ -345,7 +380,14 @@ public class ExamController {
             System.out.println("发布后数据库中的状态: " + publishedExam.getStatus());
             System.out.println("=== 发布考试调试信息结束 ===");
             
-            return ResponseEntity.ok(response);
+            // 如果有时间提醒，在响应中添加提醒信息
+            Map<String, Object> result = new HashMap<>();
+            result.put("exam", response);
+            if (!timeMessage.isEmpty()) {
+                result.put("timeMessage", timeMessage);
+            }
+            
+            return ResponseEntity.ok(result);
         } catch (RuntimeException e) {
             System.err.println("发布考试时发生错误: " + e.getMessage());
             e.printStackTrace();
@@ -435,13 +477,43 @@ public class ExamController {
         }
     }
 
-    // 考试答案管理
+    // 考试答案管理 - 支持分页和筛选
     @GetMapping("/{examId}/answers")
-    @Operation(summary = "获取考试答案", description = "获取指定考试的所有学生答案")
-    public ResponseEntity<List<Object>> getExamAnswers(@PathVariable Long examId) {
-        // 这个接口会委托给StudentAnswerController处理
-        // 这里只是为了保持API的一致性
-        return ResponseEntity.ok(List.of());
+    @Operation(summary = "获取考试答案", description = "获取指定考试的所有学生答案，支持分页和筛选")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<?> getExamAnswers(
+            @PathVariable Long examId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) Long questionId,
+            @RequestParam(required = false) Boolean evaluated,
+            @RequestParam(required = false) String keyword) {
+        try {
+            // 调用支持分页和筛选的服务方法
+            Page<StudentAnswer> answersPage = studentAnswerService.getAnswersByExamIdWithFilters(
+                examId, page - 1, size, questionId, evaluated, keyword
+            );
+            
+            List<StudentAnswerResponse> responses = answersPage.getContent().stream()
+                .map(StudentAnswerResponse::fromEntity)
+                .collect(Collectors.toList());
+            
+            // 返回分页结果
+            Map<String, Object> result = new HashMap<>();
+            result.put("content", responses);
+            result.put("totalElements", answersPage.getTotalElements());
+            result.put("totalPages", answersPage.getTotalPages());
+            result.put("currentPage", page);
+            result.put("size", size);
+            result.put("hasNext", answersPage.hasNext());
+            result.put("hasPrevious", answersPage.hasPrevious());
+            
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            System.err.println("获取考试答案失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.ok(List.of());
+        }
     }
 
     @PostMapping("/{examId}/import-answers")
@@ -471,6 +543,119 @@ public class ExamController {
         }
     }
 
+    // 按学生分组获取考试答案 - 学生试卷视图
+    @GetMapping("/{examId}/papers")
+    @Operation(summary = "获取学生试卷列表", description = "按学生分组获取考试答案，每个学生一份试卷")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<?> getExamPapers(
+            @PathVariable Long examId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String studentKeyword) {
+        try {
+            // 获取考试信息
+            Exam exam = examService.getExamById(examId);
+            
+            // 获取分页的学生试卷数据  
+            Page<StudentExamPaperResponse> papersPage = 
+                studentAnswerService.getAnswersByExamGroupedByStudentPaged(
+                    examId, page - 1, size, studentKeyword
+                );
+            
+            // 返回分页结果
+            Map<String, Object> result = new HashMap<>();
+            result.put("content", papersPage.getContent());
+            result.put("totalElements", papersPage.getTotalElements());
+            result.put("totalPages", papersPage.getTotalPages());
+            result.put("currentPage", page);
+            result.put("size", size);
+            result.put("hasNext", papersPage.hasNext());
+            result.put("hasPrevious", papersPage.hasPrevious());
+            
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            System.err.println("获取学生试卷失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.ok(Collections.emptyMap());
+        }
+    }
+
+    // 获取单个学生的试卷详情
+    @GetMapping("/{examId}/papers/{studentId}")
+    @Operation(summary = "获取学生试卷详情", description = "获取指定学生在考试中的详细试卷")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<StudentExamPaperResponse> getStudentExamPaper(
+            @PathVariable Long examId,
+            @PathVariable Long studentId) {
+        try {
+            // 获取考试信息
+            Exam exam = examService.getExamById(examId);
+            
+            // 获取学生信息
+            User student = userRepository.findById(studentId)
+                .orElseThrow(() -> new RuntimeException("学生不存在: " + studentId));
+            
+            // 获取学生的所有答案
+            List<StudentAnswer> answers = studentAnswerService.getStudentAnswersInExam(examId, studentId);
+            
+            StudentExamPaperResponse paperResponse = new StudentExamPaperResponse(
+                student, examId, exam.getTitle(), answers
+            );
+            
+            return ResponseEntity.ok(paperResponse);
+        } catch (Exception e) {
+            System.err.println("获取学生试卷详情失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    // 导出学生试卷
+    @GetMapping("/{examId}/papers/{studentId}/export")
+    @Operation(summary = "导出学生试卷", description = "导出指定学生的试卷为PDF或Excel")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<ByteArrayResource> exportStudentPaper(
+            @PathVariable Long examId,
+            @PathVariable Long studentId,
+            @RequestParam(defaultValue = "pdf") String format) {
+        try {
+            // 获取学生试卷数据
+            StudentExamPaperResponse paper = getStudentExamPaper(examId, studentId).getBody();
+            if (paper == null) {
+                return ResponseEntity.notFound().build();
+            }
+            
+            // 根据格式导出
+            ByteArrayResource resource;
+            String filename;
+            String contentType;
+            
+            if ("excel".equalsIgnoreCase(format)) {
+                resource = studentAnswerService.exportStudentPaperAsExcel(paper);
+                filename = String.format("学生试卷_%s_%s.xlsx", 
+                    paper.getStudentName(), paper.getExamTitle());
+                contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            } else {
+                // 默认PDF格式
+                resource = studentAnswerService.exportStudentPaperAsPdf(paper);
+                filename = String.format("学生试卷_%s_%s.pdf", 
+                    paper.getStudentName(), paper.getExamTitle());
+                contentType = "application/pdf";
+            }
+            
+            return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(contentType))
+                .header(HttpHeaders.CONTENT_DISPOSITION, 
+                    "attachment; filename=\"" + filename + "\"")
+                .body(resource);
+                
+        } catch (Exception e) {
+            System.err.println("导出学生试卷失败: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+    
     private ExamResponse convertToResponse(Exam exam) {
         ExamResponse response = new ExamResponse();
         response.setId(exam.getId());

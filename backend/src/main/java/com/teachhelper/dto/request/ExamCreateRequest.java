@@ -6,7 +6,6 @@ import java.util.List;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.Min;
-import com.fasterxml.jackson.annotation.JsonFormat;
 
 public class ExamCreateRequest {
     
@@ -25,11 +24,9 @@ public class ExamCreateRequest {
     private Integer duration;
     
     // 考试开始时间
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime startTime;
     
     // 考试结束时间
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime endTime;
     
     public ExamCreateRequest() {}

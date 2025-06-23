@@ -77,6 +77,8 @@ class TaskWebSocketService {
   }
 
   private handleTaskUpdate(update: TaskUpdate) {
+    console.log('收到任务更新:', update)
+    
     // 通知所有订阅者
     const allSubscribers = this.subscribers.get('*') || []
     const taskSubscribers = this.subscribers.get(update.taskId) || []
@@ -89,6 +91,9 @@ class TaskWebSocketService {
         console.error('处理任务更新回调失败:', error)
       }
     })
+    
+    // 触发全局事件，供不使用hook的组件监听
+    window.dispatchEvent(new CustomEvent('taskUpdate', { detail: update }))
   }
 
   // 订阅任务更新

@@ -12,7 +12,6 @@ import com.teachhelper.repository.PaperGenerationTemplateRepository;
 import com.teachhelper.repository.QuestionRepository;
 import com.teachhelper.repository.RubricCriterionRepository;
 import com.teachhelper.repository.StudentAnswerRepository;
-import com.teachhelper.repository.StudentRepository;
 import com.teachhelper.repository.SystemRubricRepository;
 import com.teachhelper.repository.UserAIConfigRepository;
 import com.teachhelper.repository.UserRepository;
@@ -54,9 +53,6 @@ public class DevDataService {
     // Repository dependencies for statistics and cleanup
     @Autowired
     private UserRepository userRepository;
-    
-    @Autowired
-    private StudentRepository studentRepository;
     
     @Autowired
     private ExamRepository examRepository;
@@ -113,10 +109,10 @@ public class DevDataService {
             clearAllData();
             
             // 2. 按依赖关系依次生成数据
-            // 首先生成用户和学生数据（基础数据）
-            log.info("📋 Step 1/9: 生成用户和学生数据...");
+            // 首先生成用户数据（学生数据已合并到用户表）
+            log.info("📋 Step 1/9: 生成用户数据...");
             devUserDataService.createUsers();
-            devUserDataService.createStudents();
+            // devUserDataService.createStudents(); // 已废弃 - 学生数据已合并到users表
             
             // 生成考试数据
             log.info("📝 Step 2/9: 生成考试数据...");
@@ -251,13 +247,7 @@ public class DevDataService {
                 log.warn("清理知识库数据失败: {}", e.getMessage());
             }
             
-            log.info("清理学生档案...");
-            try {
-                studentRepository.deleteAll();
-                studentRepository.flush();
-            } catch (Exception e) {
-                log.warn("清理学生档案失败: {}", e.getMessage());
-            }
+            // 学生档案已合并到用户表中，无需单独清理
             
             log.info("清理用户角色和用户...");
             try {
@@ -269,7 +259,6 @@ public class DevDataService {
             // 最终验证清理结果
             log.info("数据清理验证：");
             log.info("- 用户数量: {}", userRepository.count());
-            log.info("- 学生数量: {}", studentRepository.count());
             log.info("- 考试数量: {}", examRepository.count());
             log.info("- 题目数量: {}", questionRepository.count());
             
@@ -287,7 +276,6 @@ public class DevDataService {
     private void printDataSummary() {
         log.info("\n=== TeachHelper 示例数据汇总 ===");
         log.info("👥 用户总数: {}", userRepository.count());
-        log.info("🎓 学生档案: {}", studentRepository.count());
         log.info("📝 考试数量: {}", examRepository.count());
         log.info("❓ 题目总数: {}", questionRepository.count());
         log.info("✍️ 学生答案: {}", studentAnswerRepository.count());
@@ -309,8 +297,7 @@ public class DevDataService {
         stats.append("📊 TeachHelper 数据库统计\n\n");
         
         stats.append("👥 用户管理:\n");
-        stats.append("  • 用户总数: ").append(userRepository.count()).append("\n");
-        stats.append("  • 学生档案: ").append(studentRepository.count()).append("\n\n");
+        stats.append("  • 用户总数: ").append(userRepository.count()).append("\n\n");
         
         stats.append("📚 教学考试:\n");
         stats.append("  • 考试数量: ").append(examRepository.count()).append("\n");

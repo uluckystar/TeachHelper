@@ -27,7 +27,7 @@ public class StudentAnswer extends BaseEntity {
     @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "student_id", nullable = false)
-    private Student student;
+    private User student; // 直接关联User实体，代替原来的Student
     
     @NotBlank
     @Column(name = "answer_text", columnDefinition = "TEXT", nullable = false)
@@ -60,7 +60,7 @@ public class StudentAnswer extends BaseEntity {
     // Constructors
     public StudentAnswer() {}
     
-    public StudentAnswer(Question question, Student student, String answerText) {
+    public StudentAnswer(Question question, User student, String answerText) {
         this.question = question;
         this.student = student;
         this.answerText = answerText;
@@ -85,11 +85,11 @@ public class StudentAnswer extends BaseEntity {
         this.question = question;
     }
     
-    public Student getStudent() {
+    public User getStudent() {
         return student;
     }
     
-    public void setStudent(Student student) {
+    public void setStudent(User student) {
         this.student = student;
     }
     

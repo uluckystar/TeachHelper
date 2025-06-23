@@ -3,9 +3,12 @@ package com.teachhelper.service.exam;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -25,6 +28,7 @@ import com.teachhelper.entity.Classroom;
 import com.teachhelper.entity.Exam;
 import com.teachhelper.entity.ExamStatus;
 import com.teachhelper.entity.Role;
+import com.teachhelper.entity.StudentAnswer;
 import com.teachhelper.entity.User;
 import com.teachhelper.exception.ResourceNotFoundException;
 import com.teachhelper.repository.ClassroomRepository;
@@ -254,6 +258,21 @@ public class ExamService {
             throw new RuntimeException("无权限修改此考试");
         }
         
+        // 验证时间逻辑
+        if (startTime != null && endTime != null) {
+            if (startTime.isAfter(endTime) || startTime.isEqual(endTime)) {
+                throw new RuntimeException("开始时间必须早于结束时间");
+            }
+        }
+        
+        // 如果考试已发布，检查结束时间不能是过去时间
+        if (exam.getStatus() == ExamStatus.PUBLISHED && endTime != null) {
+            LocalDateTime now = LocalDateTime.now();
+            if (endTime.isBefore(now)) {
+                throw new RuntimeException("已发布考试的结束时间不能设置为过去时间");
+            }
+        }
+        
         exam.setTitle(title);
         exam.setDescription(description);
         
@@ -330,8 +349,31 @@ public class ExamService {
         //     throw new RuntimeException("考试必须包含至少一个题目才能发布");
         // }
         
-        // 更新状态为已发布
-        exam.setStatus(ExamStatus.PUBLISHED);
+        // 检查考试结束时间，如果已过期则自动设置为结束状态
+        LocalDateTime now = LocalDateTime.now();
+        if (exam.getEndTime() != null) {
+            if (exam.getEndTime().isBefore(now)) {
+                // 考试结束时间已过，直接设置为结束状态
+                exam.setStatus(ExamStatus.ENDED);
+                System.out.println("警告：考试结束时间已过期 (" + exam.getEndTime() + " < " + now + ")，考试自动设置为结束状态");
+            } else {
+                // 更新状态为已发布
+                exam.setStatus(ExamStatus.PUBLISHED);
+                
+                // 记录时间差用于日志
+                long timeDiffMinutes = java.time.Duration.between(now, exam.getEndTime()).toMinutes();
+                if (timeDiffMinutes < 60) {
+                    System.out.println("提醒：考试将在 " + timeDiffMinutes + " 分钟后结束");
+                } else if (timeDiffMinutes < 1440) { // 24小时
+                    System.out.println("提醒：考试将在 " + (timeDiffMinutes / 60) + " 小时后结束");
+                }
+            }
+        } else {
+            // 没有设置结束时间，正常发布
+            exam.setStatus(ExamStatus.PUBLISHED);
+            System.out.println("提醒：考试未设置结束时间，将持续开放");
+        }
+        
         return examRepository.save(exam);
     }
     
@@ -398,6 +440,8 @@ public class ExamService {
     }
 
     public ExamStatistics getExamStatistics(Long examId) {
+        System.out.println("📊 getExamStatistics - examId: " + examId);
+        
         Exam exam = getExamById(examId);
         ExamStatistics stats = new ExamStatistics();
         stats.setExamId(examId);
@@ -407,10 +451,13 @@ public class ExamService {
             // 获取考试的题目数量
             int totalQuestions = exam.getQuestions() != null ? exam.getQuestions().size() : 0;
             stats.setTotalQuestions(totalQuestions);
+            System.out.println("📋 题目总数: " + totalQuestions);
             
             // 获取考试的所有答案统计
             long totalAnswers = studentAnswerService.getAnswerCountByExamId(examId);
             long evaluatedAnswers = studentAnswerService.getEvaluatedAnswerCountByExamId(examId);
+            
+            System.out.println("📝 总答案数: " + totalAnswers + ", 已评估答案数: " + evaluatedAnswers);
             
             stats.setTotalAnswers(totalAnswers);
             stats.setEvaluatedAnswers(evaluatedAnswers);
@@ -427,6 +474,7 @@ public class ExamService {
             // 获取参与考试的学生数量
             long totalStudents = studentAnswerService.getDistinctStudentCountByExamId(examId);
             stats.setTotalStudents((int) totalStudents);
+            System.out.println("👥 参与学生数: " + totalStudents);
             
             // 获取平均分（仅评估过的答案）
             if (evaluatedAnswers > 0) {
@@ -464,16 +512,81 @@ public class ExamService {
     }
 
     public List<com.teachhelper.dto.response.ExamResultResponse> getAllStudentResultsForExam(Long examId, Long teacherId) {
+        System.out.println("🔍 getAllStudentResultsForExam - examId: " + examId + ", teacherId: " + teacherId);
+        
         if (teacherId != null && !isExamCreatedBy(examId, teacherId)) {
             // 对于教师，检查他们是否创建了该考试
             throw new SecurityException("教师无权访问此考试的结果。");
         }
         // 对于管理员 (teacherId == null)，他们可以访问任何考试的结果
         
-        // 此处应调用 StudentAnswerService 或 UserRepository 来获取所有参与此考试的学生ID
-        // 然后对于每个学生，构建 ExamResultResponse
-        // 以下为简化占位符实现
-        return new java.util.ArrayList<>(); 
+        // 获取该考试的所有答案
+        List<StudentAnswer> answers = studentAnswerService.getAnswersByExamId(examId);
+        System.out.println("📝 找到 " + answers.size() + " 个学生答案");
+        
+        if (answers.isEmpty()) {
+            System.out.println("⚠️  该考试没有学生答案数据");
+            return new ArrayList<>();
+        }
+        
+        // 按学生分组
+        Map<Long, List<StudentAnswer>> answersByStudent = answers.stream()
+            .collect(Collectors.groupingBy(answer -> answer.getStudent().getId()));
+        
+        System.out.println("👥 按学生分组后有 " + answersByStudent.size() + " 个学生");
+        
+        List<com.teachhelper.dto.response.ExamResultResponse> results = new ArrayList<>();
+        
+        for (Map.Entry<Long, List<StudentAnswer>> entry : answersByStudent.entrySet()) {
+            Long studentId = entry.getKey();
+            List<StudentAnswer> studentAnswers = entry.getValue();
+            
+            // 获取学生信息
+            User student = authService.getUserById(studentId);
+            if (student == null) {
+                System.out.println("⚠️ 找不到学生ID: " + studentId);
+                continue;
+            }
+            
+            System.out.println("👤 处理学生: " + student.getUsername() + " (ID: " + studentId + "), 答案数: " + studentAnswers.size());
+            
+            // 计算总分
+            double totalScore = studentAnswers.stream()
+                .filter(answer -> answer.isEvaluated() && answer.getScore() != null)
+                .mapToDouble(answer -> answer.getScore().doubleValue())
+                .sum();
+            
+            // 计算总可能分数
+            double totalPossibleScore = studentAnswers.stream()
+                .mapToDouble(answer -> answer.getQuestion().getMaxScore() != null ? answer.getQuestion().getMaxScore().doubleValue() : 100.0)
+                .sum();
+            
+            // 检查是否全部批阅完成
+            boolean allEvaluated = studentAnswers.stream().allMatch(answer -> answer.isEvaluated());
+            String status = allEvaluated ? "EVALUATED" : "SUBMITTED";
+            
+            // 获取最早和最晚的时间
+            LocalDateTime submitTime = studentAnswers.stream()
+                .map(answer -> answer.getCreatedAt())
+                .max(LocalDateTime::compareTo)
+                .orElse(null);
+            
+            // 创建结果对象
+            com.teachhelper.dto.response.ExamResultResponse result = new com.teachhelper.dto.response.ExamResultResponse();
+            result.setExamId(examId);
+            result.setStudentId(studentId);
+            result.setStudentName(student.getUsername());
+            result.setTotalScore(allEvaluated ? totalScore : null);
+            result.setTotalPossibleScore(totalPossibleScore);
+            result.setAnsweredQuestions(studentAnswers.size());
+            result.setStatus(status);
+            result.setSubmitTime(submitTime);
+            
+            results.add(result);
+        }
+        
+        System.out.println("✅ 最终返回 " + results.size() + " 个学生结果");
+        return results;
     }
 
     public Exam unpublishExam(Long examId) {

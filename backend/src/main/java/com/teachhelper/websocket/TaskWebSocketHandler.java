@@ -77,13 +77,26 @@ public class TaskWebSocketHandler extends TextWebSocketHandler {
     // 广播任务更新的方法
     public void broadcastTaskUpdate(String taskId, String status, Integer progress, String type, Object result) {
         try {
-            String message = String.format(
-                "{\"taskId\":\"%s\",\"status\":\"%s\",\"progress\":%d,\"type\":\"%s\",\"timestamp\":%d}",
-                taskId, status, progress != null ? progress : 0, type, System.currentTimeMillis()
-            );
+            // 构建更完整的任务更新消息
+            StringBuilder messageBuilder = new StringBuilder();
+            messageBuilder.append("{")
+                .append("\"taskId\":\"").append(taskId).append("\",")
+                .append("\"status\":\"").append(status).append("\",")
+                .append("\"progress\":").append(progress != null ? progress : 0).append(",")
+                .append("\"type\":\"").append(type != null ? type : "").append("\",")
+                .append("\"timestamp\":").append(System.currentTimeMillis());
+            
+            if (result != null) {
+                messageBuilder.append(",\"result\":").append(result.toString());
+            }
+            
+            messageBuilder.append("}");
+            
+            String message = messageBuilder.toString();
+            logger.info("广播任务更新: taskId={}, status={}, progress={}", taskId, status, progress);
             broadcast(message);
         } catch (Exception e) {
-            System.err.println("广播任务更新失败: " + e.getMessage());
+            logger.error("广播任务更新失败: taskId={}, error={}", taskId, e.getMessage());
         }
     }
 }

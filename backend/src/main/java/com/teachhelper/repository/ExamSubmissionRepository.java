@@ -21,10 +21,10 @@ public interface ExamSubmissionRepository extends JpaRepository<ExamSubmission, 
     boolean existsByExamIdAndStudentId(@Param("examId") Long examId, @Param("studentId") Long studentId);
     
     /**
-     * 检查学生是否已提交指定考试（通过studentId字符串）
+     * 检查学生是否已提交指定考试（通过studentNumber字符串）
      */
-    @Query("SELECT COUNT(es) > 0 FROM ExamSubmission es WHERE es.exam.id = :examId AND es.student.studentId = :studentId")
-    boolean existsByExamIdAndStudentStudentId(@Param("examId") Long examId, @Param("studentId") String studentId);
+    @Query("SELECT COUNT(es) > 0 FROM ExamSubmission es WHERE es.exam.id = :examId AND es.student.studentNumber = :studentNumber")
+    boolean existsByExamIdAndStudentNumber(@Param("examId") Long examId, @Param("studentNumber") String studentNumber);
     
     /**
      * 获取学生的考试提交记录
@@ -32,10 +32,10 @@ public interface ExamSubmissionRepository extends JpaRepository<ExamSubmission, 
     Optional<ExamSubmission> findByExamIdAndStudentId(@Param("examId") Long examId, @Param("studentId") Long studentId);
     
     /**
-     * 获取学生的考试提交记录（通过studentId字符串）
+     * 获取学生的考试提交记录（通过studentNumber字符串）
      */
-    @Query("SELECT es FROM ExamSubmission es WHERE es.exam.id = :examId AND es.student.studentId = :studentId")
-    Optional<ExamSubmission> findByExamIdAndStudentStudentId(@Param("examId") Long examId, @Param("studentId") String studentId);
+    @Query("SELECT es FROM ExamSubmission es WHERE es.exam.id = :examId AND es.student.studentNumber = :studentNumber")
+    Optional<ExamSubmission> findByExamIdAndStudentNumber(@Param("examId") Long examId, @Param("studentNumber") String studentNumber);
     
     /**
      * 获取指定考试的所有提交记录

@@ -430,21 +430,60 @@ const generateAIRubric = async () => {
   aiGenerating.value = true
   
   try {
-    // 创建AI生成任务
-    const taskResponse = await questionApi.generateRubricAsync(questionId.value)
-    currentTaskId.value = taskResponse.taskId
-    generationStatus.value = 'PENDING'
+    console.log('🚀 开始AI生成评分标准...')
     
-    ElNotification.info({
-      title: '开始AI生成',
-      message: `任务已创建，ID: ${taskResponse.taskId}`
-    })
+    // 首先尝试异步生成
+    try {
+      const taskResponse = await questionApi.generateRubricAsync(questionId.value)
+      currentTaskId.value = taskResponse.taskId
+      generationStatus.value = 'PENDING'
+      
+      console.log('✅ 异步任务创建成功:', {
+        taskId: taskResponse.taskId,
+        questionId: questionId.value
+      })
+      
+      ElNotification.info({
+        title: '开始AI生成',
+        message: `任务已创建，ID: ${taskResponse.taskId}`
+      })
+      
+      // 开始轮询状态
+      startStatusPolling()
+      
+    } catch (asyncError) {
+      console.warn('❌ 异步生成失败，尝试同步生成:', asyncError)
+      
+      // 如果异步生成失败，尝试同步生成
+      try {
+        ElNotification.info({
+          title: '正在生成评分标准',
+          message: '使用备用方案，请稍候...'
+        })
+        
+        const suggestions = await questionApi.generateRubric(questionId.value)
+        
+        if (suggestions && suggestions.length > 0) {
+          aiSuggestions.value = suggestions
+          ElNotification.success({
+            title: 'AI生成完成',
+            message: `生成了 ${suggestions.length} 个评分标准建议`,
+            duration: 3000
+          })
+          console.log('✅ 同步生成成功:', suggestions)
+        } else {
+          throw new Error('生成结果为空')
+        }
+        
+      } catch (syncError) {
+        console.error('❌ 同步生成也失败:', syncError)
+        throw syncError
+      }
+    }
     
-    // 开始轮询状态
-    startStatusPolling()
   } catch (error) {
-    console.error('创建AI生成任务失败:', error)
-    ElMessage.error('创建AI生成任务失败')
+    console.error('❌ AI生成评分标准失败:', error)
+    ElMessage.error('AI生成评分标准失败: ' + (error as Error).message)
     aiGenerating.value = false
   }
 }
@@ -487,6 +526,14 @@ const checkGenerationStatus = async () => {
   try {
     const status = await questionApi.getGenerationStatus(currentTaskId.value)
     
+    console.log('🔍 检查AI生成状态:', {
+      taskId: currentTaskId.value,
+      status: status.status,
+      progress: status.progress,
+      suggestions: status.suggestions ? status.suggestions.length : 0,
+      error: status.error
+    })
+    
     generationStatus.value = status.status
     generationProgress.value = status.progress || 0
     
@@ -507,13 +554,47 @@ const checkGenerationStatus = async () => {
       stopStatusPolling()
       aiGenerating.value = false
       
-      if (status.suggestions) {
+      console.log('✅ AI生成完成，检查建议:', {
+        hasSuggestions: !!status.suggestions,
+        suggestionsLength: status.suggestions ? status.suggestions.length : 0,
+        statusObject: status
+      })
+      
+      if (status.suggestions && status.suggestions.length > 0) {
         aiSuggestions.value = status.suggestions
         ElNotification.success({
           title: 'AI生成完成',
           message: `生成了 ${aiSuggestions.value.length} 个评分标准建议`,
           duration: 3000
         })
+      } else {
+        console.warn('⚠️ AI生成完成但没有建议数据')
+        // 尝试使用备用API直接获取建议
+        try {
+          console.log('🔄 尝试使用备用API获取建议...')
+          const backupSuggestions = await questionApi.generateRubric(questionId.value)
+          if (backupSuggestions && backupSuggestions.length > 0) {
+            aiSuggestions.value = backupSuggestions
+            ElNotification.success({
+              title: 'AI生成完成',
+              message: `生成了 ${aiSuggestions.value.length} 个评分标准建议`,
+              duration: 3000
+            })
+          } else {
+            ElNotification.warning({
+              title: 'AI生成完成',
+              message: '但未能生成有效的评分标准建议，请重试',
+              duration: 5000
+            })
+          }
+        } catch (backupError) {
+          console.error('备用API也失败:', backupError)
+          ElNotification.warning({
+            title: 'AI生成完成',
+            message: '但获取建议数据失败，请刷新页面重试',
+            duration: 5000
+          })
+        }
       }
     } else if (status.status === 'FAILED' || status.status === 'CANCELLED') {
       stopStatusPolling()

@@ -60,6 +60,9 @@ public class Question extends BaseEntity {
     @Column(name = "source_type")
     private String sourceType;
 
+    @Column(name = "is_confirmed", nullable = false)
+    private Boolean isConfirmed = false; // AI整理题目的确认状态
+
     @Column(name = "source_knowledge_base_id")
     private Long sourceKnowledgeBaseId;
 
@@ -271,11 +274,11 @@ public class Question extends BaseEntity {
     public String getSourceType() {
         return sourceType;
     }
-
+    
     public void setSourceType(String sourceType) {
         this.sourceType = sourceType;
     }
-
+    
     public Long getSourceKnowledgeBaseId() {
         return sourceKnowledgeBaseId;
     }
@@ -363,5 +366,13 @@ public class Question extends BaseEntity {
     
     public void setTags(String tags) {
         this.tags = tags;
+    }
+
+    public Boolean getIsConfirmed() {
+        return isConfirmed;
+    }
+
+    public void setIsConfirmed(Boolean isConfirmed) {
+        this.isConfirmed = isConfirmed;
     }
 }

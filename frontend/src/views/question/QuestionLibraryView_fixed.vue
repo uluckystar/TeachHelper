@@ -258,11 +258,7 @@
             :lg="6"
             class="question-card-col"
           >
-            <el-card 
-              class="question-card" 
-              shadow="hover"
-              @click="showQuestionDetail(question.id)"
-            >
+            <el-card class="question-card" shadow="hover">
               <div class="question-header">
                 <el-tag :type="getQuestionTypeTag(question.questionType)" size="small">
                   {{ getQuestionTypeText(question.questionType) }}
@@ -285,7 +281,7 @@
                 </div>
               </div>
               
-              <div class="question-actions" @click.stop>
+              <div class="question-actions">
                 <el-button size="small" type="primary" @click="editQuestion(question.id)">
                   编辑
                 </el-button>
@@ -321,92 +317,13 @@
       :question-id="selectedQuestionId"
       @refresh="loadQuestions"
     />
-
-    <!-- 题目详情对话框 -->
-    <el-dialog
-      v-model="detailDialogVisible"
-      title="题目详情"
-      width="800px"
-      class="question-detail-dialog"
-    >
-      <div v-if="selectedQuestion" class="question-detail">
-        <div class="detail-header">
-          <div class="header-left">
-            <el-tag :type="getQuestionTypeTag(selectedQuestion.questionType)" size="large">
-              {{ getQuestionTypeText(selectedQuestion.questionType) }}
-            </el-tag>
-            <span class="detail-score">满分: {{ selectedQuestion.maxScore }}分</span>
-          </div>
-          <div class="header-right">
-            <el-tag type="info">{{ getSourceText(selectedQuestion.sourceType) }}</el-tag>
-          </div>
-        </div>
-
-        <div class="detail-title">
-          <h3>{{ selectedQuestion.title }}</h3>
-        </div>
-
-        <div class="detail-content">
-          <h4>题目内容:</h4>
-          <div class="content-text" v-html="selectedQuestion.content"></div>
-        </div>
-
-        <div v-if="selectedQuestion.options && selectedQuestion.options.length > 0" class="detail-options">
-          <h4>选项:</h4>
-          <div class="options-list">
-            <div 
-              v-for="option in selectedQuestion.options" 
-              :key="option.id"
-              class="option-item"
-              :class="{ 'correct': option.isCorrect }"
-            >
-              <span class="option-label">{{ String.fromCharCode(65 + (option.optionOrder || 0)) }}</span>
-              <span class="option-text">{{ option.content }}</span>
-              <el-icon v-if="option.isCorrect" class="correct-icon"><Check /></el-icon>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="selectedQuestion.referenceAnswer" class="detail-answer">
-          <h4>参考答案:</h4>
-          <div class="answer-text" v-html="selectedQuestion.referenceAnswer"></div>
-        </div>
-
-        <div class="detail-meta">
-          <div class="meta-row">
-            <span class="meta-label">创建时间:</span>
-            <span>{{ formatDate(selectedQuestion.createdAt) }}</span>
-          </div>
-          <div class="meta-row" v-if="selectedQuestion.examTitle">
-            <span class="meta-label">所属考试:</span>
-            <span>{{ selectedQuestion.examTitle }}</span>
-          </div>
-          <div class="meta-row" v-if="selectedQuestion.keywords">
-            <span class="meta-label">关键词:</span>
-            <span>{{ selectedQuestion.keywords }}</span>
-          </div>
-        </div>
-      </div>
-
-      <template #footer>
-        <div class="dialog-footer">
-          <el-button @click="detailDialogVisible = false">关闭</el-button>
-          <el-button type="primary" @click="editQuestion(selectedQuestion?.id)">
-            编辑题目
-          </el-button>
-          <el-button type="success" @click="manageRubric(selectedQuestion?.id)">
-            管理评分标准
-          </el-button>
-        </div>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, List, Grid, Plus, Refresh, MagicStick, FolderOpened, ArrowDown, Filter, Collection, DataLine, Edit, Link, Reading, School, Document, Delete, Check } from '@element-plus/icons-vue'
+import { Search, List, Grid, Plus, Refresh, MagicStick, FolderOpened, ArrowDown, Filter, Collection, DataLine, Edit, Link, Reading, School, Document, Delete } from '@element-plus/icons-vue'
 import { questionApi } from '@/api/question'
 import { questionBankApi } from '@/api/questionBank'
 import { knowledgeBaseApi } from '@/api/knowledge'
@@ -428,14 +345,6 @@ const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const filtersExpanded = ref(false)
-
-// 详情对话框相关
-const detailDialogVisible = ref(false)
-const selectedQuestion = ref<QuestionResponse | null>(null)
-
-// 评分标准管理
-const rubricDialogVisible = ref(false)
-const selectedQuestionId = ref<number>(0)
 
 // 搜索表单
 const searchForm = ref({
@@ -576,41 +485,26 @@ const getSourceText = (sourceType: string | undefined) => {
   return map[sourceType] || '未知'
 }
 
-// 查看题目详情
-const viewQuestionDetail = (question: QuestionResponse) => {
-  selectedQuestion.value = question
-  detailDialogVisible.value = true
-}
+// 评分标准管理
+const rubricDialogVisible = ref(false)
+const selectedQuestionId = ref<number>(0)
 
-// 格式化日期
-const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleString('zh-CN')
-}
-
-const manageRubric = (questionId?: number) => {
-  if (questionId) {
-    selectedQuestionId.value = questionId
-    rubricDialogVisible.value = true
-  }
+const manageRubric = (questionId: number) => {
+  selectedQuestionId.value = questionId
+  rubricDialogVisible.value = true
 }
 
 // 题目操作
 const createQuestion = () => {
-  router.push('/questions/create')
+  router.push('/question/create')
 }
 
-const editQuestion = (questionId?: number) => {
-  if (questionId) {
-    router.push(`/questions/${questionId}/edit`)
-  }
+const editQuestion = (questionId: number) => {
+  router.push(`/question/edit/${questionId}`)
 }
 
 const generateWithAI = () => {
-  router.push('/questions/generate')
-}
-
-const showQuestionDetail = (questionId: number) => {
-  router.push(`/questions/${questionId}`)
+  router.push('/question/ai-generate')
 }
 
 const deleteQuestion = async (questionId: string) => {
@@ -967,7 +861,6 @@ onMounted(() => {
   height: 100%;
   border-radius: 12px;
   transition: all 0.3s ease;
-  cursor: pointer;
   
   &:hover {
     transform: translateY(-4px);
@@ -1134,171 +1027,6 @@ onMounted(() => {
   .action-buttons {
     flex-direction: column;
     width: 100%;
-  }
-}
-
-// 题目详情对话框样式
-.question-detail-dialog {
-  .question-detail {
-    max-height: 600px;
-    overflow-y: auto;
-  }
-  
-  .detail-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid #ebeef5;
-    
-    .header-left {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    
-    .detail-score {
-      font-weight: 600;
-      color: #f56c6c;
-    }
-  }
-  
-  .detail-title {
-    margin-bottom: 20px;
-    
-    h3 {
-      margin: 0;
-      color: #303133;
-      font-size: 18px;
-      font-weight: 600;
-    }
-  }
-  
-  .detail-content {
-    margin-bottom: 20px;
-    
-    h4 {
-      margin: 0 0 10px 0;
-      color: #606266;
-      font-size: 14px;
-      font-weight: 600;
-    }
-    
-    .content-text {
-      background: #f8f9fa;
-      padding: 12px;
-      border-radius: 8px;
-      line-height: 1.6;
-    }
-  }
-  
-  .detail-options {
-    margin-bottom: 20px;
-    
-    h4 {
-      margin: 0 0 10px 0;
-      color: #606266;
-      font-size: 14px;
-      font-weight: 600;
-    }
-    
-    .options-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    
-    .option-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
-      background: #f8f9fa;
-      border-radius: 6px;
-      border: 1px solid #e4e7ed;
-      
-      &.correct {
-        background: #f0f9ff;
-        border-color: #409eff;
-        color: #409eff;
-      }
-      
-      .option-label {
-        font-weight: 600;
-        min-width: 24px;
-        text-align: center;
-        background: #fff;
-        border-radius: 50%;
-        padding: 4px 8px;
-      }
-      
-      .option-text {
-        flex: 1;
-      }
-      
-      .correct-icon {
-        color: #67c23a;
-      }
-    }
-  }
-  
-  .detail-answer {
-    margin-bottom: 20px;
-    
-    h4 {
-      margin: 0 0 10px 0;
-      color: #606266;
-      font-size: 14px;
-      font-weight: 600;
-    }
-    
-    .answer-text {
-      background: #f0f9ff;
-      padding: 12px;
-      border-radius: 8px;
-      border-left: 4px solid #409eff;
-      line-height: 1.6;
-    }
-  }
-  
-  .detail-meta {
-    .meta-row {
-      display: flex;
-      margin-bottom: 8px;
-      
-      .meta-label {
-        font-weight: 500;
-        color: #909399;
-        min-width: 80px;
-      }
-    }
-  }
-  
-  .dialog-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-  }
-}
-
-// 让卡片具有点击提示
-.question-card {
-  cursor: pointer;
-  transition: all 0.3s ease;
-  
-  &:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
-  }
-  
-  .question-actions {
-    opacity: 0;
-    transition: opacity 0.3s ease;
-  }
-  
-  &:hover .question-actions {
-    opacity: 1;
   }
 }
 </style>

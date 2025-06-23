@@ -12,9 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.teachhelper.entity.Role;
-import com.teachhelper.entity.Student;
 import com.teachhelper.entity.User;
-import com.teachhelper.repository.StudentRepository;
 import com.teachhelper.repository.UserRepository;
 
 /**
@@ -24,14 +22,9 @@ import com.teachhelper.repository.UserRepository;
 @Transactional
 public class DevUserDataService {
 
-    private static final Logger log = LoggerFactory.getLogger(DevUserDataService.class);
-
-    @Autowired
+    private static final Logger log = LoggerFactory.getLogger(DevUserDataService.class);    @Autowired
     private UserRepository userRepository;
-    
-    @Autowired
-    private StudentRepository studentRepository;
-    
+
     @Autowired
     private PasswordEncoder passwordEncoder;
 
@@ -72,25 +65,14 @@ public class DevUserDataService {
         return userRepository.saveAll(List.of(admin, teacher1, teacher2, teacher3, teacher4, 
                                             student1, student2, student3, student4, student5, 
                                             student6, student7, student8, student9, student10));
-    }
-
-    /**
-     * 创建学生信息示例数据
+    }    /**
+     * 创建学生信息示例数据 (已废弃 - 现在统一使用User表)
+     * @deprecated 使用createUsers()方法代替
      */
-    public List<Student> createStudents() {
-        Student student1 = createStudent("2021001001", "陈小明", "chen.xiaoming@student.edu.cn", "计算机科学与技术1班", "计算机科学与技术");
-        Student student2 = createStudent("2021001002", "刘小红", "liu.xiaohong@student.edu.cn", "计算机科学与技术1班", "计算机科学与技术");
-        Student student3 = createStudent("2021001003", "赵小刚", "zhao.xiaogang@student.edu.cn", "计算机科学与技术2班", "计算机科学与技术");
-        Student student4 = createStudent("2021001004", "黄小雨", "huang.xiaoyu@student.edu.cn", "计算机科学与技术2班", "计算机科学与技术");
-        Student student5 = createStudent("2021002001", "吴小丽", "wu.xiaoli@student.edu.cn", "软件工程1班", "软件工程");
-        Student student6 = createStudent("2021002002", "孙小军", "sun.xiaojun@student.edu.cn", "软件工程1班", "软件工程");
-        Student student7 = createStudent("2021002003", "马小斌", "ma.xiaobin@student.edu.cn", "软件工程2班", "软件工程");
-        Student student8 = createStudent("2021003001", "张小飞", "zhang.xiaofei@student.edu.cn", "网络工程1班", "网络工程");
-        Student student9 = createStudent("2021003002", "李小华", "li.xiaohua@student.edu.cn", "网络工程1班", "网络工程");
-        Student student10 = createStudent("2021004001", "王小强", "wang.xiaoqiang@student.edu.cn", "信息安全1班", "信息安全");
-        
-        return studentRepository.saveAll(List.of(student1, student2, student3, student4, student5, 
-                                                student6, student7, student8, student9, student10));
+    @Deprecated
+    public void createStudents() {
+        log.warn("createStudents()方法已废弃，Student表已不再使用，所有学生数据已合并到User表中");
+        // 不再创建Student实体，因为已经合并到User表中
     }
 
     private User createTeacher(String username, String name, String email, String balance, int todayApiCalls) {
@@ -121,31 +103,13 @@ public class DevUserDataService {
         return student;
     }
 
-    private Student createStudent(String studentId, String name, String email, String className, String major) {
-        Student student = new Student();
-        student.setStudentId(studentId);
-        student.setName(name);
-        student.setEmail(email);
-        student.setClassName(className);
-        student.setMajor(major);
-        return student;
-    }
-
     /**
-     * 清空用户和学生数据
+     * 清空用户数据
      */
     @Transactional
     public void clearUserData() {
         try {
-            // 先删除学生档案
-            log.info("删除学生档案数据...");
-            studentRepository.deleteAll();
-        } catch (Exception e) {
-            log.warn("删除学生档案失败: {}", e.getMessage());
-        }
-        
-        try {
-            // 再删除用户数据
+            // 删除用户数据（包含学生数据，因为已合并）
             log.info("删除用户数据...");
             userRepository.deleteAll();
         } catch (Exception e) {

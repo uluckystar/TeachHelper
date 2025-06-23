@@ -1,5 +1,6 @@
 package com.teachhelper.repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -11,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import com.teachhelper.entity.Exam;
+import com.teachhelper.entity.ExamStatus;
 
 @Repository
 public interface ExamRepository extends JpaRepository<Exam, Long> {
@@ -78,4 +80,12 @@ public interface ExamRepository extends JpaRepository<Exam, Long> {
     // 分页查询学生所有可访问的考试
     @Query("SELECT DISTINCT e FROM Exam e JOIN e.targetClassrooms c JOIN c.students s WHERE s.id = :studentId AND (e.status = 'PUBLISHED' OR e.status = 'ENDED' OR e.status = 'EVALUATED')")
     Page<Exam> findAllAccessibleExamsForStudent(@Param("studentId") Long studentId, Pageable pageable);
+    
+    // ===== 定时任务相关方法 =====
+    
+    // 查找指定状态且结束时间早于指定时间的考试（用于自动结束过期考试）
+    List<Exam> findByStatusAndEndTimeBefore(ExamStatus status, LocalDateTime endTime);
+    
+    // 查找指定状态且结束时间在指定时间范围内的考试（用于提醒即将结束的考试）
+    List<Exam> findByStatusAndEndTimeBetween(ExamStatus status, LocalDateTime startTime, LocalDateTime endTime);
 }

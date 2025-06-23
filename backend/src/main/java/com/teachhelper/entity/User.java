@@ -67,6 +67,36 @@ public class User extends BaseEntity implements UserDetails {
     @OneToMany(mappedBy = "createdBy", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private Set<Exam> exams;
     
+    // 学生扩展字段
+    @Column(name = "student_number", unique = true, length = 20)
+    private String studentNumber; // 学号，用于前端显示
+    
+    @Column(name = "class_name", length = 100)
+    private String className; // 班级名称
+    
+    @Column(name = "major", length = 100)
+    private String major; // 专业
+    
+    // 教师扩展字段
+    @Column(name = "employee_number", unique = true, length = 20)
+    private String employeeNumber; // 工号
+    
+    @Column(name = "department", length = 100)
+    private String department; // 所属部门
+    
+    @Column(name = "title", length = 50)
+    private String title; // 职称（如教授、副教授、讲师等）
+    
+    // 通用扩展字段
+    @Column(name = "real_name", length = 100)
+    private String realName; // 真实姓名
+    
+    @Column(name = "phone", length = 20)
+    private String phone; // 电话号码
+    
+    @Column(name = "avatar_url", length = 500)
+    private String avatarUrl; // 头像URL
+    
     // Constructors
     public User() {}
     
@@ -180,5 +210,108 @@ public class User extends BaseEntity implements UserDetails {
     
     public void setExams(Set<Exam> exams) {
         this.exams = exams;
+    }
+    
+    // 学生扩展字段的 getter 和 setter
+    public String getStudentNumber() {
+        return studentNumber;
+    }
+    
+    public void setStudentNumber(String studentNumber) {
+        this.studentNumber = studentNumber;
+    }
+    
+    public String getClassName() {
+        return className;
+    }
+    
+    public void setClassName(String className) {
+        this.className = className;
+    }
+    
+    public String getMajor() {
+        return major;
+    }
+    
+    public void setMajor(String major) {
+        this.major = major;
+    }
+    
+    // 教师扩展字段的 getter 和 setter
+    public String getEmployeeNumber() {
+        return employeeNumber;
+    }
+    
+    public void setEmployeeNumber(String employeeNumber) {
+        this.employeeNumber = employeeNumber;
+    }
+    
+    public String getDepartment() {
+        return department;
+    }
+    
+    public void setDepartment(String department) {
+        this.department = department;
+    }
+    
+    public String getTitle() {
+        return title;
+    }
+    
+    public void setTitle(String title) {
+        this.title = title;
+    }
+    
+    // 通用扩展字段的 getter 和 setter
+    public String getRealName() {
+        return realName;
+    }
+    
+    public void setRealName(String realName) {
+        this.realName = realName;
+    }
+    
+    public String getPhone() {
+        return phone;
+    }
+    
+    public void setPhone(String phone) {
+        this.phone = phone;
+    }
+    
+    public String getAvatarUrl() {
+        return avatarUrl;
+    }
+    
+    public void setAvatarUrl(String avatarUrl) {
+        this.avatarUrl = avatarUrl;
+    }
+    
+    // 便捷方法：判断用户角色
+    public boolean hasRole(Role role) {
+        return roles != null && roles.contains(role);
+    }
+    
+    public boolean isStudent() {
+        return hasRole(Role.STUDENT);
+    }
+    
+    public boolean isTeacher() {
+        return hasRole(Role.TEACHER);
+    }
+    
+    public boolean isAdmin() {
+        return hasRole(Role.ADMIN);
+    }
+    
+    // 向后兼容方法，为了支持原来依赖Student实体的代码
+    public String getName() {
+        // 优先返回真实姓名，否则返回用户名
+        return realName != null && !realName.trim().isEmpty() ? realName : username;
+    }
+    
+    public String getStudentId() {
+        // 优先返回学号，否则返回用户ID的字符串形式
+        return studentNumber != null && !studentNumber.trim().isEmpty() ? studentNumber : String.valueOf(getId());
     }
 }

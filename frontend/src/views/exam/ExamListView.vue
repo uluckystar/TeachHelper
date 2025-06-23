@@ -949,8 +949,35 @@ const checkRubricAndStartEvaluation = async (examId: number) => {
 
 
 
-const publishExam = async (exam: Exam) => {
+const publishExam = async (exam: any) => {
   try {
+    // 检查考试结束时间
+    if (exam.endTime) {
+      const endTime = new Date(exam.endTime)
+      const now = new Date()
+      
+      if (endTime <= now) {
+        // 考试已过期，阻止发布并提供编辑选项
+        try {
+          await ElMessageBox.confirm(
+            `⚠️ 考试"${exam.title}"的结束时间已过期，无法发布！\n\n是否立即编辑考试修改时间？`,
+            '考试时间已过期',
+            {
+              confirmButtonText: '编辑考试',
+              cancelButtonText: '取消',
+              type: 'error'
+            }
+          )
+          // 用户选择编辑，跳转到编辑页面
+          editExam(exam.id)
+          return
+        } catch {
+          // 用户取消，直接返回
+          return
+        }
+      }
+    }
+    
     currentExam.value = exam
     
     // 加载班级数据
@@ -992,9 +1019,26 @@ const confirmPublishExam = async () => {
     
     // 先更新班级，再发布考试
     await examApi.updateExamClassrooms(currentExam.value.id, selectedClassroomIds.value)
-    await examApi.publishExam(currentExam.value.id)
+    const publishResponse = await examApi.publishExam(currentExam.value.id)
     
-    ElMessage.success('考试发布成功')
+    // 检查是否有时间提醒消息
+    if (publishResponse.timeMessage) {
+      // 显示时间提醒消息
+      if (publishResponse.timeMessage.includes('过期')) {
+        ElMessage.warning({
+          message: `考试发布成功！${publishResponse.timeMessage}`,
+          duration: 5000
+        })
+      } else {
+        ElMessage.info({
+          message: `考试发布成功！${publishResponse.timeMessage}`,
+          duration: 4000
+        })
+      }
+    } else {
+      ElMessage.success('考试发布成功')
+    }
+    
     showPublishDialog.value = false
     loadExams()
   } catch (error: any) {

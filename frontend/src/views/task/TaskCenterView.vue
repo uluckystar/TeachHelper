@@ -126,6 +126,7 @@
               <el-radio-button label="PENDING">待处理</el-radio-button>
               <el-radio-button label="COMPLETED">已完成</el-radio-button>
               <el-radio-button label="FAILED">失败</el-radio-button>
+              <el-radio-button label="PAUSED">已暂停</el-radio-button>
             </el-radio-group>
           </div>
         </div>
@@ -144,17 +145,17 @@
           v-for="task in tasks"
           :key="task.taskId || task.id"
           class="task-item"
-          :class="[`status-${task.status.toLowerCase()}`]"
+          :class="[`status-${task.status.toLowerCase()}`, { 'task-updating': task._updating }]"
         >
           <div class="task-header">
             <div class="task-info">
               <h3 class="task-title">{{ getTaskTitle(task) }}</h3>
               <div class="task-meta">
-                <el-tag :type="getStatusTagType(task.status)" size="small">
-                  {{ getStatusText(task.status) }}
+                <el-tag :type="getStatusTagType(task.status || 'UNKNOWN')" size="small">
+                  {{ getStatusText(task.status || 'UNKNOWN') }}
                 </el-tag>
-                <span class="task-id">ID: {{ task.taskId || task.id }}</span>
-                <span class="task-time">{{ formatTime(task.createdAt || task.startTime) }}</span>
+                <span class="task-id">ID: {{ task.taskId || task.id || 'N/A' }}</span>
+                <span class="task-time">{{ formatTime(task.createdAt || task.startTime || '') }}</span>
               </div>
             </div>
             <div class="task-actions">
@@ -177,7 +178,7 @@
                 继续
               </el-button>
               <el-button
-                v-if="['RUNNING', 'PENDING'].includes(task.status)"
+                v-if="['RUNNING', 'PENDING', 'PAUSED'].includes(task.status || '')"
                 type="danger"
                 size="small"
                 @click="cancelTask(task)"
@@ -197,7 +198,7 @@
           </div>
 
           <!-- 进度条 -->
-          <div v-if="['RUNNING', 'PAUSED'].includes(task.status)" class="task-progress">
+          <div v-if="['RUNNING', 'PAUSED'].includes(task.status || '')" class="task-progress">
             <div class="progress-info">
               <span class="progress-text">{{ task.currentStep || '处理中...' }}</span>
               <span class="progress-percent">{{ task.progress || 0 }}%</span>
@@ -218,7 +219,7 @@
             <el-collapse>
               <el-collapse-item title="实时预览" name="preview">
                 <component
-                  :is="getPreviewComponent(task.type)"
+                  :is="getPreviewComponent(task.type || '')"
                   :task="task"
                   :preview-data="task.previewData"
                 />
@@ -254,8 +255,8 @@
           <div v-if="task.status === 'FAILED' && task.error" class="task-error">
             <el-alert
               type="error"
-              :title="task.error.message"
-              :description="task.error.details"
+              :title="task.error.message || '任务执行失败'"
+              :description="task.error.details || task.errorMessage || '未知错误'"
               show-icon
               :closable="false"
             />
@@ -290,6 +291,8 @@ import {
 } from '@element-plus/icons-vue'
 import { taskApi } from '@/api/task'
 import { useTaskWebSocket, useTaskUpdates } from '@/utils/taskWebSocket'
+import { updateTaskInList, calculateTaskStats } from '@/utils/taskUpdateHelper'
+import { preventDuplicate, getTaskOperationKey } from '@/utils/preventDuplicate'
 import TaskDetailDialog from '@/components/task/TaskDetailDialog.vue'
 import QuickTaskCreateDialog from '@/components/task/QuickTaskCreateDialog.vue'
 
@@ -323,22 +326,34 @@ const hasRunningTasks = computed(() => taskStats.running > 0)
 
 // 监听WebSocket任务更新
 const handleTaskUpdate = (taskId: string, update: any) => {
-  const taskIndex = tasks.value.findIndex(t => (t.taskId || t.id) === taskId)
-  if (taskIndex > -1) {
-    // 更新现有任务
-    tasks.value[taskIndex] = { ...tasks.value[taskIndex], ...update }
-  } else {
-    // 如果是新任务，重新加载任务列表
-    loadTasks()
-  }
+  console.log(`🔄 收到任务更新: ${taskId}`, update)
   
-  // 更新统计
-  updateTaskStats(tasks.value)
+  const hasActualChanges = updateTaskInList(tasks.value, taskId, update)
+  
+  if (hasActualChanges) {
+    // 只有在真正有变化时才更新统计
+    const newStats = calculateTaskStats(tasks.value)
+    
+    // 智能更新统计，只更新变化的字段
+    if (newStats.running !== taskStats.running) taskStats.running = newStats.running
+    if (newStats.pending !== taskStats.pending) taskStats.pending = newStats.pending
+    if (newStats.completed !== taskStats.completed) taskStats.completed = newStats.completed
+    if (newStats.failed !== taskStats.failed) taskStats.failed = newStats.failed
+    
+    console.log(`✅ 任务 ${taskId} 状态已更新`)
+  } else if (!tasks.value.find(t => (t.taskId || t.id) === taskId)) {
+    // 如果是新任务且当前列表中没有，才考虑重新加载
+    if (update.status && !['CANCELLED', 'COMPLETED'].includes(update.status)) {
+      console.log(`➕ 发现新任务: ${taskId}，重新加载列表`)
+      loadTasks()
+    }
+  }
 }
 
 // 监听WebSocket更新
 import { watch } from 'vue'
 watch(taskUpdates, (updates) => {
+  console.log('TaskCenter 收到WebSocket更新:', updates)
   Object.entries(updates).forEach(([taskId, update]) => {
     handleTaskUpdate(taskId, update)
   })
@@ -357,12 +372,16 @@ const loadTasks = async () => {
       taskApi.getTaskStatistics()
     ])
 
-    const allTasks = tasksResponse.items || tasksResponse
+    // 处理分页数据：Spring Boot Page对象的内容在content属性中
+    const allTasks = tasksResponse.content || tasksResponse.items || tasksResponse
+
+    // 确保任务数据是数组格式
+    const validTasks = Array.isArray(allTasks) ? allTasks : []
 
     // 按状态过滤
     tasks.value = filterStatus.value 
-      ? allTasks.filter((task: any) => task.status === filterStatus.value)
-      : allTasks
+      ? validTasks.filter((task: any) => task.status === filterStatus.value)
+      : validTasks
 
     // 更新统计（优先使用API返回的统计数据）
     if (statsResponse) {
@@ -371,7 +390,8 @@ const loadTasks = async () => {
       taskStats.completed = statsResponse.completed || 0
       taskStats.failed = statsResponse.failed || 0
     } else {
-      updateTaskStats(allTasks)
+      const newStats = calculateTaskStats(validTasks)
+      Object.assign(taskStats, newStats)
     }
 
   } catch (error) {
@@ -380,13 +400,6 @@ const loadTasks = async () => {
   } finally {
     loading.value = false
   }
-}
-
-const updateTaskStats = (allTasks: any[]) => {
-  taskStats.running = allTasks.filter(t => t.status === 'RUNNING').length
-  taskStats.pending = allTasks.filter(t => t.status === 'PENDING').length
-  taskStats.completed = allTasks.filter(t => t.status === 'COMPLETED').length
-  taskStats.failed = allTasks.filter(t => t.status === 'FAILED').length
 }
 
 const refreshTasks = () => {
@@ -405,7 +418,8 @@ const toggleAutoRefresh = (value: string | number | boolean) => {
 
 const startAutoRefresh = () => {
   stopAutoRefresh()
-  refreshTimer = setInterval(loadTasks, 5000) as any
+  // 降低自动刷新频率，主要依赖WebSocket实时更新
+  refreshTimer = setInterval(loadTasks, 30000) as any // 30秒刷新一次，主要用于兜底
 }
 
 const stopAutoRefresh = () => {
@@ -415,55 +429,47 @@ const stopAutoRefresh = () => {
   }
 }
 
-const pauseTask = async (task: any) => {
+const pauseTask = preventDuplicate(async (task: any) => {
   try {
     await ElMessageBox.confirm('确定要暂停此任务吗？', '确认暂停', { type: 'warning' })
-    
     await taskApi.pauseTask(task.taskId || task.id)
-    
     ElMessage.success('任务已暂停')
-    loadTasks()
   } catch (error: any) {
     if (error !== 'cancel') {
       ElMessage.error('暂停任务失败')
     }
   }
-}
+}, (task: any) => getTaskOperationKey('pause', task.taskId || task.id))
 
-const resumeTask = async (task: any) => {
+const resumeTask = preventDuplicate(async (task: any) => {
   try {
     await taskApi.resumeTask(task.taskId || task.id)
-    
     ElMessage.success('任务已恢复')
-    loadTasks()
   } catch (error) {
     ElMessage.error('恢复任务失败')
   }
-}
+}, (task: any) => getTaskOperationKey('resume', task.taskId || task.id))
 
-const cancelTask = async (task: any) => {
+const cancelTask = preventDuplicate(async (task: any) => {
   try {
     await ElMessageBox.confirm('确定要取消此任务吗？取消后无法恢复。', '确认取消', { type: 'warning' })
-    
     await taskApi.cancelTask(task.taskId || task.id)
-    
     ElMessage.success('任务已取消')
-    loadTasks()
   } catch (error: any) {
     if (error !== 'cancel') {
       ElMessage.error('取消任务失败')
     }
   }
-}
+}, (task: any) => getTaskOperationKey('cancel', task.taskId || task.id))
 
 const pauseAllTasks = async () => {
   try {
     await ElMessageBox.confirm('确定要暂停所有运行中的任务吗？', '确认暂停', { type: 'warning' })
     
-    await taskApi.batchPauseTasks({ status: 'RUNNING' })
+    await taskApi.batchPauseTasks()
     
     ElMessage.success('所有任务已暂停')
-    loadTasks()
+    // 移除loadTasks()调用，依赖WebSocket实时更新
   } catch (error: any) {
     if (error !== 'cancel') {
       ElMessage.error('暂停任务失败')
@@ -475,9 +481,10 @@ const clearCompletedTasks = async () => {
   try {
     await ElMessageBox.confirm('确定要清理所有已完成的任务吗？', '确认清理', { type: 'warning' })
     
-    await taskApi.clearCompletedTasks({ status: 'COMPLETED' })
+    await taskApi.clearCompletedTasks()
     
     ElMessage.success('已完成任务已清理')
+    // 对于清理操作，需要重新加载以反映删除的任务
     loadTasks()
   } catch (error: any) {
     if (error !== 'cancel') {
@@ -529,7 +536,9 @@ const getStatusTagType = (status: string): 'primary' | 'success' | 'warning' | '
     PENDING: 'warning',
     COMPLETED: 'success',
     FAILED: 'danger',
-    PAUSED: 'info'
+    PAUSED: 'info',
+    CANCELLED: 'info',
+    UNKNOWN: 'info'
   }
   return typeMap[status] || 'info'
 }
@@ -540,7 +549,9 @@ const getStatusText = (status: string) => {
     PENDING: '待处理',
     COMPLETED: '已完成',
     FAILED: '失败',
-    PAUSED: '已暂停'
+    PAUSED: '已暂停',
+    CANCELLED: '已取消',
+    UNKNOWN: '未知状态'
   }
   return textMap[status as keyof typeof textMap] || status
 }
@@ -715,6 +726,30 @@ onUnmounted(() => {
 
 .task-item.status-pending {
   border-left: 4px solid #e6a23c;
+}
+
+.task-item.status-paused {
+  border-left: 4px solid #909399;
+}
+
+/* 状态变化动画 */
+.task-item {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.task-item.task-updating {
+  transform: scale(1.02);
+  box-shadow: 0 8px 25px rgba(64, 158, 255, 0.2);
+}
+
+/* 状态指示器动画 */
+.task-meta .el-tag {
+  transition: all 0.3s ease;
+}
+
+/* 进度条平滑更新 */
+.task-progress .el-progress {
+  transition: all 0.5s ease;
 }
 
 .task-header {

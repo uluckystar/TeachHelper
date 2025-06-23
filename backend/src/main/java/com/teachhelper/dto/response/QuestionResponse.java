@@ -24,6 +24,18 @@ public class QuestionResponse {
     private long evaluatedAnswers;
     private double averageScore;
     
+    // 题目来源相关字段
+    private String sourceType;
+    private Long sourceKnowledgeBaseId;
+    private String sourceKnowledgeBaseName;
+    private Long sourceKnowledgePointId;
+    private String sourceKnowledgePointName;
+    private Long questionBankId;
+    private String questionBankName;
+    private String difficulty;
+    private String keywords;
+    private Boolean isConfirmed; // AI整理题目的确认状态
+    
     public QuestionResponse() {}
     
     public Long getId() {
@@ -144,6 +156,87 @@ public class QuestionResponse {
     
     public void setAverageScore(double averageScore) {
         this.averageScore = averageScore;
+    }
+    
+    // 题目来源相关字段的getter和setter
+    public String getSourceType() {
+        return sourceType;
+    }
+    
+    public void setSourceType(String sourceType) {
+        this.sourceType = sourceType;
+    }
+    
+    public Long getSourceKnowledgeBaseId() {
+        return sourceKnowledgeBaseId;
+    }
+    
+    public void setSourceKnowledgeBaseId(Long sourceKnowledgeBaseId) {
+        this.sourceKnowledgeBaseId = sourceKnowledgeBaseId;
+    }
+    
+    public String getSourceKnowledgeBaseName() {
+        return sourceKnowledgeBaseName;
+    }
+    
+    public void setSourceKnowledgeBaseName(String sourceKnowledgeBaseName) {
+        this.sourceKnowledgeBaseName = sourceKnowledgeBaseName;
+    }
+    
+    public Long getSourceKnowledgePointId() {
+        return sourceKnowledgePointId;
+    }
+    
+    public void setSourceKnowledgePointId(Long sourceKnowledgePointId) {
+        this.sourceKnowledgePointId = sourceKnowledgePointId;
+    }
+    
+    public String getSourceKnowledgePointName() {
+        return sourceKnowledgePointName;
+    }
+    
+    public void setSourceKnowledgePointName(String sourceKnowledgePointName) {
+        this.sourceKnowledgePointName = sourceKnowledgePointName;
+    }
+    
+    public Long getQuestionBankId() {
+        return questionBankId;
+    }
+    
+    public void setQuestionBankId(Long questionBankId) {
+        this.questionBankId = questionBankId;
+    }
+    
+    public String getQuestionBankName() {
+        return questionBankName;
+    }
+    
+    public void setQuestionBankName(String questionBankName) {
+        this.questionBankName = questionBankName;
+    }
+    
+    public String getDifficulty() {
+        return difficulty;
+    }
+    
+    public void setDifficulty(String difficulty) {
+        this.difficulty = difficulty;
+    }
+    
+    public String getKeywords() {
+        return keywords;
+    }
+    
+    public void setKeywords(String keywords) {
+        this.keywords = keywords;
+    }
+    
+    public Boolean getIsConfirmed() {
+        return isConfirmed;
+    }
+    
+    public void setIsConfirmed(Boolean isConfirmed) {
+        this.isConfirmed = isConfirmed;
     }
     
     public static class RubricCriterionResponse {

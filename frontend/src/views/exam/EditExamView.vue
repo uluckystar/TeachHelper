@@ -57,7 +57,7 @@
         </el-form-item>
       </el-card>
 
-      <el-card class="form-card">
+      <el-card class="form-card" ref="timeSettingsCard">
         <template #header>
           <span>考试设置</span>
         </template>
@@ -79,7 +79,7 @@
             type="datetime"
             placeholder="选择考试开始时间"
             format="YYYY-MM-DD HH:mm"
-            value-format="YYYY-MM-DD HH:mm:ss"
+            value-format="YYYY-MM-DDTHH:mm:ss"
             style="width: 300px"
           />
         </el-form-item>
@@ -90,7 +90,7 @@
             type="datetime"
             placeholder="选择考试结束时间"
             format="YYYY-MM-DD HH:mm"
-            value-format="YYYY-MM-DD HH:mm:ss"
+            value-format="YYYY-MM-DDTHH:mm:ss"
             style="width: 300px"
           />
         </el-form-item>
@@ -347,6 +347,7 @@ interface Class {
 const route = useRoute()
 const router = useRouter()
 const formRef = ref()
+const timeSettingsCard = ref()
 
 // 响应式数据
 const loading = ref(false)
@@ -398,6 +399,53 @@ const rules = {
   ],
   duration: [
     { type: 'number', min: 0, max: 480, message: '时长范围在 0 到 480 分钟', trigger: 'blur' }
+  ],
+  startTime: [
+    {
+      validator: (rule: any, value: string, callback: Function) => {
+        if (value && form.endTime) {
+          const start = new Date(value)
+          const end = new Date(form.endTime)
+          if (start >= end) {
+            callback(new Error('开始时间必须早于结束时间'))
+          } else {
+            callback()
+          }
+        } else {
+          callback()
+        }
+      },
+      trigger: 'change'
+    }
+  ],
+  endTime: [
+    {
+      validator: (rule: any, value: string, callback: Function) => {
+        if (value) {
+          const endTime = new Date(value)
+          const now = new Date()
+          
+          if (form.startTime) {
+            const startTime = new Date(form.startTime)
+            if (endTime <= startTime) {
+              callback(new Error('结束时间必须晚于开始时间'))
+              return
+            }
+          }
+          
+          // 如果要发布考试，检查结束时间不能是过去时间
+          if (form.status === 'PUBLISHED' && endTime <= now) {
+            callback(new Error('发布考试的结束时间不能是过去时间'))
+            return
+          }
+          
+          callback()
+        } else {
+          callback()
+        }
+      },
+      trigger: 'change'
+    }
   ],
   password: [
     { 
@@ -508,6 +556,50 @@ const publishExam = async () => {
   try {
     await validateForm()
     
+    // 检查考试结束时间
+    let timeWarningMessage = ''
+    let timeWarningType: 'info' | 'warning' | 'error' = 'info'
+    const now = new Date()
+    
+    if (form.endTime) {
+      const endTime = new Date(form.endTime)
+      if (endTime <= now) {
+        // 考试已过期，阻止发布并提供编辑选项
+        try {
+          await ElMessageBox.confirm(
+            '⚠️ 考试结束时间已过期，无法发布此考试！\n\n是否立即修改考试时间？',
+            '考试时间已过期',
+            {
+              confirmButtonText: '修改时间',
+              cancelButtonText: '取消发布',
+              type: 'error'
+            }
+          )
+          // 用户选择修改时间，滚动到时间设置区域
+          scrollToTimeSettings()
+          return
+        } catch {
+          // 用户取消，直接返回
+          return
+        }
+      } else {
+        const timeDiff = endTime.getTime() - now.getTime()
+        const hoursLeft = Math.floor(timeDiff / (1000 * 60 * 60))
+        const minutesLeft = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60))
+        
+        if (hoursLeft < 1) {
+          timeWarningMessage = `⚠️ 警告：考试将在 ${minutesLeft}分钟后结束，时间非常紧急！\n\n`
+          timeWarningType = 'warning'
+        } else if (hoursLeft < 24) {
+          timeWarningMessage = `⚠️ 提醒：考试将在 ${hoursLeft}小时${minutesLeft > 0 ? minutesLeft + '分钟' : ''}后结束\n\n`
+          timeWarningType = 'warning'
+        }
+      }
+    } else {
+      timeWarningMessage = '⚠️ 提醒：未设置考试结束时间，学生可以无限制地参加考试\n\n'
+      timeWarningType = 'warning'
+    }
+    
     // 如果选择了指定班级，需要先选择班级
     if (form.accessType === 'CLASS') {
       if (form.selectedClasses.length === 0) {
@@ -516,22 +608,22 @@ const publishExam = async () => {
       }
       
       await ElMessageBox.confirm(
-        `确定要发布考试到所选的 ${form.selectedClasses.length} 个班级吗？发布后学生将可以参加考试。`,
+        `${timeWarningMessage}确定要发布考试到所选的 ${form.selectedClasses.length} 个班级吗？发布后学生将可以参加考试。`,
         '确认发布',
         {
           confirmButtonText: '确定发布',
           cancelButtonText: '取消',
-          type: 'warning'
+          type: timeWarningType
         }
       )
     } else {
       await ElMessageBox.confirm(
-        '确定要发布这个考试吗？发布后学生将可以参加考试。',
+        `${timeWarningMessage}确定要发布这个考试吗？发布后学生将可以参加考试。`,
         '确认发布',
         {
           confirmButtonText: '确定发布',
           cancelButtonText: '取消',
-          type: 'warning'
+          type: timeWarningType
         }
       )
     }
@@ -556,9 +648,25 @@ const publishExam = async () => {
     }
     
     // 最后发布考试
-    await examApi.publishExam(examId.value)
+    const publishResponse = await examApi.publishExam(examId.value)
     
-    ElMessage.success('考试发布成功')
+    // 检查是否有时间提醒消息
+    if (publishResponse.timeMessage) {
+      // 显示时间提醒消息
+      if (publishResponse.timeMessage.includes('过期')) {
+        ElMessage.warning({
+          message: `考试发布成功！${publishResponse.timeMessage}`,
+          duration: 5000
+        })
+      } else {
+        ElMessage.info({
+          message: `考试发布成功！${publishResponse.timeMessage}`,
+          duration: 4000
+        })
+      }
+    } else {
+      ElMessage.success('考试发布成功')
+    }
     router.push(`/exams/${examId.value}`)
     
   } catch (error: any) {
@@ -574,6 +682,21 @@ const publishExam = async () => {
     }
   } finally {
     publishing.value = false
+  }
+}
+
+const scrollToTimeSettings = () => {
+  if (timeSettingsCard.value) {
+    timeSettingsCard.value.$el.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center'
+    })
+    // 高亮显示时间设置区域
+    timeSettingsCard.value.$el.style.transition = 'box-shadow 0.3s ease'
+    timeSettingsCard.value.$el.style.boxShadow = '0 0 0 2px #f56c6c'
+    setTimeout(() => {
+      timeSettingsCard.value.$el.style.boxShadow = ''
+    }, 2000)
   }
 }
 

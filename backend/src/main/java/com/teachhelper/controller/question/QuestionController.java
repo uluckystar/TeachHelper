@@ -16,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -186,17 +187,66 @@ public class QuestionController {
     }
     
     @GetMapping
-    @Operation(summary = "获取题目列表", description = "获取所有题目，支持分页")
-    public ResponseEntity<List<QuestionResponse>> getAllQuestions(
+    @Operation(summary = "获取题目列表", description = "获取所有题目，支持分页和多条件筛选")
+    public ResponseEntity<Map<String, Object>> getAllQuestions(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String questionType,
+            @RequestParam(required = false) String subject,
+            @RequestParam(required = false) String gradeLevel,
+            @RequestParam(required = false) Long examId,
+            @RequestParam(required = false) String source,
+            @RequestParam(required = false) Long questionBankId,
+            @RequestParam(required = false) Long sourceKnowledgeBaseId) {
         
         Pageable pageable = PageRequest.of(page, size);
-        Page<Question> questionPage = questionService.getAllQuestions(pageable);
+        
+        // 构建查询条件
+        Map<String, Object> filters = new HashMap<>();
+        if (keyword != null && !keyword.trim().isEmpty()) {
+            filters.put("keyword", keyword.trim());
+        }
+        if (questionType != null && !questionType.trim().isEmpty()) {
+            filters.put("questionType", questionType.trim());
+        }
+        if (subject != null && !subject.trim().isEmpty()) {
+            filters.put("subject", subject.trim());
+        }
+        if (gradeLevel != null && !gradeLevel.trim().isEmpty()) {
+            filters.put("gradeLevel", gradeLevel.trim());
+        }
+        if (examId != null) {
+            filters.put("examId", examId);
+        }
+        if (source != null && !source.trim().isEmpty()) {
+            filters.put("source", source.trim());
+        }
+        if (questionBankId != null) {
+            filters.put("questionBankId", questionBankId);
+        }
+        if (sourceKnowledgeBaseId != null) {
+            filters.put("sourceKnowledgeBaseId", sourceKnowledgeBaseId);
+        }
+        
+        Page<Question> questionPage = questionService.searchQuestionsWithFilters(pageable, filters);
         List<QuestionResponse> responses = questionPage.getContent().stream()
             .map(this::convertToResponse)
             .collect(Collectors.toList());
-        return ResponseEntity.ok(responses);
+            
+        // 构建分页响应
+        Map<String, Object> response = new HashMap<>();
+        response.put("content", responses);
+        response.put("totalElements", questionPage.getTotalElements());
+        response.put("totalPages", questionPage.getTotalPages());
+        response.put("number", questionPage.getNumber());
+        response.put("size", questionPage.getSize());
+        response.put("numberOfElements", questionPage.getNumberOfElements());
+        response.put("first", questionPage.isFirst());
+        response.put("last", questionPage.isLast());
+        response.put("empty", questionPage.isEmpty());
+        
+        return ResponseEntity.ok(response);
     }
     
     @GetMapping("/exam/{examId}")
@@ -672,6 +722,47 @@ public class QuestionController {
             response.setExamTitle(question.getExam().getTitle());
         }
         
+        // 设置题目来源信息 - 使用新的分类方式
+        if (question.getSourceType() != null) {
+            response.setSourceType(question.getSourceType());
+        } else {
+            // 根据其他字段推断来源类型
+            if (question.getAiGenerationPrompt() != null && !question.getAiGenerationPrompt().trim().isEmpty()) {
+                response.setSourceType("AI_GENERATED");
+            } else if (question.getKeywords() != null && question.getKeywords().contains("互联网")) {
+                response.setSourceType("INTERNET");
+            } else {
+                response.setSourceType("SELF_CREATED"); // 默认为自创
+            }
+        }
+        
+        // 设置确认状态
+        response.setIsConfirmed(question.getIsConfirmed() != null ? question.getIsConfirmed() : false);
+        
+        // 题目库信息
+        if (question.getQuestionBank() != null) {
+            response.setQuestionBankId(question.getQuestionBank().getId());
+            response.setQuestionBankName(question.getQuestionBank().getName());
+        }
+        
+        // 知识库信息
+        if (question.getSourceKnowledgeBaseId() != null) {
+            response.setSourceKnowledgeBaseId(question.getSourceKnowledgeBaseId());
+            // TODO: 获取知识库名称
+        }
+        
+        // 知识点信息
+        if (question.getSourceKnowledgePointId() != null) {
+            response.setSourceKnowledgePointId(question.getSourceKnowledgePointId());
+            // TODO: 获取知识点名称
+        }
+        
+        // 难度和关键词
+        if (question.getDifficulty() != null) {
+            response.setDifficulty(question.getDifficulty().name());
+        }
+        response.setKeywords(question.getKeywords());
+        
         // 转换评分标准
         if (question.getRubricCriteria() != null && !question.getRubricCriteria().isEmpty()) {
             List<QuestionResponse.RubricCriterionResponse> rubricDTOs = question.getRubricCriteria().stream()
@@ -949,6 +1040,29 @@ public class QuestionController {
                 return "案例分析题";
             default:
                 return "其他类型";
+        }
+    }
+    
+    @PatchMapping("/{questionId}/confirm-ai-organized")
+    @Operation(summary = "确认AI整理的题目", description = "确认AI从互联网整理的题目内容正确")
+    public ResponseEntity<QuestionResponse> confirmAIOrganizedQuestion(@PathVariable Long questionId) {
+        try {
+            Question question = questionService.getQuestionById(questionId);
+            
+            // 验证题目来源类型
+            if (!"AI_ORGANIZED".equals(question.getSourceType())) {
+                return ResponseEntity.badRequest().build();
+            }
+            
+            // 设置为已确认
+            question.setIsConfirmed(true);
+            Question updatedQuestion = questionService.updateQuestion(questionId, question);
+            
+            QuestionResponse response = convertToResponse(updatedQuestion);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            System.err.println("确认AI整理题目失败: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 }

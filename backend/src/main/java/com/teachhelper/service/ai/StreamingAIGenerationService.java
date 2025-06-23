@@ -142,10 +142,56 @@ public class StreamingAIGenerationService {
                     response.setStatus(AIGenerationStatusResponse.GenerationStatus.COMPLETED);
                     // 从任务结果中获取建议
                     Map<String, Object> results = taskService.getTaskResults(taskId, 0, 100);
-                    if (results != null && results.containsKey("suggestions")) {
-                        @SuppressWarnings("unchecked")
-                        List<RubricSuggestionResponse> suggestions = (List<RubricSuggestionResponse>) results.get("suggestions");
-                        response.setSuggestions(suggestions);
+                    System.out.println("🔍 StreamingAIGenerationService.getTaskStatus - 检查任务结果:");
+                    System.out.println("  - 任务ID: " + taskId);
+                    System.out.println("  - 结果keys: " + (results != null ? results.keySet() : "null"));
+                    
+                    if (results != null) {
+                        // 检查是否有resultData字段（新的方式）
+                        if (results.containsKey("resultData")) {
+                            String resultDataStr = (String) results.get("resultData");
+                            System.out.println("  - 找到resultData字段，长度: " + 
+                                (resultDataStr != null ? resultDataStr.length() : 0));
+                            
+                            // 尝试解析JSON字符串中的建议
+                            if (resultDataStr != null && resultDataStr.contains("suggestions")) {
+                                try {
+                                    // 简单的字符串解析方法
+                                    response.setSuggestions(parseResultDataForSuggestions(resultDataStr));
+                                    System.out.println("  - 成功解析到建议数量: " + 
+                                        (response.getSuggestions() != null ? response.getSuggestions().size() : 0));
+                                } catch (Exception e) {
+                                    System.err.println("  - 解析建议失败: " + e.getMessage());
+                                }
+                            }
+                        }
+                        // 检查是否直接有suggestions字段（旧的方式）
+                        else if (results.containsKey("suggestions")) {
+                            @SuppressWarnings("unchecked")
+                            List<RubricSuggestionResponse> suggestions = (List<RubricSuggestionResponse>) results.get("suggestions");
+                            response.setSuggestions(suggestions);
+                            System.out.println("  - 直接找到suggestions字段，数量: " + 
+                                (suggestions != null ? suggestions.size() : 0));
+                        }
+                        
+                        // 设置其他统计信息
+                        if (results.containsKey("totalTokens")) {
+                            response.setTotalTokens((Integer) results.get("totalTokens"));
+                        }
+                        if (results.containsKey("promptTokens")) {
+                            response.setPromptTokens((Integer) results.get("promptTokens"));
+                        }
+                        if (results.containsKey("completionTokens")) {
+                            response.setCompletionTokens((Integer) results.get("completionTokens"));
+                        }
+                        if (results.containsKey("processingTimeMs")) {
+                            Object timeObj = results.get("processingTimeMs");
+                            if (timeObj instanceof Long) {
+                                response.setProcessingTimeMs((Long) timeObj);
+                            } else if (timeObj instanceof Integer) {
+                                response.setProcessingTimeMs(((Integer) timeObj).longValue());
+                            }
+                        }
                     }
                     break;
                 case "FAILED":
@@ -169,14 +215,179 @@ public class StreamingAIGenerationService {
             
             return response;
         } catch (Exception e) {
-            // 如果任务不存在，返回失败状态
+            System.err.println("❌ StreamingAIGenerationService.getTaskStatus - 获取任务状态失败:");
+            System.err.println("  - 任务ID: " + taskId);
+            System.err.println("  - 错误: " + e.getMessage());
+            e.printStackTrace();
+            
             AIGenerationStatusResponse response = new AIGenerationStatusResponse();
             response.setTaskId(taskId);
             response.setStatus(AIGenerationStatusResponse.GenerationStatus.FAILED);
-            response.setError("任务不存在或已过期");
-            response.setProgress(0);
+            response.setError("获取任务状态失败: " + e.getMessage());
             return response;
         }
+    }
+    
+    /**
+     * 从JSON字符串中解析建议列表
+     */
+    private List<RubricSuggestionResponse> parseResultDataForSuggestions(String resultDataStr) {
+        List<RubricSuggestionResponse> suggestions = new ArrayList<>();
+        
+        try {
+            System.out.println("🔍 解析任务结果数据:");
+            System.out.println("  - 数据长度: " + (resultDataStr != null ? resultDataStr.length() : 0));
+            System.out.println("  - 数据内容: " + resultDataStr);
+            
+            if (resultDataStr == null || resultDataStr.trim().isEmpty()) {
+                System.out.println("⚠️ 结果数据为空");
+                return suggestions;
+            }
+            
+            // 简单的字符串解析，查找suggestions数组
+            String jsonData = resultDataStr.trim();
+            
+            // 先查找 "suggestions" 字段（新格式）
+            int suggestionsIndex = jsonData.indexOf("\"suggestions\":");
+            if (suggestionsIndex != -1) {
+                System.out.println("✅ 找到suggestions字段");
+                // 找到suggestions数组的开始位置
+                int arrayStart = jsonData.indexOf('[', suggestionsIndex);
+                if (arrayStart != -1) {
+                    // 找到数组的结束位置
+                    int arrayEnd = findMatchingBracket(jsonData, arrayStart);
+                    if (arrayEnd != -1) {
+                        String suggestionsArray = jsonData.substring(arrayStart, arrayEnd + 1);
+                        System.out.println("🔍 提取到suggestions数组: " + suggestionsArray);
+                        
+                        // 解析数组中的每个对象
+                        return parseSuggestionsArray(suggestionsArray);
+                    }
+                }
+            }
+            
+            // 兼容旧格式，查找 "rubrics" 字段
+            int rubricsIndex = jsonData.indexOf("\"rubrics\"");
+            if (rubricsIndex == -1) {
+                System.out.println("⚠️ 未找到rubrics字段");
+                return suggestions;
+            }
+            
+            // 查找rubrics数组的开始 [
+            int arrayStart = jsonData.indexOf("[", rubricsIndex);
+            if (arrayStart == -1) {
+                System.out.println("⚠️ 未找到rubrics数组开始");
+                return suggestions;
+            }
+            
+            // 查找rubrics数组的结束 ]
+            int arrayEnd = jsonData.indexOf("]", arrayStart);
+            if (arrayEnd == -1) {
+                System.out.println("⚠️ 未找到rubrics数组结束");
+                return suggestions;
+            }
+            
+            String rubricsArray = jsonData.substring(arrayStart + 1, arrayEnd);
+            System.out.println("🔍 提取到rubrics数组: " + rubricsArray);
+            
+            // 解析数组中的每个对象
+            return parseSuggestionsArray("[" + rubricsArray + "]");
+            
+        } catch (Exception e) {
+            System.err.println("⚠️ 解析结果数据失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return suggestions;
+    }
+    
+    /**
+     * 查找匹配的括号位置
+     */
+    private int findMatchingBracket(String text, int startPos) {
+        int count = 0;
+        for (int i = startPos; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '[') {
+                count++;
+            } else if (c == ']') {
+                count--;
+                if (count == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+    
+    /**
+     * 解析建议数组
+     */
+    private List<RubricSuggestionResponse> parseSuggestionsArray(String arrayStr) {
+        List<RubricSuggestionResponse> suggestions = new ArrayList<>();
+        
+        try {
+            // 简单的字符串解析，分割为单个评分项
+            String content = arrayStr.substring(1, arrayStr.length() - 1); // 移除 [ ]
+            String[] items = content.split("\\},\\s*\\{");
+            
+            for (String item : items) {
+                // 清理大括号
+                item = item.replaceAll("[{}]", "").trim();
+                if (item.isEmpty()) continue;
+                
+                System.out.println("🔍 处理评分项: " + item);
+                
+                // 解析 criterionText 和 points
+                String name = null;
+                BigDecimal points = null;
+                
+                // 查找 criterionText 字段
+                String criterionTextPattern = "\"criterionText\"\\s*:\\s*\"([^\"]+)\"";
+                java.util.regex.Pattern namePattern = java.util.regex.Pattern.compile(criterionTextPattern);
+                java.util.regex.Matcher nameMatcher = namePattern.matcher(item);
+                if (nameMatcher.find()) {
+                    name = nameMatcher.group(1);
+                } else {
+                    // 兼容旧格式的 name 字段
+                    String namePattern2 = "\"name\"\\s*:\\s*\"([^\"]+)\"";
+                    java.util.regex.Pattern namePattern2Compiled = java.util.regex.Pattern.compile(namePattern2);
+                    java.util.regex.Matcher nameMatcher2 = namePattern2Compiled.matcher(item);
+                    if (nameMatcher2.find()) {
+                        name = nameMatcher2.group(1);
+                    }
+                }
+                
+                // 查找 points 字段
+                String pointsPattern = "\"points\"\\s*:\\s*([0-9.]+)";
+                java.util.regex.Pattern pointsPatternCompiled = java.util.regex.Pattern.compile(pointsPattern);
+                java.util.regex.Matcher pointsMatcher = pointsPatternCompiled.matcher(item);
+                if (pointsMatcher.find()) {
+                    try {
+                        points = new BigDecimal(pointsMatcher.group(1));
+                    } catch (NumberFormatException e) {
+                        System.err.println("⚠️ 解析分值失败: " + pointsMatcher.group(1));
+                    }
+                }
+                
+                if (name != null && points != null) {
+                    RubricSuggestionResponse suggestion = new RubricSuggestionResponse();
+                    suggestion.setCriterionText(name);
+                    suggestion.setPoints(points);
+                    suggestions.add(suggestion);
+                    
+                    System.out.println("✅ 成功解析评分项: " + name + " = " + points + "分");
+                } else {
+                    System.out.println("⚠️ 跳过无效评分项: name=" + name + ", points=" + points);
+                }
+            }
+            
+        } catch (Exception e) {
+            System.err.println("⚠️ 解析建议数组失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return suggestions;
     }
     
     /**

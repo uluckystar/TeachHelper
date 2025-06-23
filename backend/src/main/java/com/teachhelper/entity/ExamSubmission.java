@@ -26,7 +26,7 @@ public class ExamSubmission extends BaseEntity {
     
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "student_id", nullable = false)
-    private Student student;
+    private User student;
     
     @Column(name = "submitted_at", nullable = false)
     private LocalDateTime submittedAt;
@@ -46,7 +46,7 @@ public class ExamSubmission extends BaseEntity {
     // 构造函数
     public ExamSubmission() {}
     
-    public ExamSubmission(Exam exam, Student student, LocalDateTime submittedAt) {
+    public ExamSubmission(Exam exam, User student, LocalDateTime submittedAt) {
         this.exam = exam;
         this.student = student;
         this.submittedAt = submittedAt;
@@ -61,11 +61,11 @@ public class ExamSubmission extends BaseEntity {
         this.exam = exam;
     }
     
-    public Student getStudent() {
+    public User getStudent() {
         return student;
     }
     
-    public void setStudent(Student student) {
+    public void setStudent(User student) {
         this.student = student;
     }
     

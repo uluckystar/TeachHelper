@@ -96,6 +96,33 @@ export const questionApi = {
     return response.data
   },
 
+  // 获取题目列表（支持来源筛选和完整分页信息）
+  async getQuestionsWithPagination(params?: {
+    page?: number
+    size?: number
+    keyword?: string
+    questionType?: string
+    subject?: string
+    gradeLevel?: string
+    examId?: number
+    source?: 'SELF_CREATED' | 'INTERNET' | 'AI_GENERATED' | 'AI_ORGANIZED'
+    questionBankId?: number
+    sourceKnowledgeBaseId?: number
+  }): Promise<{ 
+    content: QuestionResponse[]
+    totalElements: number
+    totalPages: number
+    number: number
+    size: number
+    numberOfElements: number
+    first: boolean
+    last: boolean
+    empty: boolean
+  }> {
+    const response = await api.get('/questions', { params })
+    return response.data
+  },
+
   // 流式AI评分标准生成相关API
   // 创建异步AI生成任务
   async generateRubricAsync(questionId: number): Promise<AIGenerationTaskResponse> {
@@ -239,7 +266,12 @@ export const questionApi = {
   async getTaskStatistics(): Promise<any> {
     const response = await api.get('/tasks/stats')
     return response.data
-  }
+  },
+
+  // 确认AI整理的题目
+  async confirmAIOrganizedQuestion(questionId: number): Promise<void> {
+    await api.patch(`/questions/${questionId}/confirm-ai-organized`)
+  },
 }
 
 export default questionApi

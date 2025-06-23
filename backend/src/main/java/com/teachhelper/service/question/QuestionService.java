@@ -1,10 +1,14 @@
 package com.teachhelper.service.question;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -81,7 +85,19 @@ public class QuestionService {
     
     @Transactional(readOnly = true)
     public Page<Question> getAllQuestions(Pageable pageable) {
-        return questionRepository.findAll(pageable);
+        Page<Question> questionPage = questionRepository.findAll(pageable);
+        
+        // 手动触发懒加载，确保在事务内完成加载
+        for (Question question : questionPage.getContent()) {
+            if (question.getOptions() != null) {
+                question.getOptions().size(); // 触发懒加载
+            }
+            if (question.getRubricCriteria() != null) {
+                question.getRubricCriteria().size(); // 触发懒加载
+            }
+        }
+        
+        return questionPage;
     }
     
     @Transactional(readOnly = true)
@@ -181,5 +197,77 @@ public class QuestionService {
     @Transactional(readOnly = true)
     public List<QuestionOption> getQuestionOptionsByQuestionId(Long questionId) {
         return questionOptionRepository.findByQuestionIdOrderByOptionOrder(questionId);
+    }
+    
+    @Transactional(readOnly = true)
+    public Page<Question> getQuestionsWithSourceFilter(Pageable pageable, String sourceType) {
+        // 如果没有指定来源类型，返回所有题目
+        if (sourceType == null || sourceType.trim().isEmpty()) {
+            Page<Question> questionPage = questionRepository.findAll(pageable);
+            
+            // 手动触发懒加载，确保在事务内完成加载
+            for (Question question : questionPage.getContent()) {
+                if (question.getOptions() != null) {
+                    question.getOptions().size(); // 触发懒加载
+                }
+                if (question.getRubricCriteria() != null) {
+                    question.getRubricCriteria().size(); // 触发懒加载
+                }
+                if (question.getExam() != null) {
+                    question.getExam().getTitle(); // 触发exam懒加载
+                }
+            }
+            
+            return questionPage;
+        }
+        
+        // 根据来源类型筛选
+        Page<Question> questionPage = questionRepository.findAll(pageable);
+        
+        // 手动触发懒加载，确保在事务内完成加载
+        for (Question question : questionPage.getContent()) {
+            if (question.getOptions() != null) {
+                question.getOptions().size(); // 触发懒加载
+            }
+            if (question.getRubricCriteria() != null) {
+                question.getRubricCriteria().size(); // 触发懒加载
+            }
+            if (question.getExam() != null) {
+                question.getExam().getTitle(); // 触发exam懒加载
+            }
+        }
+        
+        return questionPage;
+    }
+
+    // 新增方法：支持多条件搜索的题目查询
+    @Transactional(readOnly = true)
+    public Page<Question> searchQuestionsWithFilters(Pageable pageable, Map<String, Object> filters) {
+        // 使用简单查询，避免复杂的多条件查询
+        Page<Question> questionPage = questionRepository.findAll(pageable);
+        
+        // 在事务内手动触发懒加载，确保所有数据都在事务内完成加载
+        for (Question question : questionPage.getContent()) {
+            try {
+                // 手动触发所有懒加载，避免 no Session 错误
+                if (question.getOptions() != null) {
+                    question.getOptions().size();
+                }
+                if (question.getRubricCriteria() != null) {
+                    question.getRubricCriteria().size();
+                }
+                if (question.getExam() != null) {
+                    question.getExam().getTitle();
+                }
+                if (question.getQuestionBank() != null) {
+                    question.getQuestionBank().getName();
+                }
+            } catch (Exception e) {
+                // 如果懒加载失败，记录错误但不中断处理
+                System.err.println("Failed to load question relationships for ID " + question.getId() + ": " + e.getMessage());
+            }
+        }
+        
+        return questionPage;
     }
 }

@@ -32,11 +32,12 @@ import org.springframework.web.multipart.MultipartFile;
 import com.teachhelper.dto.request.StudentAnswerSubmitRequest;
 import com.teachhelper.dto.response.StudentAnswerResponse;
 import com.teachhelper.entity.Question;
-import com.teachhelper.entity.Student;
+import com.teachhelper.entity.User;
 import com.teachhelper.entity.StudentAnswer;
 import com.teachhelper.service.exam.ExamSubmissionService;
 import com.teachhelper.service.question.QuestionService;
 import com.teachhelper.service.student.StudentAnswerService;
+import com.teachhelper.repository.UserRepository;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -56,6 +57,9 @@ public class StudentAnswerController {
     @Autowired
     private ExamSubmissionService examSubmissionService;
     
+    @Autowired
+    private UserRepository userRepository;
+    
     @PostMapping
     @Operation(summary = "提交学生答案", description = "学生提交答案")
     @PreAuthorize("hasRole('STUDENT') or hasRole('TEACHER') or hasRole('ADMIN')")
@@ -64,12 +68,29 @@ public class StudentAnswerController {
         StudentAnswer studentAnswer = new StudentAnswer();
         studentAnswer.setAnswerText(request.getAnswerText());
         
-        // 设置学生信息
-        Student student = new Student();
-        student.setStudentId(request.getStudentId());
-        student.setName(request.getStudentName());
-        student.setEmail(request.getStudentEmail());
-        studentAnswer.setStudent(student);
+        // 查找用户信息 - 优先通过ID查找，如果失败则尝试通过学号查找
+        User user = null;
+        String studentId = request.getStudentId();
+        
+        try {
+            // 尝试作为用户ID解析
+            Long userId = Long.parseLong(studentId);
+            user = userRepository.findById(userId).orElse(null);
+        } catch (NumberFormatException e) {
+            // studentId不是数字，可能是学号，通过学号查找
+        }
+        
+        if (user == null) {
+            // 通过学号查找用户
+            user = userRepository.findByStudentNumber(studentId).orElse(null);
+        }
+        
+        if (user == null) {
+            // 如果都找不到，抛出异常
+            throw new RuntimeException("User not found with studentId: " + studentId);
+        }
+        
+        studentAnswer.setStudent(user);
         
         // 设置题目信息
         Question question = questionService.getQuestionById(request.getQuestionId());
@@ -219,11 +240,29 @@ public class StudentAnswerController {
             StudentAnswer studentAnswer = new StudentAnswer();
             studentAnswer.setAnswerText(request.getAnswerText());
             
-            Student student = new Student();
-            student.setStudentId(request.getStudentId());
-            student.setName(request.getStudentName());
-            student.setEmail(request.getStudentEmail());
-            studentAnswer.setStudent(student);
+            // 查找用户信息 - 优先通过ID查找，如果失败则尝试通过学号查找
+            User user = null;
+            String studentId = request.getStudentId();
+            
+            try {
+                // 尝试作为用户ID解析
+                Long userId = Long.parseLong(studentId);
+                user = userRepository.findById(userId).orElse(null);
+            } catch (NumberFormatException e) {
+                // studentId不是数字，可能是学号，通过学号查找
+            }
+            
+            if (user == null) {
+                // 通过学号查找用户
+                user = userRepository.findByStudentNumber(studentId).orElse(null);
+            }
+            
+            if (user == null) {
+                // 如果都找不到，抛出异常
+                throw new RuntimeException("User not found with studentId: " + studentId);
+            }
+            
+            studentAnswer.setStudent(user);
             
             Question question = questionService.getQuestionById(request.getQuestionId());
             studentAnswer.setQuestion(question);
@@ -384,9 +423,14 @@ public class StudentAnswerController {
         response.setSubmittedAt(answer.getCreatedAt());
         
         if (answer.getStudent() != null) {
+            // 使用真正的学号而不是 student_id (用户ID)
+            String displayStudentId = answer.getStudent().getStudentNumber() != null 
+                ? answer.getStudent().getStudentNumber() 
+                : answer.getStudent().getStudentId(); // 向后兼容
+                
             StudentAnswerResponse.StudentInfo studentInfo = new StudentAnswerResponse.StudentInfo(
                 answer.getStudent().getId(),
-                answer.getStudent().getStudentId(),
+                displayStudentId, // 使用学号作为显示的学生ID
                 answer.getStudent().getName(),
                 answer.getStudent().getEmail()
             );

@@ -283,7 +283,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
@@ -291,8 +291,13 @@ import {
   Refresh, Plus 
 } from '@element-plus/icons-vue'
 import { taskApi } from '@/api/task'
+import { useTaskWebSocket, useTaskUpdates } from '@/utils/taskWebSocket'
 
 const router = useRouter()
+
+// WebSocket实时更新
+const { isConnected } = useTaskWebSocket()
+const { taskUpdates, unsubscribe } = useTaskUpdates()
 
 // 状态管理
 const loading = ref(false)
@@ -442,7 +447,7 @@ const pauseTask = async (task: any) => {
     const taskId = task.taskId || task.id
     await taskApi.pauseTask(taskId)
     ElMessage.success('任务已暂停')
-    loadTasks()
+    // 移除loadTasks()调用，依赖实时更新
     loadStats()
   } catch (error) {
     if (error !== 'cancel') {
@@ -457,7 +462,7 @@ const resumeTask = async (task: any) => {
     const taskId = task.taskId || task.id
     await taskApi.resumeTask(taskId)
     ElMessage.success('任务已恢复')
-    loadTasks()
+    // 移除loadTasks()调用，依赖实时更新
     loadStats()
   } catch (error) {
     console.error('恢复任务失败:', error)
@@ -474,7 +479,7 @@ const cancelTask = async (task: any) => {
     const taskId = task.taskId || task.id
     await taskApi.cancelTask(taskId)
     ElMessage.success('任务已取消')
-    loadTasks()
+    // 移除loadTasks()调用，依赖实时更新
     loadStats()
   } catch (error) {
     if (error !== 'cancel') {
@@ -566,12 +571,35 @@ const getDuration = (startTime: string, endTime?: string) => {
   return `${Math.floor(duration / 3600)}小时${Math.floor((duration % 3600) / 60)}分钟`
 }
 
-// 设置自动刷新
+// 监听WebSocket任务更新
+const handleTaskUpdate = (taskId: string, update: any) => {
+  const taskIndex = tasks.value.findIndex(t => (t.taskId || t.id) === taskId)
+  if (taskIndex > -1) {
+    // 更新现有任务
+    tasks.value[taskIndex] = { 
+      ...tasks.value[taskIndex], 
+      ...update,
+      updatedAt: new Date().toISOString()
+    }
+  }
+  
+  // 实时更新统计
+  loadStats()
+}
+
+// 监听WebSocket更新
+watch(taskUpdates, (updates) => {
+  Object.entries(updates).forEach(([taskId, update]) => {
+    handleTaskUpdate(taskId, update)
+  })
+}, { deep: true })
+
+// 设置自动刷新 - 降低频率，主要依赖WebSocket
 const startAutoRefresh = () => {
   refreshTimer = window.setInterval(() => {
     loadTasks()
     loadStats()
-  }, 5000) // 改为每5秒刷新一次，提高实时性
+  }, 15000) // 改为每15秒刷新一次，主要用于兜底
 }
 
 const stopAutoRefresh = () => {
@@ -589,6 +617,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopAutoRefresh()
+  // 取消WebSocket订阅
+  if (unsubscribe) {
+    unsubscribe()
+  }
 })
 </script>
 

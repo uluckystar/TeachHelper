@@ -380,6 +380,14 @@ export const knowledgeBaseApi = {
     return response.data
   },
 
+  // 获取知识库相关的题目
+  async getKnowledgeBaseQuestions(id: number, page = 0, size = 20): Promise<{ content: any[], totalElements: number }> {
+    const response = await request.get(`/knowledge-bases/${id}/questions`, {
+      params: { page, size }
+    })
+    return response.data
+  },
+
   // 获取知识点分类树
   getKnowledgePointTree: (knowledgeBaseId?: number) => {
     return request.get<KnowledgePointNode[]>('/knowledge/knowledge-points/tree', {

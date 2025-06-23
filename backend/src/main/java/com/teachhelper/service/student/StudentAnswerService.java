@@ -3,8 +3,11 @@ package com.teachhelper.service.student;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -13,19 +16,23 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.teachhelper.entity.Question;
-import com.teachhelper.entity.Student;
+import com.teachhelper.entity.User;
 import com.teachhelper.entity.StudentAnswer;
+import com.teachhelper.dto.response.StudentAnswerResponse;
+import com.teachhelper.dto.response.StudentExamPaperResponse;
 import com.teachhelper.exception.ResourceNotFoundException;
 import com.teachhelper.repository.ExamSubmissionRepository;
 import com.teachhelper.repository.QuestionRepository;
 import com.teachhelper.repository.StudentAnswerRepository;
-import com.teachhelper.repository.StudentRepository;
+import com.teachhelper.repository.UserRepository;
 
 @Service
 @Transactional
@@ -35,7 +42,7 @@ public class StudentAnswerService {
     private StudentAnswerRepository studentAnswerRepository;
     
     @Autowired
-    private StudentRepository studentRepository;
+    private UserRepository userRepository;
     
     @Autowired
     private QuestionRepository questionRepository;
@@ -51,21 +58,36 @@ public class StudentAnswerService {
         // Set question reference
         studentAnswer.setQuestion(question);
         
-        // Create or find student
-        Student student = findOrCreateStudent(studentAnswer.getStudent());
-        studentAnswer.setStudent(student);
+        // Validate user exists and is a student
+        User user = studentAnswer.getStudent();
+        if (user == null || user.getId() == null) {
+            throw new ResourceNotFoundException("Student user not found");
+        }
         
-        // 检查是否已存在该学生对该题目的答案
-        StudentAnswer existingAnswer = studentAnswerRepository.findByStudentStudentIdAndQuestionId(
-            student.getStudentId(), question.getId());
+        User existingUser = userRepository.findById(user.getId())
+            .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        
+        // Verify the user is a student
+        if (!existingUser.isStudent()) {
+            throw new IllegalArgumentException("User is not a student");
+        }
+        
+        studentAnswer.setStudent(existingUser);
+        
+        // Check if answer already exists for this student and question
+        List<StudentAnswer> studentAnswers = studentAnswerRepository.findByStudentId(existingUser.getId());
+        StudentAnswer existingAnswer = studentAnswers.stream()
+            .filter(sa -> sa.getQuestion().getId().equals(question.getId()))
+            .findFirst()
+            .orElse(null);
         
         if (existingAnswer != null) {
-            // 更新现有答案
+            // Update existing answer
             existingAnswer.setAnswerText(studentAnswer.getAnswerText());
-            existingAnswer.setCreatedAt(LocalDateTime.now()); // 更新提交时间
+            existingAnswer.setCreatedAt(LocalDateTime.now()); // Update submission time
             return studentAnswerRepository.save(existingAnswer);
         } else {
-            // 创建新答案
+            // Create new answer
             studentAnswer.setCreatedAt(LocalDateTime.now());
             return studentAnswerRepository.save(studentAnswer);
         }
@@ -117,6 +139,14 @@ public class StudentAnswerService {
     @Transactional(readOnly = true)
     public List<StudentAnswer> getAnswersByExamId(Long examId) {
         return studentAnswerRepository.findByQuestionExamId(examId);
+    }
+    
+    // 新增：支持分页和筛选的方法
+    @Transactional(readOnly = true)
+    public Page<StudentAnswer> getAnswersByExamIdWithFilters(Long examId, int page, int size, 
+            Long questionId, Boolean evaluated, String keyword) {
+        return studentAnswerRepository.findByExamIdWithFilters(examId, questionId, evaluated, keyword,
+                PageRequest.of(page, size));
     }
     
     @Transactional(readOnly = true)
@@ -173,32 +203,76 @@ public class StudentAnswerService {
         return studentAnswerRepository.findAverageScoreByExamId(examId);
     }
 
-    /**
-     * 获取指定考试的最高分（仅已评估的答案）
-     */
+    @Transactional(readOnly = true)
     public Double getMaxScoreByExamId(Long examId) {
         return studentAnswerRepository.findMaxScoreByExamId(examId);
     }
 
-    /**
-     * 获取指定考试的最低分（仅已评估的答案）
-     */
+    @Transactional(readOnly = true)
     public Double getMinScoreByExamId(Long examId) {
         return studentAnswerRepository.findMinScoreByExamId(examId);
     }
-
+    
+    @Transactional(readOnly = true)
+    public long getDistinctStudentCountByExamId(Long examId) {
+        return studentAnswerRepository.countDistinctStudentByQuestionExamId(examId);
+    }
+    
+    // Helper methods for User-based operations
+    @Transactional(readOnly = true)
+    public List<StudentAnswer> getAnswersByExamIdAndStudentId(Long examId, Long studentId) {
+        return studentAnswerRepository.findByQuestionExamIdAndStudentId(examId, studentId);
+    }
+    
+    @Transactional(readOnly = true)
+    public boolean hasSubmittedAnswers(Long studentId, Long examId) {
+        List<StudentAnswer> answers = studentAnswerRepository.findByStudentId(studentId);
+        return answers.stream()
+            .anyMatch(sa -> sa.getQuestion().getExam().getId().equals(examId));
+    }
+    
+    @Transactional(readOnly = true)
+    public List<StudentAnswer> getAnswersByUsernameAndExamId(String username, Long examId) {
+        User user = userRepository.findByUsername(username)
+            .orElseThrow(() -> new ResourceNotFoundException("User not found with username: " + username));
+        
+        if (!user.isStudent()) {
+            throw new IllegalArgumentException("User is not a student");
+        }
+        
+        return getAnswersByExamIdAndStudentId(examId, user.getId());
+    }
+    
+    // Alias method for backward compatibility
+    @Transactional(readOnly = true)
+    public List<StudentAnswer> getAnswersByExamIdAndUsername(Long examId, String username) {
+        return getAnswersByUsernameAndExamId(username, examId);
+    }
+    
     // Batch operations
     public List<StudentAnswer> submitAnswersInBatch(List<StudentAnswer> answers) {
-        // Process each answer to ensure proper student and question references
+        // Process each answer to ensure proper user and question references
         for (StudentAnswer answer : answers) {
             // Validate question exists
             Question question = questionRepository.findById(answer.getQuestion().getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Question not found"));
             answer.setQuestion(question);
             
-            // Create or find student
-            Student student = findOrCreateStudent(answer.getStudent());
-            answer.setStudent(student);
+            // Validate user exists and is a student
+            User user = answer.getStudent();
+            if (user == null || user.getId() == null) {
+                throw new ResourceNotFoundException("Student user not found");
+            }
+            
+            User existingUser = userRepository.findById(user.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+            
+            // Verify the user is a student
+            if (!existingUser.isStudent()) {
+                throw new IllegalArgumentException("User is not a student");
+            }
+            
+            answer.setStudent(existingUser);
             
             // Set submission timestamp
             answer.setCreatedAt(LocalDateTime.now());
@@ -207,131 +281,26 @@ public class StudentAnswerService {
         return studentAnswerRepository.saveAll(answers);
     }
     
-    // Student management helper methods
-    private Student findOrCreateStudent(Student student) {
-        if (student.getId() != null) {
-            return studentRepository.findById(student.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("Student not found"));
-        }
-        
-        // 检查studentId是否为数字（用户ID）
-        String studentId = student.getStudentId();
-        
-        // 如果 studentId 为空或无效，需要处理
-        if (studentId == null || studentId.trim().isEmpty()) {
-            System.out.println("警告：学生记录缺少学号，尝试从邮箱查找现有记录");
-            if (student.getEmail() != null && !student.getEmail().trim().isEmpty()) {
-                Optional<Student> existingByEmail = studentRepository.findByEmail(student.getEmail());
-                if (existingByEmail.isPresent()) {
-                    Student existing = existingByEmail.get();
-                    // 如果现有记录也没有学号，生成一个
-                    if (existing.getStudentId() == null || existing.getStudentId().trim().isEmpty()) {
-                        String generatedStudentId = generateStudentId(existing);
-                        existing.setStudentId(generatedStudentId);
-                        existing = studentRepository.save(existing);
-                        System.out.println("为现有学生生成学号: " + generatedStudentId);
-                    }
-                    return existing;
-                }
-            }
-            
-            // 生成新的学号
-            studentId = generateStudentId(student);
-            student.setStudentId(studentId);
-            System.out.println("为新学生生成学号: " + studentId);
-        }
-        
-        if (studentId != null && studentId.matches("\\d+")) {
-            // studentId是数字，这是users表的id，对应students表的student_id字段
-            try {
-                // 直接通过student_id字段查找（student_id = users.id）
-                Optional<Student> existingByUserId = studentRepository.findByStudentId(studentId);
-                if (existingByUserId.isPresent()) {
-                    return existingByUserId.get();
-                }
-            } catch (NumberFormatException e) {
-                // 如果解析失败，继续下面的逻辑
-            }
-        } else {
-            // studentId不是数字，按传统字符串查找
-            Optional<Student> existingStudent = studentRepository.findByStudentId(studentId);
-            if (existingStudent.isPresent()) {
-                return existingStudent.get();
-            }
-        }
-        
-        // Try to find by email as fallback
-        if (student.getEmail() != null && !student.getEmail().trim().isEmpty()) {
-            Optional<Student> existingByEmail = studentRepository.findByEmail(student.getEmail());
-            if (existingByEmail.isPresent()) {
-                Student existing = existingByEmail.get();
-                // 如果现有记录没有学号，更新它
-                if (existing.getStudentId() == null || existing.getStudentId().trim().isEmpty()) {
-                    existing.setStudentId(studentId);
-                    existing = studentRepository.save(existing);
-                    System.out.println("更新现有学生的学号: " + studentId);
-                }
-                return existing;
-            }
-        }
-        
-        // Create new student only if not found
-        try {
-            return studentRepository.save(student);
-        } catch (Exception e) {
-            // If creation fails due to unique constraint, try to find by email again
-            if (student.getEmail() != null) {
-                Optional<Student> existingByEmail = studentRepository.findByEmail(student.getEmail());
-                if (existingByEmail.isPresent()) {
-                    return existingByEmail.get();
-                }
-            }
-            // Re-throw if it's not a unique constraint issue
-            throw e;
-        }
-    }
-    
-    /**
-     * 为学生生成学号
-     */
-    private String generateStudentId(Student student) {
-        // 如果有邮箱，可以从邮箱中提取用户名部分作为学号基础
-        if (student.getEmail() != null && !student.getEmail().trim().isEmpty()) {
-            String emailPrefix = student.getEmail().split("@")[0];
-            // 如果邮箱前缀是数字，直接使用
-            if (emailPrefix.matches("\\d+")) {
-                return emailPrefix;
-            }
-            // 否则添加时间戳确保唯一性
-            return emailPrefix + "_" + System.currentTimeMillis() % 100000;
-        }
-        
-        // 如果没有邮箱，使用姓名 + 时间戳
-        String name = student.getName() != null ? student.getName().replaceAll("\\s+", "") : "student";
-        return name + "_" + System.currentTimeMillis() % 100000;
-    }
-    
-    @Transactional(readOnly = true)
-    public boolean hasStudentSubmittedAnswer(String studentId, Long questionId) {
-        return studentAnswerRepository.existsByStudentStudentIdAndQuestionId(studentId, questionId);
-    }
-    
-    /**
-     * 检查学生是否已提交指定考试（基于 ExamSubmission 表）
-     */
+    // Helper method for backward compatibility
     @Transactional(readOnly = true)
     public boolean hasStudentSubmittedExam(Long examId, Long studentId) {
-        return examSubmissionRepository.existsByExamIdAndStudentId(examId, studentId);
+        return hasSubmittedAnswers(studentId, examId);
     }
     
-    /**
-     * 检查学生是否已提交指定考试（通过 studentId 字符串，基于 ExamSubmission 表）
-     */
+    // Batch fetch operations
     @Transactional(readOnly = true)
-    public boolean hasStudentSubmittedExam(Long examId, String studentId) {
-        return examSubmissionRepository.existsByExamIdAndStudentStudentId(examId, studentId);
+    public StudentAnswer getAnswerByIdWithFetch(Long answerId) {
+        return studentAnswerRepository.findByIdWithFetch(answerId);
     }
-
+    
+    @Transactional(readOnly = true)
+    public List<StudentAnswer> getAnswersByIdsWithFetch(List<Long> answerIds) {
+        if (answerIds == null || answerIds.isEmpty()) {
+            return List.of();
+        }
+        return studentAnswerRepository.findByIdInWithFetch(answerIds);
+    }
+    
     // Export functionality
     @Transactional(readOnly = true)
     public List<StudentAnswer> getAnswersForExport(Long examId, Long questionId, Boolean evaluated) {
@@ -390,10 +359,12 @@ public class StudentAnswerService {
                 StudentAnswer answer = answers.get(i);
                 Row dataRow = sheet.createRow(i + 1);
                 
+                User student = answer.getStudent();
+                
                 dataRow.createCell(0).setCellValue(answer.getId());
-                dataRow.createCell(1).setCellValue(answer.getStudent().getStudentId());
-                dataRow.createCell(2).setCellValue(answer.getStudent().getName());
-                dataRow.createCell(3).setCellValue(answer.getStudent().getEmail());
+                dataRow.createCell(1).setCellValue(student.getStudentNumber() != null ? student.getStudentNumber() : String.valueOf(student.getId()));
+                dataRow.createCell(2).setCellValue(student.getRealName() != null ? student.getRealName() : student.getUsername());
+                dataRow.createCell(3).setCellValue(student.getEmail());
                 dataRow.createCell(4).setCellValue(answer.getQuestion().getTitle());
                 dataRow.createCell(5).setCellValue(answer.getAnswerText());
                 dataRow.createCell(6).setCellValue(answer.getScore() != null ? answer.getScore().doubleValue() : 0.0);
@@ -454,93 +425,216 @@ public class StudentAnswerService {
         return new ByteArrayResource(outputStream.toByteArray());
     }
 
+    // Future implementation for import functionality
     public int importAnswersFromFile(MultipartFile file) throws IOException {
-        // TODO: 实现从文件导入答案的逻辑
-        // 解析Excel/CSV文件并创建StudentAnswer对象
+        // TODO: Implement import from file logic using User entities
         return 0;
     }
 
     public int importAnswersToExam(Long examId, MultipartFile file) throws IOException {
-        // TODO: 实现从文件导入答案到指定考试的逻辑
-        // 解析文件并验证题目属于指定考试
+        // TODO: Implement import to specific exam logic using User entities
         return 0;
     }
 
-    // 获取考试中不重复的学生数量
+    /**
+     * 按学生分组获取考试答案
+     * @param examId 考试ID
+     * @return 按学生分组的答案Map，key为学生信息，value为该学生的所有答案
+     */
     @Transactional(readOnly = true)
-    public long getDistinctStudentCountByExamId(Long examId) {
-        return studentAnswerRepository.countDistinctStudentByQuestionExamId(examId);
-    }
-    
-    /**
-     * 根据考试ID和学生ID获取答案
-     */
-    public List<StudentAnswer> getAnswersByExamIdAndStudentId(Long examId, Long studentId) {
-        return studentAnswerRepository.findByQuestionExamIdAndStudentId(examId, studentId);
-    }
-    
-    /**
-     * 根据考试ID和用户名获取答案（通过Student表的关联）
-     */
-    public List<StudentAnswer> getAnswersByExamIdAndUsername(Long examId, String username) {
-        System.out.println("=== StudentAnswerService.getAnswersByExamIdAndUsername ===");
-        System.out.println("examId: " + examId + ", username: " + username);
+    public Map<User, List<StudentAnswer>> getAnswersByExamGroupedByStudent(Long examId) {
+        List<StudentAnswer> allAnswers = studentAnswerRepository.findByQuestionExamIdOrderByStudentIdAscQuestionIdAsc(examId);
         
-        // 通过用户名查询学生答案
-        // 查询逻辑: users.username -> users.id -> students.student_id -> students.id -> student_answers.student_id
-        List<StudentAnswer> answers = studentAnswerRepository.findByQuestionExamIdAndUsername(examId, username);
-        System.out.println("查询到的答案数量: " + answers.size());
+        return allAnswers.stream()
+            .collect(Collectors.groupingBy(
+                StudentAnswer::getStudent,
+                LinkedHashMap::new,
+                Collectors.toList()
+            ));
+    }
+    
+    /**
+     * 导出学生试卷为Excel格式
+     */
+    public ByteArrayResource exportStudentPaperAsExcel(StudentExamPaperResponse paper) throws IOException {
+        Workbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet("学生试卷");
         
-        return answers;
-    }
-    
-    /**
-     * 获取答案详情（预加载关联实体，用于批量处理）
-     */
-    @Transactional(readOnly = true)
-    public StudentAnswer getAnswerByIdWithFetch(Long answerId) {
-        return studentAnswerRepository.findByIdWithFetch(answerId);
-    }
-    
-    /**
-     * 批量获取答案详情（预加载关联实体，用于批量处理）
-     */
-    @Transactional(readOnly = true)
-    public List<StudentAnswer> getAnswersByIdsWithFetch(List<Long> answerIds) {
-        if (answerIds == null || answerIds.isEmpty()) {
-            return List.of();
+        int rowIndex = 0;
+        
+        // 标题行
+        Row titleRow = sheet.createRow(rowIndex++);
+        titleRow.createCell(0).setCellValue("学生试卷详情");
+        
+        // 空行
+        rowIndex++;
+        
+        // 学生信息
+        Row studentInfoRow = sheet.createRow(rowIndex++);
+        studentInfoRow.createCell(0).setCellValue("学生姓名:");
+        studentInfoRow.createCell(1).setCellValue(paper.getStudentName());
+        studentInfoRow.createCell(3).setCellValue("学号:");
+        studentInfoRow.createCell(4).setCellValue(paper.getStudentNumber());
+        
+        Row examInfoRow = sheet.createRow(rowIndex++);
+        examInfoRow.createCell(0).setCellValue("考试名称:");
+        examInfoRow.createCell(1).setCellValue(paper.getExamTitle());
+        examInfoRow.createCell(3).setCellValue("总分:");
+        examInfoRow.createCell(4).setCellValue(paper.getTotalScore() + "/" + paper.getMaxPossibleScore());
+        
+        // 空行
+        rowIndex++;
+        
+        // 表头
+        Row headerRow = sheet.createRow(rowIndex++);
+        headerRow.createCell(0).setCellValue("题目序号");
+        headerRow.createCell(1).setCellValue("题目内容");
+        headerRow.createCell(2).setCellValue("学生答案");
+        headerRow.createCell(3).setCellValue("得分");
+        headerRow.createCell(4).setCellValue("满分");
+        headerRow.createCell(5).setCellValue("评估反馈");
+        
+        // 答案数据
+        for (StudentAnswerResponse answer : paper.getAnswers()) {
+            Row dataRow = sheet.createRow(rowIndex++);
+            dataRow.createCell(0).setCellValue(answer.getQuestionId());
+            dataRow.createCell(1).setCellValue(answer.getQuestionTitle());
+            dataRow.createCell(2).setCellValue(answer.getAnswerText() != null ? answer.getAnswerText() : "");
+            dataRow.createCell(3).setCellValue(answer.getScore() != null ? answer.getScore().toString() : "未评估");
+            dataRow.createCell(4).setCellValue(answer.getMaxScore() != null ? answer.getMaxScore().toString() : "");
+            dataRow.createCell(5).setCellValue(answer.getFeedback() != null ? answer.getFeedback() : "");
         }
-        return studentAnswerRepository.findByIdInWithFetch(answerIds);
+        
+        // 自动调整列宽
+        for (int i = 0; i <= 5; i++) {
+            sheet.autoSizeColumn(i);
+        }
+        
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        workbook.write(outputStream);
+        workbook.close();
+        
+        return new ByteArrayResource(outputStream.toByteArray());
     }
     
     /**
-     * 批量修复没有学号的学生记录
+     * 导出学生试卷为PDF格式（简化版本，使用文本格式）
      */
-    @Transactional
-    public int fixStudentsWithoutStudentId() {
-        System.out.println("=== 开始修复没有学号的学生记录 ===");
+    public ByteArrayResource exportStudentPaperAsPdf(StudentExamPaperResponse paper) throws IOException {
+        // 这里应该使用PDF库如iText，为了简化，暂时返回文本格式
+        StringBuilder content = new StringBuilder();
+        content.append("学生试卷\n");
+        content.append("======================\n\n");
+        content.append("学生姓名: ").append(paper.getStudentName()).append("\n");
+        content.append("学号: ").append(paper.getStudentNumber()).append("\n");
+        content.append("考试名称: ").append(paper.getExamTitle()).append("\n");
+        content.append("总分: ").append(paper.getTotalScore()).append("/").append(paper.getMaxPossibleScore()).append("\n\n");
         
-        // 查找所有没有学号或学号为空的学生
-        List<Student> studentsWithoutId = studentRepository.findAll().stream()
-            .filter(s -> s.getStudentId() == null || s.getStudentId().trim().isEmpty())
-            .collect(java.util.stream.Collectors.toList());
+        content.append("答题详情:\n");
+        content.append("----------------------\n");
         
-        System.out.println("找到 " + studentsWithoutId.size() + " 个没有学号的学生记录");
-        
-        int fixedCount = 0;
-        for (Student student : studentsWithoutId) {
-            try {
-                String generatedStudentId = generateStudentId(student);
-                student.setStudentId(generatedStudentId);
-                studentRepository.save(student);
-                System.out.println("为学生 " + student.getName() + " 生成学号: " + generatedStudentId);
-                fixedCount++;
-            } catch (Exception e) {
-                System.err.println("修复学生 " + student.getName() + " 的学号时出错: " + e.getMessage());
+        for (int i = 0; i < paper.getAnswers().size(); i++) {
+            StudentAnswerResponse answer = paper.getAnswers().get(i);
+            content.append("题目 ").append(i + 1).append(": ").append(answer.getQuestionTitle()).append("\n");
+            content.append("答案: ").append(answer.getAnswerText() != null ? answer.getAnswerText() : "未作答").append("\n");
+            content.append("得分: ").append(answer.getScore() != null ? answer.getScore() : "未评估")
+                   .append("/").append(answer.getMaxScore()).append("\n");
+            if (answer.getFeedback() != null && !answer.getFeedback().trim().isEmpty()) {
+                content.append("反馈: ").append(answer.getFeedback()).append("\n");
             }
+            content.append("\n");
         }
         
-        System.out.println("=== 学号修复完成，共修复 " + fixedCount + " 个学生记录 ===");
-        return fixedCount;
+        return new ByteArrayResource(content.toString().getBytes("UTF-8"));
+    }
+
+    // 获取指定考试的学生答案，按学生分组，分页查询
+    @Transactional(readOnly = true)
+    public Page<StudentExamPaperResponse> getAnswersByExamGroupedByStudentPaged(
+            Long examId, int page, int size, String studentKeyword) {
+        
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Object[]> result = studentAnswerRepository.findStudentPapersPagedByExamId(examId, studentKeyword, pageable);
+        
+        List<StudentExamPaperResponse> papers = result.getContent().stream()
+            .map(row -> {
+                Long studentId = (Long) row[0];
+                String studentName = (String) row[1];
+                String studentNumber = (String) row[2];
+                String studentEmail = (String) row[3];
+                Long totalQuestions = (Long) row[4];
+                Long answeredQuestions = (Long) row[5];
+                Long evaluatedAnswers = (Long) row[6];
+                
+                // 获取该学生的所有答案
+                List<StudentAnswer> answers = studentAnswerRepository.findByQuestionExamIdAndStudentId(examId, studentId);
+                
+                StudentExamPaperResponse paper = new StudentExamPaperResponse();
+                paper.setStudentId(studentId);
+                paper.setStudentName(studentName);
+                paper.setStudentNumber(studentNumber);
+                paper.setStudentEmail(studentEmail);
+                paper.setExamId(examId);
+                paper.setAnswers(answers.stream()
+                    .map(answer -> {
+                        StudentAnswerResponse response = new StudentAnswerResponse();
+                        response.setId(answer.getId());
+                        response.setQuestionId(answer.getQuestion().getId());
+                        response.setQuestionTitle(answer.getQuestion().getTitle());
+                        response.setQuestionContent(answer.getQuestion().getContent());
+                        response.setAnswerText(answer.getAnswerText());
+                        response.setScore(answer.getScore() != null ? answer.getScore().doubleValue() : null);
+                        response.setFeedback(answer.getFeedback());
+                        response.setEvaluated(answer.isEvaluated());
+                        response.setMaxScore(100.0); // 默认最大分数，实际应该从Question获取
+                        response.setSubmittedAt(answer.getCreatedAt());
+                        response.setEvaluatedAt(answer.getEvaluatedAt());
+                        return response;
+                    })
+                    .collect(Collectors.toList()));
+                paper.setTotalQuestions(totalQuestions.intValue());
+                paper.setAnsweredQuestions(answeredQuestions.intValue());
+                paper.setEvaluatedAnswers(evaluatedAnswers.intValue());
+                paper.setFullyEvaluated(evaluatedAnswers.equals(answeredQuestions));
+                
+                // 计算总分和最大可能分数
+                Double totalScore = answers.stream()
+                    .filter(answer -> answer.getScore() != null)
+                    .mapToDouble(answer -> answer.getScore().doubleValue())
+                    .sum();
+                
+                Double maxPossibleScore = answers.stream()
+                    .filter(answer -> answer.getQuestion() != null && answer.getQuestion().getMaxScore() != null)
+                    .mapToDouble(answer -> answer.getQuestion().getMaxScore().doubleValue())
+                    .sum();
+                
+                paper.setTotalScore(totalScore);
+                paper.setMaxPossibleScore(maxPossibleScore);
+                paper.setScorePercentage(maxPossibleScore > 0 ? (totalScore / maxPossibleScore) * 100 : 0.0);
+                
+                // 设置时间信息
+                paper.setSubmittedAt(answers.stream()
+                    .filter(answer -> answer.getCreatedAt() != null)
+                    .map(StudentAnswer::getCreatedAt)
+                    .min(LocalDateTime::compareTo)
+                    .orElse(null));
+                
+                paper.setLastUpdated(answers.stream()
+                    .filter(answer -> answer.getUpdatedAt() != null)
+                    .map(StudentAnswer::getUpdatedAt)
+                    .max(LocalDateTime::compareTo)
+                    .orElse(null));
+                
+                return paper;
+            })
+            .collect(Collectors.toList());
+        
+        return new PageImpl<>(papers, pageable, result.getTotalElements());
+    }
+    
+    // 获取指定学生在指定考试中的所有答案
+    @Transactional(readOnly = true)
+    public List<StudentAnswer> getStudentAnswersInExam(Long examId, Long studentId) {
+        return studentAnswerRepository.findByQuestionExamIdAndStudentId(examId, studentId);
     }
 }

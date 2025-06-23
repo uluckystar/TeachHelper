@@ -107,6 +107,13 @@ const router = createRouter({
           meta: { roles: ['ADMIN', 'TEACHER'] }
         },
         {
+          path: 'exams/:examId/students/:studentId/paper',
+          name: 'StudentPaperDetail',
+          component: () => import('@/views/exam/StudentPaperDetailView.vue'),
+          props: true,
+          meta: { roles: ['ADMIN', 'TEACHER'] }
+        },
+        {
           path: 'exams/:examId/results',
           name: 'ExamResults',
           component: () => import('@/views/exam/ExamResultsView.vue'),
@@ -206,6 +213,19 @@ const router = createRouter({
           path: 'questions/:id/rubric',
           name: 'QuestionRubric',
           component: () => import('@/views/question/QuestionRubricView.vue'),
+          props: true,
+          meta: { roles: ['ADMIN', 'TEACHER'] }
+        },
+        {
+          path: 'question-banks',
+          name: 'QuestionBankManagement',
+          component: () => import('@/views/question/QuestionBankManagementView.vue'),
+          meta: { roles: ['ADMIN', 'TEACHER'] }
+        },
+        {
+          path: 'question-banks/:id',
+          name: 'QuestionBankDetail',
+          component: () => import('@/views/question/QuestionBankDetailView.vue'),
           props: true,
           meta: { roles: ['ADMIN', 'TEACHER'] }
         },

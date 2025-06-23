@@ -14,7 +14,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
 import com.teachhelper.dto.request.TaskCreateRequest;
 import com.teachhelper.dto.response.TaskResponse;
 import com.teachhelper.dto.response.TaskStatistics;
@@ -137,14 +136,24 @@ public class TaskServiceImpl implements TaskService, TaskProgressCallback {
         results.put("page", page);
         results.put("size", size);
         
-        // 如果任务有结果数据，解析并返回
-        if (task.getResultData() != null) {
-            try {
-                // 这里可以根据需要解析JSON结果数据
-                results.put("data", task.getResultData());
-            } catch (Exception e) {
-                results.put("data", "{}");
-            }
+        // 如果任务有结果数据，尝试返回
+        if (task.getResultData() != null && !task.getResultData().trim().isEmpty()) {
+            System.out.println("✅ TaskService.getTaskResults - 找到任务结果数据:");
+            System.out.println("  - 任务ID: " + taskId);
+            System.out.println("  - 状态: " + task.getStatus());
+            System.out.println("  - 数据长度: " + task.getResultData().length());
+            System.out.println("  - 数据内容前100字符: " + 
+                (task.getResultData().length() > 100 ? 
+                    task.getResultData().substring(0, 100) + "..." : 
+                    task.getResultData()));
+            
+            // 直接将原始JSON数据作为字符串返回，让前端处理
+            results.put("resultData", task.getResultData());
+        } else {
+            System.out.println("⚠️ TaskService.getTaskResults - 任务无结果数据:");
+            System.out.println("  - 任务ID: " + taskId);
+            System.out.println("  - 状态: " + task.getStatus());
+            System.out.println("  - 结果数据: " + task.getResultData());
         }
         
         return results;
@@ -465,11 +474,21 @@ public class TaskServiceImpl implements TaskService, TaskProgressCallback {
      */
     private void broadcastTaskUpdate(TaskResponse task) {
         try {
-            webSocketHandler.broadcastTaskUpdate(task.getTaskId(), task.getStatus(), 
-                                               task.getProgress(), task.getType(), null);
+            // 立即广播任务状态变化
+            webSocketHandler.broadcastTaskUpdate(
+                task.getTaskId(), 
+                task.getStatus(), 
+                task.getProgress(), 
+                task.getType(), 
+                task.getResultSummary()
+            );
+            
+            // 添加日志以便调试
+            System.out.println("📡 广播任务更新: " + task.getTaskId() + " -> " + task.getStatus());
         } catch (Exception e) {
             // 忽略广播失败，不影响主要功能
-            System.err.println("广播任务更新失败: " + e.getMessage());
+            System.err.println("❌ 广播任务更新失败: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 }

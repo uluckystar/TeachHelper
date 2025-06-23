@@ -1,5 +1,5 @@
 import api from '@/utils/request'
-import type { ExamResponse, ExamCreateRequest, ExamStatistics } from '@/types/api'
+import type { ExamResponse, ExamCreateRequest, ExamStatistics, ExamPublishResponse } from '@/types/api'
 import type { ClassroomResponse } from './classroom'
 
 export const examApi = {
@@ -49,9 +49,9 @@ export const examApi = {
   },
 
   // 发布考试
-  async publishExam(examId: number): Promise<ExamResponse> {
+  async publishExam(examId: number): Promise<ExamPublishResponse> {
     try {
-      const response = await api.post<ExamResponse>(`/exams/${examId}/publish`)
+      const response = await api.post<ExamPublishResponse>(`/exams/${examId}/publish`)
       return response.data
     } catch (error: any) {
       // 处理422状态码（验证失败）的友好错误
