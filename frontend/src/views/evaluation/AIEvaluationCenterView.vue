@@ -216,17 +216,6 @@
               "全部重新批阅"会覆盖之前所有的AI或手动批阅结果。
             </div>
           </el-form-item>
-          <el-form-item label="AI并发数">
-            <el-slider 
-              v-model="newTaskForm.concurrency" 
-              :min="1" 
-              :max="50" 
-              show-input
-            />
-            <div class="el-form-item__description">
-              设置同时执行的AI批阅任务数量。较高的值会加快批阅速度，但会增加服务器和AI服务负载。建议范围5-20。
-            </div>
-          </el-form-item>
         </el-form>
       </div>
 
@@ -270,12 +259,74 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { MagicStick, DocumentChecked, Monitor, Plus } from '@element-plus/icons-vue'
-import * as evaluationApi from '@/api/evaluation'
-import * as examApi from '@/api/exam'
-import * as rubricApi from '@/api/rubric'
+import { evaluationApi } from '@/api/evaluation'
+import { examApi } from '@/api/exam'
+import { rubricApi } from '@/api/rubric'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { Exam } from '@/types/api'
-import { formatDate, getStatusTag, getStatusText, getTaskTypeTag, getTaskTypeText as getTaskTypeTextUtil, getQuestionTypeText } from '@/utils/formatters'
+import type { Exam, TaskStatistics } from '@/types/api'
+
+// 定义前端UI所需的统计数据结构
+interface TaskStats {
+  total: number;
+  pending: number;
+  running: number;
+  completed: number;
+  failed: number;
+}
+
+// HACK: utils/formatters not found, inlining functions
+const getStatusTag = (status: string): 'success' | 'warning' | 'info' | 'danger' => {
+  switch (status) {
+    case 'COMPLETED': return 'success'
+    case 'RUNNING': return 'warning'
+    case 'FAILED': return 'danger'
+    default: return 'info'
+  }
+}
+
+const getStatusText = (status: string): string => {
+  const map: Record<string, string> = {
+    'PENDING': '待处理',
+    'RUNNING': '运行中',
+    'COMPLETED': '已完成',
+    'FAILED': '失败',
+    'CANCELLED': '已取消',
+  }
+  return map[status] || status
+}
+
+const getTaskTypeTag = (type: string): 'primary' | 'success' | 'warning' | 'info' => {
+  switch (type) {
+    case 'BATCH_EVALUATION_ANSWERS': return 'primary'
+    case 'BATCH_EVALUATION_QUESTION': return 'success'
+    case 'BATCH_REVALUATION_QUESTION': return 'warning'
+    default: return 'info'
+  }
+}
+
+const getTaskTypeText = (type: string): string => {
+  const map: Record<string, string> = {
+    'BATCH_EVALUATION_ANSWERS': '按答案批量批阅',
+    'BATCH_EVALUATION_QUESTION': '按题目批量批阅',
+    'BATCH_REVALUATION_QUESTION': '按题目重新批阅',
+  }
+  return map[type] || '未知类型'
+}
+
+const getQuestionTypeText = (type: string): string => {
+  const map: Record<string, string> = {
+    'MULTIPLE_CHOICE': '选择题',
+    'SHORT_ANSWER': '简答题',
+    'ESSAY': '论述题',
+    'FILE_UPLOAD': '文件上传'
+  }
+  return map[type] || '其他'
+}
+
+const formatDate = (dateString: string): string => {
+  if (!dateString) return '-'
+  return new Date(dateString).toLocaleString()
+}
 
 const router = useRouter()
 
@@ -284,7 +335,7 @@ const creatingTask = ref(false)
 const showNewTaskDialog = ref(false)
 const recentTasks = ref<any[]>([])
 const availableExams = ref<Exam[]>([])
-const taskStats = ref({
+const taskStats = ref<TaskStatistics>({
   total: 0,
   pending: 0,
   running: 0,
@@ -308,7 +359,6 @@ interface TaskForm {
   taskType: string
   rubricId: string | null
   reEvaluate: boolean
-  concurrency: number
 }
 
 const newTaskForm = ref<TaskForm>({
@@ -317,7 +367,6 @@ const newTaskForm = ref<TaskForm>({
   taskType: 'FULL_EVALUATION',
   rubricId: null,
   reEvaluate: false,
-  concurrency: 5
 })
 
 const loadRecentTasks = async () => {
@@ -336,12 +385,8 @@ const loadRecentTasks = async () => {
 const loadTaskStats = async () => {
   try {
     const data = await evaluationApi.getTaskStats()
-    taskStats.value = data || {
-      total: 0,
-      pending: 0,
-      running: 0,
-      completed: 0,
-      failed: 0
+    if (data) {
+      taskStats.value = data
     }
   } catch (error) {
     console.error('加载任务统计失败:', error)
@@ -417,8 +462,8 @@ const createTask = async () => {
     if (res.success) {
       ElMessage.success(res.message || '批量批阅任务创建成功！')
       showNewTaskDialog.value = false
-      fetchRecentTasks()
-      fetchTaskStats()
+      loadRecentTasks()
+      loadTaskStats()
     } else {
       ElMessage.error(res.message || '创建任务失败')
     }
@@ -456,48 +501,6 @@ const cancelTask = async (taskId: string) => {
   }
 }
 
-const getTaskTypeTag = (type: string) => {
-  const map: Record<string, string> = {
-    'FULL_EVALUATION': 'primary',
-    'QUICK_EVALUATION': 'success',
-    'RUBRIC_BASED': 'warning'
-  }
-  return map[type] || 'info'
-}
-
-const getTaskTypeText = (type: string) => {
-  if (!type) return '未知类型'
-  if (type.includes('EVALUATION')) return '批量批阅'
-  return getTaskTypeTextUtil(type)
-}
-
-const getStatusTag = (status: string) => {
-  const map: Record<string, string> = {
-    'PENDING': 'info',
-    'RUNNING': 'warning',
-    'COMPLETED': 'success',
-    'FAILED': 'danger',
-    'CANCELLED': 'info'
-  }
-  return map[status] || 'info'
-}
-
-const getStatusText = (status: string) => {
-  const map: Record<string, string> = {
-    'PENDING': '待处理',
-    'RUNNING': '运行中',
-    'COMPLETED': '已完成',
-    'FAILED': '失败',
-    'CANCELLED': '已取消'
-  }
-  return map[status] || status
-}
-
-const formatDate = (dateString: string) => {
-  if (!dateString) return '-'
-  return new Date(dateString).toLocaleString('zh-CN')
-}
-
 // 新任务向导相关方法
 const resetNewTaskForm = () => {
   newTaskStep.value = 0
@@ -510,7 +513,6 @@ const resetNewTaskForm = () => {
     taskType: 'FULL_EVALUATION',
     rubricId: null,
     reEvaluate: false,
-    concurrency: 5
   }
 }
 
@@ -636,18 +638,6 @@ const performPreCheck = async () => {
     console.error('预检查失败:', error)
     ElMessage.error('预检查失败')
   }
-}
-
-// 辅助函数
-const getQuestionTypeText = (type: string) => {
-  const map: Record<string, string> = {
-    'SINGLE_CHOICE': '单选题',
-    'MULTIPLE_CHOICE': '多选题',
-    'SHORT_ANSWER': '简答题',
-    'ESSAY': '论述题',
-    'FILL_BLANK': '填空题'
-  }
-  return map[type] || type
 }
 
 onMounted(() => {

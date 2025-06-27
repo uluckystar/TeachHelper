@@ -183,6 +183,14 @@ public class StudentAnswerService {
             .orElseThrow(() -> new ResourceNotFoundException("Student answer not found with id: " + id));
     }
     
+    /**
+     * 通用保存方法，供控制层在进行部分字段更新后直接调用
+     */
+    @Transactional
+    public StudentAnswer save(StudentAnswer answer) {
+        return studentAnswerRepository.save(answer);
+    }
+    
     @Transactional(readOnly = true)
     public Page<StudentAnswer> getAllAnswers(Pageable pageable) {
         return studentAnswerRepository.findAll(pageable);
@@ -685,18 +693,10 @@ public class StudentAnswerService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     protected int processSingleStudentAnswers(StudentAnswerImportData importData, Long examId) {
         try {
-            // 清理分数解析上下文，开始处理新的学生答案文档
-            smartQuestionMatchingService.clearScoreContext();
-            log.debug("开始处理学生{}的答案，已清理分数解析上下文", importData.getStudentName());
-            
-            // 查找或创建学生用户 - 使用更强的验证
-            User student = null;
+            // 查找或创建学生用户
+            User student;
             try {
                 student = findOrCreateStudent(importData);
-                if (student == null || student.getId() == null) {
-                    log.error("❌ 无法创建或找到学生用户: {}", importData.getStudentName());
-                    return 0;
-                }
                 log.debug("✅ 找到/创建学生用户: {} (ID: {})", student.getRealName(), student.getId());
             } catch (Exception e) {
                 log.error("❌ 创建/查找学生用户异常: {} - {}", importData.getStudentName(), e.getMessage());
@@ -704,48 +704,106 @@ public class StudentAnswerService {
             }
             
             int importedCount = 0;
+            List<StudentAnswerImportData.QuestionAnswer> questions = importData.getQuestions();
             
-            for (StudentAnswerImportData.QuestionAnswer qa : importData.getQuestions()) {
+            // 🔥 关键修复：建立题目编号映射，确保编号不错位
+            Map<Integer, Question> questionMapping = new HashMap<>();
+            Map<Integer, String> skippedReasons = new HashMap<>();
+            QuestionBank defaultBank = findOrCreateDefaultQuestionBank(importData);
+            
+            // 第一遍：建立完整的题目映射，保持编号连续性
+            log.info("🔍 开始建立题目映射，总题目数: {}", questions.size());
+            for (int i = 0; i < questions.size(); i++) {
+                StudentAnswerImportData.QuestionAnswer qa = questions.get(i);
+                int questionNumber = i + 1; // 基于位置的编号（1开始）
+                
                 try {
                     // 验证题目数据
                     if (qa == null || qa.getQuestionContent() == null || qa.getQuestionContent().trim().isEmpty()) {
-                        log.warn("跳过无效题目: {}", qa != null ? qa.getQuestionNumber() : "null");
+                        log.warn("📍 题目 {} 数据无效，保留位置但标记为跳过", questionNumber);
+                        questionMapping.put(questionNumber, null);
+                        skippedReasons.put(questionNumber, "题目数据为空或无效");
                         continue;
                     }
                     
                     // 使用智能匹配服务根据题目内容匹配或创建题目
-                    QuestionBank defaultBank = findOrCreateDefaultQuestionBank(importData);
                     Question question = smartQuestionMatchingService.smartMatchQuestion(qa, examId, defaultBank);
                     
                     // 严格验证题目对象
                     if (question == null) {
-                        log.warn("智能匹配返回空题目: {}", qa.getQuestionContent());
-                        continue;
+                        log.warn("📍 题目 {} 智能匹配失败，尝试创建占位符题目: {}", 
+                                questionNumber, qa.getQuestionContent().substring(0, Math.min(50, qa.getQuestionContent().length())));
+                        // 创建占位符题目而不是直接跳过
+                        question = createPlaceholderQuestion(qa, examId, defaultBank);
                     }
                     
-                    if (question.getId() == null) {
-                        log.error("题目ID为null: {} - 尝试重新保存", question.getTitle());
+                    if (question != null && question.getId() == null) {
+                        log.error("📍 题目 {} ID为null，尝试重新保存: {}", questionNumber, question.getTitle());
                         try {
                             question = questionRepository.save(question);
-                            // 移除可能导致Session异常的flush操作
                             if (question.getId() == null) {
-                                log.error("重新保存题目失败，跳过: {}", question.getTitle());
+                                log.error("📍 题目 {} 重新保存失败，标记为跳过: {}", questionNumber, question.getTitle());
+                                questionMapping.put(questionNumber, null);
+                                skippedReasons.put(questionNumber, "题目保存失败，ID为null");
                                 continue;
                             }
                         } catch (Exception e) {
-                            log.error("重新保存题目异常: {}", e.getMessage());
+                            log.error("📍 题目 {} 重新保存异常: {}", questionNumber, e.getMessage());
+                            questionMapping.put(questionNumber, null);
+                            skippedReasons.put(questionNumber, "题目保存异常: " + e.getMessage());
                             continue;
                         }
                     }
                     
                     // 如果智能匹配返回的题目需要设置考试关联
-                    if (examId != null && (question.getExam() == null || !Objects.equals(question.getExam().getId(), examId))) {
+                    if (examId != null && question != null && 
+                        (question.getExam() == null || !Objects.equals(question.getExam().getId(), examId))) {
                         Optional<Exam> exam = examRepository.findById(examId);
                         if (exam.isPresent()) {
                             question.setExam(exam.get());
                             question = questionRepository.save(question);
-                            log.debug("更新题目考试关联: {} -> 考试{}", question.getTitle(), examId);
+                            log.debug("📍 题目 {} 更新考试关联: {} -> 考试{}", questionNumber, question.getTitle(), examId);
                         }
+                    }
+                    
+                    questionMapping.put(questionNumber, question);
+                    log.debug("✅ 题目 {} 映射成功: {} (ID: {})", questionNumber, 
+                             question != null ? question.getTitle() : "null", 
+                             question != null ? question.getId() : "null");
+                    
+                } catch (Exception e) {
+                    log.error("📍 题目 {} 处理异常: {}", questionNumber, e.getMessage());
+                    questionMapping.put(questionNumber, null);
+                    skippedReasons.put(questionNumber, "处理异常: " + e.getMessage());
+                    if (log.isDebugEnabled()) {
+                        log.debug("详细错误信息:", e);
+                    }
+                }
+            }
+            
+            // 记录映射结果统计
+            long validMappings = questionMapping.values().stream().filter(Objects::nonNull).count();
+            long skippedMappings = questionMapping.size() - validMappings;
+            log.info("📊 题目映射完成 - 总数: {}, 有效: {}, 跳过: {}", 
+                    questionMapping.size(), validMappings, skippedMappings);
+            
+            // 第二遍：基于映射创建答案记录，保持编号对应关系
+            log.info("📝 开始创建答案记录");
+            for (int i = 0; i < questions.size(); i++) {
+                StudentAnswerImportData.QuestionAnswer qa = questions.get(i);
+                int questionNumber = i + 1;
+                Question question = questionMapping.get(questionNumber);
+                
+                try {
+                    if (question == null) {
+                        log.debug("📍 题目 {} 已跳过，原因: {}", questionNumber, 
+                                skippedReasons.getOrDefault(questionNumber, "未知原因"));
+                        continue;
+                    }
+                    
+                    if (question.getId() == null) {
+                        log.error("📍 题目 {} ID仍为null，跳过答案创建", questionNumber);
+                        continue;
                     }
                     
                     // 检查是否已存在该学生对该题目的答案
@@ -756,7 +814,7 @@ public class StudentAnswerService {
                     String answerContent = qa.getAnswerContent();
                     if (answerContent == null || answerContent.trim().isEmpty()) {
                         answerContent = ""; // 设置为空字符串而不是null
-                        log.debug("题目{}的答案为空，设置为空字符串", qa.getQuestionNumber());
+                        log.debug("📍 题目 {} 的答案为空，设置为空字符串", questionNumber);
                     }
                     
                     if (existingAnswer != null) {
@@ -765,17 +823,18 @@ public class StudentAnswerService {
                         
                         // 严格验证更新前的实体状态
                         if (existingAnswer.getId() == null) {
-                            log.error("现有答案ID为null，跳过更新: 学生{}, 题目{}", student.getRealName(), question.getTitle());
+                            log.error("📍 题目 {} 现有答案ID为null，跳过更新: 学生{}, 题目{}", 
+                                    questionNumber, student.getRealName(), question.getTitle());
                             continue;
                         }
                         
                         studentAnswerRepository.save(existingAnswer);
-                        log.debug("更新学生 {} 对题目 {} 的答案", student.getRealName(), question.getTitle());
+                        log.debug("✅ 题目 {} 更新学生 {} 的答案", questionNumber, student.getRealName());
                     } else {
                         // 创建新的答案记录 - 加强验证
                         if (student.getId() == null || question.getId() == null) {
-                            log.error("关联实体ID为null，无法创建答案: 学生ID={}, 题目ID={}", 
-                                     student.getId(), question.getId());
+                            log.error("📍 题目 {} 关联实体ID为null，无法创建答案: 学生ID={}, 题目ID={}", 
+                                     questionNumber, student.getId(), question.getId());
                             continue;
                         }
                         
@@ -786,24 +845,24 @@ public class StudentAnswerService {
                         answer.setEvaluated(false);
                         
                         // 验证实体状态
-                        log.debug("创建答案实体: 学生ID={}, 题目ID={}, 答案长度={}", 
-                                 student.getId(), question.getId(), answerContent.length());
+                        log.debug("📍 题目 {} 创建答案实体: 学生ID={}, 题目ID={}, 答案长度={}", 
+                                 questionNumber, student.getId(), question.getId(), answerContent.length());
                         
                         try {
                             StudentAnswer savedAnswer = studentAnswerRepository.save(answer);
                             
                             // 验证保存结果
                             if (savedAnswer.getId() != null) {
-                                log.debug("✅ 创建学生 {} 对题目 {} 的答案 (ID: {})", 
-                                         student.getRealName(), question.getTitle(), savedAnswer.getId());
+                                log.debug("✅ 题目 {} 创建学生 {} 的答案 (ID: {})", 
+                                         questionNumber, student.getRealName(), savedAnswer.getId());
                             } else {
-                                log.error("❌ 答案保存后ID仍为null: 学生{}, 题目{}", 
-                                         student.getRealName(), question.getTitle());
+                                log.error("❌ 题目 {} 答案保存后ID仍为null: 学生{}, 题目{}", 
+                                         questionNumber, student.getRealName(), question.getTitle());
                                 continue;
                             }
                         } catch (Exception e) {
-                            log.error("❌ 保存答案失败: 学生{}, 题目{}, 错误: {}", 
-                                     student.getRealName(), question.getTitle(), e.getMessage());
+                            log.error("❌ 题目 {} 保存答案失败: 学生{}, 题目{}, 错误: {}", 
+                                     questionNumber, student.getRealName(), question.getTitle(), e.getMessage());
                             continue;
                         }
                     }
@@ -811,7 +870,7 @@ public class StudentAnswerService {
                     importedCount++;
                     
                 } catch (Exception e) {
-                    log.error("保存学生 {} 的第{}题答案失败: {}", student.getRealName(), qa.getQuestionNumber(), e.getMessage());
+                    log.error("📍 题目 {} 保存学生 {} 的答案失败: {}", questionNumber, student.getRealName(), e.getMessage());
                     // 继续处理下一题，不要中断整个导入过程
                     if (log.isDebugEnabled()) {
                         log.debug("详细错误信息:", e);
@@ -819,13 +878,80 @@ public class StudentAnswerService {
                 }
             }
             
-            log.info("✅ 学生 {} 答案处理完成，成功导入 {} 题", student.getRealName(), importedCount);
+            // 输出最终统计信息
+            log.info("✅ 学生 {} 答案处理完成 - 总题目: {}, 成功导入: {}, 跳过: {}", 
+                    student.getRealName(), questions.size(), importedCount, questions.size() - importedCount);
+            
+            // 输出跳过题目的详细信息（用于调试）
+            if (!skippedReasons.isEmpty()) {
+                log.info("📋 跳过题目详情:");
+                skippedReasons.forEach((num, reason) -> 
+                    log.info("  题目 {}: {}", num, reason));
+            }
+            
             return importedCount;
             
         } catch (Exception e) {
             log.error("❌ 处理学生 {} 的答案时发生异常: {}", importData.getStudentName(), e.getMessage(), e);
             // 不再重新抛出异常，避免影响其他学生的处理
             return 0;
+        }
+    }
+    
+    /**
+     * 创建占位符题目，用于处理无法匹配的题目，避免编号错位
+     */
+    private Question createPlaceholderQuestion(StudentAnswerImportData.QuestionAnswer qa, Long examId, QuestionBank questionBank) {
+        try {
+            Question placeholderQuestion = new Question();
+            
+            // 设置题目标题，标明是占位符
+            String originalContent = qa.getQuestionContent();
+            String title = "[占位符] " + (originalContent.length() > 40 
+                ? originalContent.substring(0, 37) + "..." 
+                : originalContent);
+            placeholderQuestion.setTitle(title);
+            
+            // 设置题目内容
+            placeholderQuestion.setContent(originalContent);
+            
+            // 设置题目类型为简答题
+            placeholderQuestion.setQuestionType(QuestionType.SHORT_ANSWER);
+            
+            // 设置默认分值
+            placeholderQuestion.setMaxScore(BigDecimal.valueOf(5));
+            
+            // 设置创建者为系统用户（ID为1）
+            placeholderQuestion.setCreatedBy(1L);
+            
+            // 设置题目来源，标明是占位符
+            placeholderQuestion.setSourceType("学习通导入-占位符");
+            
+            // 设置为未确认状态，需要教师确认
+            placeholderQuestion.setIsConfirmed(false);
+            
+            // 设置题库
+            if (questionBank != null) {
+                placeholderQuestion.setQuestionBank(questionBank);
+            }
+            
+            // 如果指定了考试ID，设置考试关联
+            if (examId != null) {
+                Optional<Exam> exam = examRepository.findById(examId);
+                if (exam.isPresent()) {
+                    placeholderQuestion.setExam(exam.get());
+                }
+            }
+            
+            // 保存占位符题目
+            Question savedQuestion = questionRepository.save(placeholderQuestion);
+            log.info("✅ 创建占位符题目: {} (ID: {})", savedQuestion.getTitle(), savedQuestion.getId());
+            
+            return savedQuestion;
+            
+        } catch (Exception e) {
+            log.error("❌ 创建占位符题目失败: {}", e.getMessage());
+            return null;
         }
     }
     
@@ -1530,46 +1656,194 @@ public class StudentAnswerService {
         int questionNumber = 1;
         for (StudentAnswerResponse answer : paper.getAnswers()) {
             // 题目标题
-            Paragraph qTitle = new Paragraph()
-                .add(new Text(questionNumber + ". " + answer.getQuestionTitle() + " (" + answer.getMaxScore() + "分)").setBold().setFontSize(14));
-            document.add(qTitle);
+            Paragraph questionTitle = new Paragraph("题目 " + questionNumber + ": " + answer.getQuestionTitle())
+                    .setFontSize(14)
+                    .setBold()
+                    .setFontColor(new DeviceRgb(0, 0, 0));
+            document.add(questionTitle);
 
             // 题目内容
-            Paragraph qContent = new Paragraph(answer.getQuestionContent());
-            document.add(qContent);
+            if (answer.getQuestionContent() != null && !answer.getQuestionContent().trim().isEmpty()) {
+                Paragraph questionContent = new Paragraph("题目内容: " + answer.getQuestionContent())
+                        .setFontSize(11);
+                document.add(questionContent);
+            }
 
             // 学生答案
-            Paragraph userAnswer = new Paragraph()
-                .add(new Text("学生答案: ").setBold())
-                .add(new Text(answer.getAnswerText()).setFontColor(DeviceRgb.BLUE));
-            document.add(userAnswer);
+            String answerText = answer.getAnswerText() != null ? answer.getAnswerText() : "未回答";
+            Paragraph studentAnswer = new Paragraph("学生答案: " + answerText)
+                    .setFontSize(11)
+                    .setFontColor(new DeviceRgb(0, 100, 0)); // 深绿色
+            document.add(studentAnswer);
 
-            // 得分
-            Paragraph score = new Paragraph()
-                .add(new Text("得分: " + answer.getScore() + " / " + answer.getMaxScore()).setBold());
-            document.add(score);
+            // 分数和反馈
+            if (answer.getScore() != null) {
+                Paragraph score = new Paragraph("得分: " + answer.getScore() + " / " + (answer.getMaxScore() != null ? answer.getMaxScore() : "N/A"))
+                        .setFontSize(11)
+                        .setBold()
+                        .setFontColor(new DeviceRgb(200, 0, 0)); // 红色
+                document.add(score);
+            }
 
-            // 批阅
-            if (answer.getFeedback() != null && !answer.getFeedback().isEmpty()) {
-                Paragraph feedback = new Paragraph().add(new Text("批阅: ").setBold());
-                
-                String[] parts = answer.getFeedback().split("(?=\\【)|(?<=\\】)");
-                for (String part : parts) {
-                    if (part.startsWith("【") && part.endsWith("】")) {
-                        feedback.add(new Text(part.substring(1, part.length() - 1)).setBold());
-                    } else {
-                        feedback.add(new Text(part));
-                    }
-                }
+            if (answer.getFeedback() != null && !answer.getFeedback().trim().isEmpty()) {
+                Paragraph feedback = new Paragraph("评价: " + answer.getFeedback())
+                        .setFontSize(11)
+                        .setFontColor(new DeviceRgb(0, 0, 200)); // 蓝色
                 document.add(feedback);
             }
-            
-            document.add(new Paragraph("\n")); // 间距
+
+            // 每个题目之间添加间距
+            document.add(new Paragraph("\n"));
             questionNumber++;
         }
 
         document.close();
         return new ByteArrayResource(out.toByteArray());
+    }
+
+    /**
+     * 一键导出考试中所有学生的试卷为ZIP文件
+     */
+    @Transactional(readOnly = true)
+    public ByteArrayResource exportAllStudentPapersAsZip(Long examId, String format) throws IOException {
+        log.info("开始导出考试 {} 的所有学生试卷，格式: {}", examId, format);
+        
+        // 获取考试信息
+        Exam exam = examRepository.findById(examId)
+            .orElseThrow(() -> new ResourceNotFoundException("考试不存在: " + examId));
+        
+        // 获取所有学生的试卷数据
+        List<StudentExamPaperResponse> allPapers = getAllStudentPapers(examId);
+        
+        if (allPapers.isEmpty()) {
+            log.warn("考试 {} 中没有找到任何学生试卷", examId);
+            throw new RuntimeException("该考试中没有学生提交答案");
+        }
+        
+        log.info("找到 {} 份学生试卷", allPapers.size());
+        
+        // 创建ZIP文件
+        ByteArrayOutputStream zipOut = new ByteArrayOutputStream();
+        
+        try (java.util.zip.ZipOutputStream zipOutputStream = new java.util.zip.ZipOutputStream(zipOut)) {
+            
+            String examTitle = exam.getTitle().replaceAll("[\\\\/:*?\"<>|]", "_");
+            String fileExtension = ("word".equalsIgnoreCase(format) || "docx".equalsIgnoreCase(format)) ? ".docx" : ".pdf";
+            
+            for (StudentExamPaperResponse paper : allPapers) {
+                try {
+                    log.debug("正在导出学生 {} 的试卷", paper.getStudentName());
+                    
+                    // 生成文件内容
+                    ByteArrayResource paperResource;
+                    
+                    if ("word".equalsIgnoreCase(format) || "docx".equalsIgnoreCase(format)) {
+                        paperResource = exportStudentPaperAsWord(paper);
+                    } else {
+                        // 默认PDF格式
+                        paperResource = exportStudentPaperAsPdf(paper);
+                    }
+                    
+                    // 生成文件名
+                    String studentName = paper.getStudentName().replaceAll("[\\\\/:*?\"<>|]", "_");
+                    String studentNumber = paper.getStudentNumber() != null ? 
+                        paper.getStudentNumber().replaceAll("[\\\\/:*?\"<>|]", "_") : "无学号";
+                    String fileName = String.format("%s_%s_试卷%s", studentNumber, studentName, fileExtension);
+                    
+                    // 添加到ZIP文件
+                    java.util.zip.ZipEntry zipEntry = new java.util.zip.ZipEntry(fileName);
+                    zipOutputStream.putNextEntry(zipEntry);
+                    zipOutputStream.write(paperResource.getByteArray());
+                    zipOutputStream.closeEntry();
+                    
+                    log.debug("成功添加学生 {} 的试卷到ZIP文件", paper.getStudentName());
+                    
+                } catch (Exception e) {
+                    log.error("导出学生 {} 的试卷失败: {}", paper.getStudentName(), e.getMessage(), e);
+                    // 继续处理其他学生的试卷，不因单个学生失败而停止整个流程
+                }
+            }
+            
+            // 添加一个说明文件
+            String readmeContent = String.format(
+                "考试名称: %s\n" +
+                "导出时间: %s\n" +
+                "导出格式: %s\n" +
+                "学生数量: %d\n" +
+                "\n" +
+                "文件命名规则: 学号_姓名_试卷.%s\n" +
+                "\n" +
+                "注意事项:\n" +
+                "1. 如果学生没有学号，将显示为'无学号'\n" +
+                "2. 文件名中的特殊字符已被替换为下划线\n" +
+                "3. 导出失败的学生试卷将不会包含在此ZIP文件中\n",
+                exam.getTitle(),
+                java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")),
+                format.toUpperCase(),
+                allPapers.size(),
+                fileExtension.substring(1)
+            );
+            
+            java.util.zip.ZipEntry readmeEntry = new java.util.zip.ZipEntry("README.txt");
+            zipOutputStream.putNextEntry(readmeEntry);
+            zipOutputStream.write(readmeContent.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            zipOutputStream.closeEntry();
+            
+            zipOutputStream.finish();
+        }
+        
+        log.info("成功导出考试 {} 的所有学生试卷为ZIP文件，大小: {} bytes", examId, zipOut.size());
+        
+        return new ByteArrayResource(zipOut.toByteArray());
+    }
+    
+    /**
+     * 获取考试中所有学生的试卷数据（不分页）
+     */
+    @Transactional(readOnly = true)
+    public List<StudentExamPaperResponse> getAllStudentPapers(Long examId) {
+        log.debug("获取考试 {} 的所有学生试卷", examId);
+        
+        // 查询所有提交了答案的学生
+        List<Object[]> studentData = studentAnswerRepository.findAllStudentsByExamId(examId);
+        
+        List<StudentExamPaperResponse> papers = new ArrayList<>();
+        
+        for (Object[] row : studentData) {
+            try {
+                Long studentId = (Long) row[0];
+                String studentName = (String) row[1];
+                String studentNumber = (String) row[2];
+                String studentEmail = (String) row[3];
+                // row[4] 是 s.real_name，我们已经在 row[1] 中使用了 COALESCE
+                
+                // 获取该学生的所有答案
+                List<StudentAnswer> answers = studentAnswerRepository.findByQuestionExamIdAndStudentId(examId, studentId);
+                
+                if (!answers.isEmpty()) {
+                    // 获取考试信息用于构建试卷响应
+                    Exam exam = examRepository.findById(examId).orElse(null);
+                    String examTitle = exam != null ? exam.getTitle() : "未知考试";
+                    
+                    // 构建学生用户对象
+                    User student = new User();
+                    student.setId(studentId);
+                    student.setRealName(studentName);
+                    student.setStudentNumber(studentNumber);
+                    student.setEmail(studentEmail);
+                    
+                    StudentExamPaperResponse paper = new StudentExamPaperResponse(student, examId, examTitle, answers);
+                    papers.add(paper);
+                    
+                    log.debug("添加学生 {} 的试卷，包含 {} 个答案", studentName, answers.size());
+                }
+            } catch (Exception e) {
+                log.error("处理学生试卷数据失败: {}", e.getMessage(), e);
+            }
+        }
+        
+        log.info("获取到 {} 份学生试卷", papers.size());
+        return papers;
     }
     
     @Transactional(readOnly = true)

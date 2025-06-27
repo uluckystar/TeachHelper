@@ -44,6 +44,11 @@ public class BatchEvaluationExecutorService {
     
     private static final Logger logger = LoggerFactory.getLogger(BatchEvaluationExecutorService.class);
     
+    @Value("${app.evaluation.max-concurrent-tasks:10}")
+    private int maxConcurrentTasks;
+
+    private Semaphore evaluationSemaphore;
+    
     @Autowired
     private AIEvaluationService aiEvaluationService;
     
@@ -56,6 +61,14 @@ public class BatchEvaluationExecutorService {
     @Autowired
     @Qualifier("securityContextTaskExecutor")
     private Executor securityContextTaskExecutor;
+    
+    @PostConstruct
+    public void init() {
+        // 限制并发数在1到200之间，防止过高导致系统不稳定
+        int concurrency = Math.max(1, Math.min(maxConcurrentTasks, 200));
+        this.evaluationSemaphore = new Semaphore(concurrency);
+        logger.info("BatchEvaluationExecutorService initialized with concurrency: {}", concurrency);
+    }
     
     /**
      * 异步执行批量评估任务
@@ -98,6 +111,15 @@ public class BatchEvaluationExecutorService {
     @SuppressWarnings("unchecked")
     private List<Long> extractAnswerIds(Map<String, Object> config) {
         logger.info("开始解析配置获取答案ID列表，配置: {}", config);
+
+        // 优先处理单个答案评估
+        if (config.containsKey("answerId")) {
+            Long answerId = extractLongValue(config.get("answerId"));
+            if (answerId != null) {
+                logger.info("从 'answerId' 配置中提取到单个答案ID: {}", answerId);
+                return List.of(answerId);
+            }
+        }
         
         // 检查是否直接包含answerIds
         if (config.containsKey("answerIds")) {
@@ -173,60 +195,56 @@ public class BatchEvaluationExecutorService {
         // 检查是否按考试ID列表获取答案（多个）
         if (config.containsKey("examIds")) {
             logger.info("发现examIds配置");
-            Object examIdsObj = config.get("examIds");
-            if (examIdsObj instanceof List) {
-                List<?> rawList = (List<?>) examIdsObj;
-                List<Long> examIds = rawList.stream()
-                    .map(id -> {
-                        if (id instanceof Number number) {
-                            return number.longValue();
-                        } else if (id instanceof String string) {
-                            return Long.parseLong(string);
-                        }
-                        return null;
-                    })
-                    .filter(id -> id != null)
-                    .toList();
-                
-                logger.info("解析到 {} 个考试ID: {}", examIds.size(), examIds);
-                
-                List<Long> allAnswerIds = new java.util.ArrayList<>();
-                boolean evaluateAll = Boolean.TRUE.equals(config.get("evaluateAll"));
-                logger.info("是否评估所有答案: {}", evaluateAll);
-                
+            @SuppressWarnings("unchecked")
+            List<Long> examIds = (List<Long>) config.get("examIds");
+            if (examIds != null && !examIds.isEmpty()) {
+                List<Long> allAnswerIds = new ArrayList<>();
                 for (Long examId : examIds) {
-                    logger.info("开始处理考试ID: {}", examId);
-                    List<Long> answerIds;
+                    boolean evaluateAll = Boolean.TRUE.equals(config.get("evaluateAll"));
                     if (evaluateAll) {
-                        // 获取考试的所有答案
-                        logger.info("获取考试 {} 的所有答案", examId);
-                        answerIds = studentAnswerService.getAnswersByExamId(examId)
+                        List<Long> examAnswerIds = studentAnswerService.getAnswersByExamId(examId)
                             .stream()
                             .map(StudentAnswer::getId)
                             .toList();
-                        logger.info("从考试ID {} 获取到 {} 个答案", examId, answerIds.size());
+                        allAnswerIds.addAll(examAnswerIds);
                     } else {
-                        // 只获取未评估的答案
-                        logger.info("获取考试 {} 的未评估答案", examId);
-                        List<StudentAnswer> allAnswersForExam = studentAnswerService.getAnswersByExamId(examId);
-                        logger.info("考试 {} 总共有 {} 个答案", examId, allAnswersForExam.size());
-                        
-                        long evaluatedCount = allAnswersForExam.stream().filter(StudentAnswer::isEvaluated).count();
-                        long unevaluatedCount = allAnswersForExam.size() - evaluatedCount;
-                        logger.info("其中已评估: {}, 未评估: {}", evaluatedCount, unevaluatedCount);
-                        
-                        answerIds = studentAnswerService.getUnevaluatedAnswersByExamId(examId)
+                        List<Long> examAnswerIds = studentAnswerService.getUnevaluatedAnswersByExamId(examId)
                             .stream()
                             .map(StudentAnswer::getId)
                             .toList();
-                        logger.info("从考试ID {} 获取到 {} 个未评估答案", examId, answerIds.size());
+                        allAnswerIds.addAll(examAnswerIds);
                     }
-                    allAnswerIds.addAll(answerIds);
-                    logger.info("当前累计答案数: {}", allAnswerIds.size());
                 }
-                
-                logger.info("总共获取到 {} 个答案ID", allAnswerIds.size());
+                logger.info("从 {} 个考试获取到 {} 个答案", examIds.size(), allAnswerIds.size());
                 return allAnswerIds;
+            }
+        }
+        
+        // 检查是否按学生ID和考试ID获取答案
+        if (config.containsKey("studentId") && config.containsKey("examId")) {
+            logger.info("发现studentId和examId配置");
+            Long studentId = extractLongValue(config.get("studentId"));
+            Long examId = extractLongValue(config.get("examId"));
+            if (studentId != null && examId != null) {
+                boolean evaluateAll = Boolean.TRUE.equals(config.get("evaluateAll"));
+                if (evaluateAll) {
+                    // 获取该学生在该考试中的所有答案
+                    List<Long> answerIds = studentAnswerService.getStudentAnswersInExam(examId, studentId)
+                        .stream()
+                        .map(StudentAnswer::getId)
+                        .toList();
+                    logger.info("从学生ID {} 在考试ID {} 中获取到 {} 个答案", studentId, examId, answerIds.size());
+                    return answerIds;
+                } else {
+                    // 只获取该学生在该考试中的未评估答案
+                    List<Long> answerIds = studentAnswerService.getStudentAnswersInExam(examId, studentId)
+                        .stream()
+                        .filter(answer -> !answer.isEvaluated())
+                        .map(StudentAnswer::getId)
+                        .toList();
+                    logger.info("从学生ID {} 在考试ID {} 中获取到 {} 个未评估答案", studentId, examId, answerIds.size());
+                    return answerIds;
+                }
             }
         }
         
@@ -255,18 +273,6 @@ public class BatchEvaluationExecutorService {
      */
     private CompletableFuture<Void> executeBatchEvaluation(String taskId, List<Long> answerIds, Map<String, Object> config, TaskProgressCallback callback) {
         
-        // 从配置中获取并发数，默认值为3
-        int concurrency = 3;
-        if (config != null && config.get("concurrency") instanceof Number) {
-            concurrency = ((Number) config.get("concurrency")).intValue();
-        }
-        // 限制并发数在1到50之间，防止过高导致系统不稳定
-        concurrency = Math.max(1, Math.min(concurrency, 50));
-        logger.info("任务 {} 设置并发数: {}", taskId, concurrency);
-        callback.addTaskLog(taskId, "INFO", "设置AI并发数为: " + concurrency);
-
-        final Semaphore evaluationSemaphore = new Semaphore(concurrency);
-
         final int totalAnswers = answerIds.size();
         final AtomicInteger processedCount = new AtomicInteger(0);
         final AtomicInteger successCount = new AtomicInteger(0);
@@ -275,8 +281,8 @@ public class BatchEvaluationExecutorService {
         // 用于收集详细的评估结果
         List<Map<String, Object>> detailedResults = Collections.synchronizedList(new ArrayList<>());
         
-        logger.info("开始评估 {} 个答案", totalAnswers);
-        callback.addTaskLog(taskId, "INFO", "开始批量评估，总计 " + totalAnswers + " 个答案");
+        logger.info("开始评估 {} 个答案，并发数: {}", totalAnswers, maxConcurrentTasks);
+        callback.addTaskLog(taskId, "INFO", "开始批量评估，总计 " + totalAnswers + " 个答案，并发数: " + maxConcurrentTasks);
         
         // 获取当前SecurityContext以传播到并行线程
         SecurityContext securityContext = SecurityContextHolder.getContext();

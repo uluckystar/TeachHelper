@@ -494,19 +494,28 @@ public class LearningAnswerParserService {
     }
     
     /**
-     * 解析学习通考试结果格式的答案 - 简化版
-     * 核心思路：题目数量 = "学生答案："数量，直接按顺序匹配
+     * 解析学习通考试结果格式的答案 - 增强版
+     * 核心思路：多策略解析，确保不遗漏答案，保持编号连续性
      */
     private void parseLearningAnswers(String content, List<StudentAnswerImportData.QuestionAnswer> answers) {
-        // 1. 提取所有"学生答案："
-        List<String> studentAnswers = extractAllStudentAnswers(content);
-        log.info("提取到 {} 个学生答案", studentAnswers.size());
+        log.info("🔍 开始解析学习通考试答案");
+        
+        // 1. 提取所有"学生答案："- 增强版
+        List<String> studentAnswers = extractAllStudentAnswersEnhanced(content);
+        log.info("📝 提取到 {} 个学生答案", studentAnswers.size());
         
         // 2. 提取所有"学生得分："
         List<Double> scores = extractAllScores(content);
-        log.info("提取到 {} 个得分", scores.size());
+        log.info("📊 提取到 {} 个得分", scores.size());
         
-        // 3. 按顺序生成题目答案
+        // 3. 检查答案完整性并进行修复
+        List<String> repairedAnswers = repairAnswerSequence(studentAnswers, content);
+        if (repairedAnswers.size() != studentAnswers.size()) {
+            log.info("🔧 答案序列修复完成: {} -> {} 个答案", studentAnswers.size(), repairedAnswers.size());
+            studentAnswers = repairedAnswers;
+        }
+        
+        // 4. 按顺序生成题目答案，保持编号连续性
         for (int i = 0; i < studentAnswers.size(); i++) {
             StudentAnswerImportData.QuestionAnswer qa = new StudentAnswerImportData.QuestionAnswer();
             
@@ -514,32 +523,38 @@ public class LearningAnswerParserService {
             qa.setQuestionNumber(i + 1);
             
             // 设置答案内容
-            qa.setAnswerContent(studentAnswers.get(i));
+            String answerContent = studentAnswers.get(i);
+            if (answerContent == null || answerContent.trim().isEmpty()) {
+                answerContent = "学生未作答";
+                log.debug("📍 题目 {} 答案为空，设置为默认值", i + 1);
+            }
+            qa.setAnswerContent(answerContent);
             
             // 设置得分（如果有）
             if (i < scores.size() && scores.get(i) != null) {
                 qa.setScore(scores.get(i));
-                log.debug("题目 {} 设置得分: {}", i + 1, scores.get(i));
+                log.debug("📍 题目 {} 设置得分: {}", i + 1, scores.get(i));
             }
             
-            // 设置题目内容（使用题目编号作为标识，避免空内容）
-            qa.setQuestionContent("题目" + (i + 1));
+            // 设置题目内容（使用题目编号作为标识，但增加更多上下文信息）
+            String questionTitle = generateQuestionTitle(i + 1, answerContent, content);
+            qa.setQuestionContent(questionTitle);
             
             answers.add(qa);
             
-            log.debug("题目 {}: 答案={}, 得分={}", 
+            log.debug("✅ 题目 {}: 答案长度={}, 得分={}", 
                      i + 1, 
-                     studentAnswers.get(i), 
+                     answerContent.length(),
                      i < scores.size() ? scores.get(i) : "无");
         }
         
-        log.info("最终生成 {} 道题目答案", answers.size());
+        log.info("🎯 最终生成 {} 道题目答案", answers.size());
     }
     
     /**
-     * 提取所有"学生答案："内容 - 按位置顺序
+     * 提取所有"学生答案："内容 - 增强版，提高容错性
      */
-    private List<String> extractAllStudentAnswers(String content) {
+    private List<String> extractAllStudentAnswersEnhanced(String content) {
         List<AnswerMatch> answerMatches = new ArrayList<>();
         
         // 方案1：标准格式 - 学生答案：(内容)正确答案：
@@ -566,8 +581,8 @@ public class LearningAnswerParserService {
             answerMatches.add(new AnswerMatch(subjectiveMatcher.start(), answer, "主观题格式"));
         }
         
-        // 方案3：兜底格式 - 学生答案：(多行内容到学生得分或文档结尾)
-        Pattern fallbackPattern = Pattern.compile("学生答案[：:]([\\s\\S]*?)(?=学生得分|批语|$)", Pattern.DOTALL);
+        // 方案3：增强的兜底格式 - 重新启用并改进
+        Pattern fallbackPattern = Pattern.compile("学生答案[：:]([\\s\\S]*?)(?=学生得分|批语|题目\\d+|第\\d+题|学生答案|$)", Pattern.DOTALL);
         Matcher fallbackMatcher = fallbackPattern.matcher(content);
         
         while (fallbackMatcher.find()) {
@@ -575,25 +590,52 @@ public class LearningAnswerParserService {
             if (answer.isEmpty()) {
                 answer = "学生未作答";
             }
-            if (!answer.contains("正确答案")) {
+            
+            // 只有在前面的格式都没有匹配到相同位置时才添加兜底格式
+            boolean hasExistingMatch = answerMatches.stream()
+                .anyMatch(match -> Math.abs(match.position - fallbackMatcher.start()) < 20);
+            
+            if (!hasExistingMatch && !answer.contains("正确答案") && answer.length() < 1000) {
                 answerMatches.add(new AnswerMatch(fallbackMatcher.start(), answer, "兜底格式"));
+                log.debug("🔧 兜底格式匹配到答案: {}", answer.length() > 50 ? answer.substring(0, 50) + "..." : answer);
+            }
+        }
+        
+        // 方案4：纯粹的学生答案标记（没有正确答案的情况）
+        Pattern pureAnswerPattern = Pattern.compile("学生答案[：:]([^学生得分^学生答案]*?)(?=学生得分|学生答案|$)", Pattern.DOTALL);
+        Matcher pureAnswerMatcher = pureAnswerPattern.matcher(content);
+        
+        while (pureAnswerMatcher.find()) {
+            String answer = pureAnswerMatcher.group(1).trim();
+            if (answer.isEmpty()) {
+                answer = "学生未作答";
+            }
+            
+            // 检查是否已经被其他模式匹配
+            boolean hasExistingMatch = answerMatches.stream()
+                .anyMatch(match -> Math.abs(match.position - pureAnswerMatcher.start()) < 30);
+            
+            if (!hasExistingMatch && answer.length() < 500) {
+                answerMatches.add(new AnswerMatch(pureAnswerMatcher.start(), answer, "纯答案格式"));
+                log.debug("🔧 纯答案格式匹配到答案: {}", answer.length() > 50 ? answer.substring(0, 50) + "..." : answer);
             }
         }
         
         // 按位置排序
         answerMatches.sort((a, b) -> Integer.compare(a.position, b.position));
         
-        // 去重：如果两个匹配位置相同，优先选择标准格式，然后是主观题格式
+        // 去重：如果两个匹配位置相同，优先选择高质量格式
         List<AnswerMatch> uniqueMatches = new ArrayList<>();
         for (AnswerMatch match : answerMatches) {
             boolean isDuplicate = false;
             for (AnswerMatch existing : uniqueMatches) {
-                if (Math.abs(match.position - existing.position) < 10) { // 允许小范围位置差异
+                if (Math.abs(match.position - existing.position) < 15) { // 允许小范围位置差异
                     isDuplicate = true;
                     // 如果新匹配优先级更高，替换现有匹配
                     if (getFormatPriority(match.format) > getFormatPriority(existing.format)) {
                         uniqueMatches.remove(existing);
                         uniqueMatches.add(match);
+                        log.debug("🔄 替换低优先级匹配: {} -> {}", existing.format, match.format);
                     }
                     break;
                 }
@@ -606,19 +648,171 @@ public class LearningAnswerParserService {
         // 再次按位置排序
         uniqueMatches.sort((a, b) -> Integer.compare(a.position, b.position));
         
-        // 提取答案并记录日志
+        // 提取答案并记录详细日志
         List<String> answers = new ArrayList<>();
         for (int i = 0; i < uniqueMatches.size(); i++) {
             AnswerMatch match = uniqueMatches.get(i);
             answers.add(match.answer);
-            log.debug("找到学生答案({}) {}: {}", match.format, i + 1, 
+            log.debug("📍 找到学生答案 {} ({}): {}", i + 1, match.format,
                      match.answer.length() > 100 ? match.answer.substring(0, 100) + "..." : match.answer);
         }
         
-        log.info("总共提取到 {} 个学生答案", answers.size());
+        log.info("📊 总共提取到 {} 个学生答案", answers.size());
         return answers;
     }
     
+    /**
+     * 修复答案序列，处理可能的缺失或重复
+     */
+    private List<String> repairAnswerSequence(List<String> originalAnswers, String content) {
+        if (originalAnswers.isEmpty()) {
+            log.warn("⚠️ 没有提取到任何答案，尝试备用解析策略");
+            return tryAlternativeAnswerExtraction(content);
+        }
+        
+        // 检查答案序列的连续性
+        List<String> repairedAnswers = new ArrayList<>(originalAnswers);
+        
+        // 检查是否有明显的缺失（通过分析得分数量vs答案数量）
+        List<Double> scores = extractAllScores(content);
+        if (scores.size() > originalAnswers.size()) {
+            log.warn("⚠️ 得分数量({})大于答案数量({})，可能有答案缺失", scores.size(), originalAnswers.size());
+            
+            // 尝试补充缺失的答案
+            for (int i = originalAnswers.size(); i < scores.size(); i++) {
+                repairedAnswers.add("学生未作答");
+                log.debug("🔧 补充第 {} 题答案为默认值", i + 1);
+            }
+        }
+        
+        return repairedAnswers;
+    }
+    
+    /**
+     * 备用答案提取策略
+     */
+    private List<String> tryAlternativeAnswerExtraction(String content) {
+        List<String> answers = new ArrayList<>();
+        
+        // 策略1：通过得分信息推断答案数量
+        List<Double> scores = extractAllScores(content);
+        if (!scores.isEmpty()) {
+            log.info("🔧 通过得分信息推断题目数量: {}", scores.size());
+            for (int i = 0; i < scores.size(); i++) {
+                answers.add("学生未作答");
+            }
+            return answers;
+        }
+        
+        // 策略2：查找题目编号标记
+        Pattern questionNumberPattern = Pattern.compile("(?:第\\d+题|\\d+[.、]|题目\\d+)");
+        Matcher questionMatcher = questionNumberPattern.matcher(content);
+        Set<String> foundNumbers = new HashSet<>();
+        
+        while (questionMatcher.find()) {
+            foundNumbers.add(questionMatcher.group());
+        }
+        
+        if (!foundNumbers.isEmpty()) {
+            log.info("🔧 通过题目编号推断题目数量: {}", foundNumbers.size());
+            for (int i = 0; i < foundNumbers.size(); i++) {
+                answers.add("学生未作答");
+            }
+            return answers;
+        }
+        
+        // 策略3：假设至少有一道题
+        log.warn("⚠️ 无法确定题目数量，假设为1道题");
+        answers.add("学生未作答");
+        
+        return answers;
+    }
+    
+    /**
+     * 生成题目标题，包含更多上下文信息
+     */
+    private String generateQuestionTitle(int questionNumber, String answerContent, String fullContent) {
+        // 基础标题
+        String baseTitle = "题目" + questionNumber;
+        
+        // 尝试从内容中提取题目相关信息
+        String contextInfo = extractQuestionContext(questionNumber, fullContent);
+        if (contextInfo != null && !contextInfo.trim().isEmpty()) {
+            return baseTitle + ": " + contextInfo;
+        }
+        
+        // 如果找不到上下文，但答案有内容，可以基于答案类型推断题目类型
+        if (answerContent != null && !answerContent.equals("学生未作答")) {
+            String questionType = inferQuestionTypeFromAnswer(answerContent);
+            if (questionType != null) {
+                return baseTitle + " (" + questionType + ")";
+            }
+        }
+        
+        return baseTitle;
+    }
+    
+    /**
+     * 从内容中提取题目上下文信息
+     */
+    private String extractQuestionContext(int questionNumber, String content) {
+        // 查找题目编号附近的内容
+        String[] patterns = {
+            "第" + questionNumber + "题[^\\n]*",
+            questionNumber + "[.、][^\\n]*",
+            "题目" + questionNumber + "[：:][^\\n]*"
+        };
+        
+        for (String pattern : patterns) {
+            Pattern p = Pattern.compile(pattern);
+            Matcher m = p.matcher(content);
+            if (m.find()) {
+                String context = m.group().trim();
+                // 清理并截断上下文信息
+                context = context.replaceAll("学生得分.*", "").trim();
+                if (context.length() > 100) {
+                    context = context.substring(0, 97) + "...";
+                }
+                return context;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * 根据答案内容推断题目类型
+     */
+    private String inferQuestionTypeFromAnswer(String answer) {
+        if (answer == null || answer.trim().isEmpty()) {
+            return null;
+        }
+        
+        String trimmedAnswer = answer.trim();
+        
+        // 选择题特征
+        if (trimmedAnswer.matches("^[A-D]$")) {
+            return "选择题";
+        }
+        
+        // 判断题特征
+        if (trimmedAnswer.matches("^(√|×|对|错|正确|错误|true|false)$")) {
+            return "判断题";
+        }
+        
+        // 填空题特征（短答案）
+        if (trimmedAnswer.length() <= 20 && !trimmedAnswer.contains("。") && !trimmedAnswer.contains("？")) {
+            return "填空题";
+        }
+        
+        // 简答题特征（长答案）
+        if (trimmedAnswer.length() > 50) {
+            return "简答题";
+        }
+        
+        return "其他";
+    }
+
     /**
      * 答案匹配结果
      */
@@ -639,13 +833,14 @@ public class LearningAnswerParserService {
      */
     private int getFormatPriority(String format) {
         switch (format) {
-            case "标准格式": return 3;
-            case "主观题格式": return 2;
-            case "兜底格式": return 1;
+            case "标准格式": return 4;
+            case "主观题格式": return 3;
+            case "兜底格式": return 2;
+            case "纯答案格式": return 1;
             default: return 0;
         }
     }
-    
+
     /**
      * 提取所有"学生得分："
      */

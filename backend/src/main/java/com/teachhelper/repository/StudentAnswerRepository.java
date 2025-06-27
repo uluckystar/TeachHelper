@@ -200,4 +200,20 @@ public interface StudentAnswerRepository extends JpaRepository<StudentAnswer, Lo
                        "     LOWER(s.student_number) LIKE LOWER(CONCAT('%', :keyword, '%')))",
            nativeQuery = true)
     Page<Object[]> findStudentPapersPagedByExamId(@Param("examId") Long examId, @Param("keyword") String keyword, Pageable pageable);
+
+    /**
+     * 查询考试中所有提交了答案的学生（不分页）
+     */
+    @Query(value = "SELECT DISTINCT s.id, " +
+                       "COALESCE(s.real_name, s.username) as student_name, " +
+                       "s.student_number, " +
+                       "s.email, " +
+                       "s.real_name " +
+                       "FROM student_answers sa " +
+                       "JOIN users s ON sa.student_id = s.id " +
+                       "JOIN questions q ON sa.question_id = q.id " +
+                       "WHERE q.exam_id = :examId " +
+                       "ORDER BY s.student_number ASC, s.real_name ASC",
+           nativeQuery = true)
+    List<Object[]> findAllStudentsByExamId(@Param("examId") Long examId);
 }

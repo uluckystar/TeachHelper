@@ -122,13 +122,57 @@
 
               <!-- 学生答案 -->
               <div class="student-answer-section">
-                <h4>学生答案：</h4>
-                <div class="student-answer">
-                  <div v-if="answer.answerText" class="text-answer">
-                    <pre>{{ answer.answerText }}</pre>
+                <div class="student-answer-header">
+                  <h4>学生答案：</h4>
+                  <div class="answer-edit-actions">
+                    <el-button 
+                      v-if="!isEditingStudentAnswer(answer.id)"
+                      type="primary" 
+                      size="small" 
+                      icon="Edit"
+                      @click="startEditStudentAnswer(answer)"
+                      plain
+                    >
+                      编辑答案
+                    </el-button>
+                    <div v-else class="answer-edit-action-group">
+                      <el-button 
+                        type="success" 
+                        size="small" 
+                        @click="confirmStudentAnswerUpdate(answer)"
+                        :loading="updatingStudentAnswers.has(answer.id)"
+                      >
+                        保存答案
+                      </el-button>
+                      <el-button 
+                        size="small" 
+                        @click="cancelStudentAnswerEdit(answer)"
+                      >
+                        取消
+                      </el-button>
+                    </div>
                   </div>
-                  <div v-if="!answer.answerText" class="no-answer">
-                    <el-text type="info">学生未作答</el-text>
+                </div>
+                <div class="student-answer">
+                  <div v-if="!isEditingStudentAnswer(answer.id)" class="answer-display">
+                    <div v-if="answer.answerText" class="text-answer">
+                      <pre>{{ answer.answerText }}</pre>
+                    </div>
+                    <div v-if="!answer.answerText" class="no-answer">
+                      <el-text type="info">学生未作答</el-text>
+                    </div>
+                  </div>
+                  <div v-else class="answer-edit">
+                    <el-input 
+                      v-model="editingStudentAnswers[answer.id]"
+                      type="textarea" 
+                      :rows="8"
+                      :autosize="{ minRows: 6, maxRows: 15 }"
+                      placeholder="请输入学生答案内容..."
+                      resize="vertical"
+                      maxlength="5000"
+                      show-word-limit
+                    />
                   </div>
                 </div>
               </div>
@@ -309,12 +353,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { answerApi } from '@/api/answer'
 import { examApi } from '@/api/exam'
-import type { StudentExamPaperResponse, StudentAnswerResponse, ExamResponse } from '@/types/api'
+import { evaluationApi } from '@/api/evaluation'
+import type { StudentAnswerResponse, StudentExamPaperResponse, ExamResponse } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -344,6 +389,11 @@ const updatingScores = ref<Set<number>>(new Set())
 const updatingFeedbacks = ref<Set<number>>(new Set())
 const editingAnswers = ref<Set<number>>(new Set()) // 新增：正在编辑的答案ID集合
 const updatingAnswers = ref<Set<number>>(new Set()) // 新增：正在更新的答案ID集合
+
+// 新增：学生答案编辑相关状态
+const editingStudentAnswers = ref<Record<number, string>>({})
+const updatingStudentAnswers = ref<Set<number>>(new Set())
+const editingStudentAnswerIds = ref<Set<number>>(new Set())
 
 // 计算属性
 const evaluatedCount = computed(() => {
@@ -568,6 +618,68 @@ const confirmFeedbackUpdate = async (answer: StudentAnswerResponse) => {
   }
 }
 
+// 新增：学生答案编辑相关方法
+const isEditingStudentAnswer = (answerId: number): boolean => {
+  return editingStudentAnswerIds.value.has(answerId)
+}
+
+const startEditStudentAnswer = (answer: StudentAnswerResponse) => {
+  editingStudentAnswerIds.value.add(answer.id)
+  editingStudentAnswers.value[answer.id] = answer.answerText || ''
+}
+
+const cancelStudentAnswerEdit = (answer: StudentAnswerResponse) => {
+  editingStudentAnswerIds.value.delete(answer.id)
+  delete editingStudentAnswers.value[answer.id]
+}
+
+const confirmStudentAnswerUpdate = async (answer: StudentAnswerResponse) => {
+  const newAnswerText = editingStudentAnswers.value[answer.id]
+  
+  if (newAnswerText === undefined) {
+    cancelStudentAnswerEdit(answer)
+    return
+  }
+
+  // 检查是否有实际修改
+  const hasChanges = newAnswerText !== (answer.answerText || '')
+  if (!hasChanges) {
+    cancelStudentAnswerEdit(answer)
+    return
+  }
+
+  const confirmResult = await ElMessageBox.confirm(
+    '确定要保存对学生答案的修改吗？',
+    '确认保存答案修改',
+    {
+      confirmButtonText: '确定保存',
+      cancelButtonText: '取消',
+      type: 'warning',
+    }
+  ).catch(() => false)
+
+  if (!confirmResult) {
+    cancelStudentAnswerEdit(answer)
+    return
+  }
+
+  updatingStudentAnswers.value.add(answer.id)
+  try {
+    await answerApi.updateAnswer(answer.id, {
+      answerText: newAnswerText
+    })
+    
+    await loadStudentPaper()
+    cancelStudentAnswerEdit(answer)
+    ElMessage.success('学生答案已更新')
+  } catch (error) {
+    console.error('更新学生答案失败:', error)
+    ElMessage.error('更新学生答案失败')
+  } finally {
+    updatingStudentAnswers.value.delete(answer.id)
+  }
+}
+
 // 方法
 const progressFormat = (percentage: number) => {
   return `${evaluatedCount.value}/${studentPaper.value?.answers?.length || 0}`
@@ -633,20 +745,85 @@ const loadStudentPaper = async () => {
 const evaluateAnswer = async (answer: StudentAnswerResponse) => {
   evaluatingAnswers.value.add(answer.id)
   try {
-    // 这里应该调用AI批阅API
-    ElMessage.success('AI批阅已提交，请稍候...')
-    // TODO: 实现AI批阅功能
-    await new Promise(resolve => setTimeout(resolve, 2000)) // 模拟延迟
+    ElMessage.info('正在提交AI批阅请求...')
     
-    // 重新加载数据
-    await loadStudentPaper()
-    ElMessage.success('AI批阅完成')
-  } catch (error) {
+    // 调用单个答案批阅API，返回的是带有任务信息的对象
+    const result = await evaluationApi.evaluateAnswer(answer.id)
+    
+    // 检查返回结果，evaluateAnswer返回的是对象格式 {success: boolean, taskId: string, message: string}
+    if (result && typeof result === 'object' && 'taskId' in result) {
+      const taskId = (result as any).taskId
+      
+      if (taskId) {
+        ElMessage.success('AI批阅任务已提交，正在处理中...')
+        
+        // 为单个答案启动简化的轮询
+        startSingleAnswerPolling(taskId, answer.id)
+      } else {
+        throw new Error('无法获取任务ID')
+      }
+    } else if (typeof result === 'string') {
+      // 如果返回的是字符串格式的任务信息
+      const taskIdMatch = (result as string).match(/ID:\s*([^\s]+)/)
+      const taskId = taskIdMatch ? taskIdMatch[1] : null
+      
+      if (taskId) {
+        ElMessage.success('AI批阅任务已提交，正在处理中...')
+        startSingleAnswerPolling(taskId, answer.id)
+      } else {
+        throw new Error('无法解析任务ID')
+      }
+    } else {
+      // 直接返回了批阅结果
+      ElMessage.success('AI批阅完成')
+      await loadStudentPaper()
+    }
+    
+  } catch (error: any) {
     console.error('AI批阅失败:', error)
-    ElMessage.error('AI批阅失败')
-  } finally {
+    ElMessage.error('AI批阅失败: ' + (error?.message || '未知错误'))
     evaluatingAnswers.value.delete(answer.id)
   }
+}
+
+// 新增：单个答案轮询
+const startSingleAnswerPolling = (taskId: string, answerId: number) => {
+  let pollCount = 0
+  const maxPolls = 60 // 最多轮询1分钟
+  
+  const pollInterval = setInterval(async () => {
+    try {
+      const taskStatus = await evaluationApi.getTaskStatus(taskId)
+      
+      if (taskStatus.status === 'COMPLETED') {
+        clearInterval(pollInterval)
+        evaluatingAnswers.value.delete(answerId)
+        ElMessage.success('AI批阅完成')
+        await loadStudentPaper()
+        
+      } else if (taskStatus.status === 'FAILED' || taskStatus.status === 'CANCELLED') {
+        clearInterval(pollInterval)
+        evaluatingAnswers.value.delete(answerId)
+        ElMessage.error('AI批阅失败')
+      }
+      
+      pollCount++
+      if (pollCount >= maxPolls) {
+        clearInterval(pollInterval)
+        evaluatingAnswers.value.delete(answerId)
+        ElMessage.warning('批阅超时，请刷新页面查看结果')
+      }
+      
+    } catch (error) {
+      console.error('轮询单个答案状态失败:', error)
+      pollCount++
+      if (pollCount >= maxPolls) {
+        clearInterval(pollInterval)
+        evaluatingAnswers.value.delete(answerId)
+        ElMessage.error('批阅状态检查失败')
+      }
+    }
+  }, 1000)
 }
 
 const batchEvaluateAll = async () => {
@@ -657,35 +834,156 @@ const batchEvaluateAll = async () => {
   }
 
   const confirmResult = await ElMessageBox.confirm(
-    `确定要对所有未批阅的 ${unevaluatedAnswers.length} 道题目进行AI批阅吗？`,
-    '批量AI批阅',
+    `确定要对所有未批阅的 ${unevaluatedAnswers.length} 道题目进行AI批阅吗？批阅过程可能需要一些时间，请耐心等待。`,
+    '批量AI批阅确认',
     {
-      confirmButtonText: '确定',
+      confirmButtonText: '确定批阅',
       cancelButtonText: '取消',
       type: 'warning',
+      dangerouslyUseHTMLString: true,
+      message: `
+        <div style="margin: 10px 0;">
+          <p>即将对以下 <strong>${unevaluatedAnswers.length}</strong> 道题目进行AI批阅：</p>
+          <ul style="margin: 10px 0; padding-left: 20px; max-height: 200px; overflow-y: auto;">
+            ${unevaluatedAnswers.map((answer, index) => 
+              `<li>第${getQuestionIndex(answer)}题: ${answer.questionTitle || '无标题'}</li>`
+            ).join('')}
+          </ul>
+          <p style="color: #e6a23c; font-size: 14px;">
+            <i class="el-icon-warning"></i> 注意：AI批阅可能需要几分钟时间，请不要关闭页面
+          </p>
+        </div>
+      `
     }
   ).catch(() => false)
 
   if (!confirmResult) return
 
   batchEvaluating.value = true
+  
   try {
-    // TODO: 实现批量AI批阅功能
-    ElMessage.success('批量AI批阅已提交，请稍候...')
-    await new Promise(resolve => setTimeout(resolve, 3000)) // 模拟延迟
+    // 调用批量AI批阅API - 使用新的学生特定API
+    ElNotification.info({
+      title: '开始AI批阅',
+      message: `正在为学生 ${studentPaper.value?.studentName} 批阅 ${unevaluatedAnswers.length} 道题目，请稍候...`,
+      duration: 0 // 不自动关闭
+    })
     
-    // 重新加载数据
-    await loadStudentPaper()
-    ElMessage.success('批量AI批阅完成')
-  } catch (error) {
+    // 使用新的API端点批量评估特定学生的答案
+    const taskResult = await evaluationApi.batchEvaluateStudentAnswers(
+      parseInt(examId.value), 
+      parseInt(studentId.value)
+    )
+    
+    // 解析任务ID
+    const taskIdMatch = taskResult.match(/ID:\s*([^\s]+)/)
+    const taskId = taskIdMatch ? taskIdMatch[1] : null
+    
+    if (taskId) {
+      ElNotification.success({
+        title: '批阅任务已启动',
+        message: `任务ID: ${taskId}。正在后台处理，请稍候查看结果。`,
+        duration: 5000
+      })
+      
+      // 开始轮询任务状态
+      startTaskPolling(taskId)
+    } else {
+      throw new Error('无法获取任务ID')
+    }
+    
+  } catch (error: any) {
     console.error('批量AI批阅失败:', error)
-    ElMessage.error('批量AI批阅失败')
-  } finally {
+    ElMessage.error('批量AI批阅启动失败: ' + (error?.message || '未知错误'))
     batchEvaluating.value = false
   }
 }
 
-// 新增：快速保存评估
+// 新增：任务轮询功能
+const taskPollingTimer = ref<number | null>(null)
+const pollingCount = ref(0)
+const maxPollingAttempts = 180 // 最多轮询3分钟 (180 * 1秒)
+
+const startTaskPolling = (taskId: string) => {
+  pollingCount.value = 0
+  
+  const pollTaskStatus = async () => {
+    try {
+      const taskStatus = await evaluationApi.getTaskStatus(taskId)
+      
+      console.log(`轮询任务状态 (${pollingCount.value + 1}/${maxPollingAttempts}):`, taskStatus)
+      
+      if (taskStatus.status === 'COMPLETED') {
+        // 任务完成
+        clearTaskPolling()
+        batchEvaluating.value = false
+        
+        ElNotification.success({
+          title: '批阅完成',
+          message: `学生 ${studentPaper.value?.studentName} 的答案批阅已完成！`,
+          duration: 5000
+        })
+        
+        // 重新加载数据
+        await loadStudentPaper()
+        
+      } else if (taskStatus.status === 'FAILED' || taskStatus.status === 'CANCELLED') {
+        // 任务失败或取消
+        clearTaskPolling()
+        batchEvaluating.value = false
+        
+        ElNotification.error({
+          title: '批阅失败',
+          message: `批阅任务${taskStatus.status === 'FAILED' ? '失败' : '被取消'}，请检查错误信息或重试。`,
+          duration: 10000
+        })
+        
+      } else if (taskStatus.status === 'RUNNING') {
+        // 任务正在运行，显示进度
+        const progress = taskStatus.progress || 0
+        ElNotification.info({
+          title: '批阅进行中',
+          message: `正在批阅中... 进度: ${Math.round(progress)}%`,
+          duration: 2000
+        })
+        
+      }
+      
+      pollingCount.value++
+      
+      // 检查是否超过最大轮询次数
+      if (pollingCount.value >= maxPollingAttempts) {
+        clearTaskPolling()
+        batchEvaluating.value = false
+        ElMessage.warning('批阅超时，请手动刷新页面查看结果')
+      }
+      
+    } catch (error: any) {
+      console.error('轮询任务状态失败:', error)
+      pollingCount.value++
+      
+      if (pollingCount.value >= maxPollingAttempts) {
+        clearTaskPolling()
+        batchEvaluating.value = false
+        ElMessage.error('无法获取批阅状态，请手动刷新页面查看结果')
+      }
+    }
+  }
+  
+  // 立即执行一次
+  pollTaskStatus()
+  
+  // 设置定时轮询（每秒一次）
+  taskPollingTimer.value = window.setInterval(pollTaskStatus, 1000)
+}
+
+const clearTaskPolling = () => {
+  if (taskPollingTimer.value) {
+    clearInterval(taskPollingTimer.value)
+    taskPollingTimer.value = null
+  }
+}
+
 const quickSaveEvaluation = async (answer: StudentAnswerResponse) => {
   if (!answer.score && answer.score !== 0) {
     ElMessage.warning('请输入分数')
@@ -714,7 +1012,7 @@ const quickSaveEvaluation = async (answer: StudentAnswerResponse) => {
     
     await loadStudentPaper()
     ElMessage.success('批阅已保存')
-  } catch (error) {
+  } catch (error: any) {
     console.error('保存批阅失败:', error)
     ElMessage.error('保存批阅失败')
   } finally {
@@ -740,6 +1038,11 @@ const goBack = () => {
 onMounted(() => {
   loadExam()
   loadStudentPaper()
+})
+
+// 在组件卸载时清理定时器
+onBeforeUnmount(() => {
+  clearTaskPolling()
 })
 </script>
 
@@ -870,11 +1173,47 @@ onMounted(() => {
   border-left: 4px solid #409eff;
 }
 
+.student-answer-section {
+  margin-bottom: 20px;
+}
+
+.student-answer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.student-answer-header h4 {
+  margin: 0;
+  color: #303133;
+  font-size: 14px;
+}
+
+.answer-edit-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.answer-edit-action-group {
+  display: flex;
+  gap: 8px;
+}
+
 .student-answer {
   background: #fafafa;
   padding: 15px;
   border-radius: 4px;
   border: 1px solid #ebeef5;
+}
+
+.answer-display {
+  min-height: 40px;
+}
+
+.answer-edit {
+  background: #fff;
+  border-radius: 4px;
 }
 
 .text-answer pre {

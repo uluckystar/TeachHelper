@@ -99,7 +99,7 @@ app:
   # 评估相关配置
   evaluation:
     # 批量评估并发任务数
-    max-concurrent-tasks: 5
+    max-concurrent-tasks: 200
 
 # Spring Boot Actuator 监控配置
 management:

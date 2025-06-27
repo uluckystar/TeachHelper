@@ -48,6 +48,7 @@ public class TaskExecutionDispatcher {
                 case "BATCH_EVALUATION_QUESTION":
                 case "BATCH_EVALUATION_ALL_QUESTION":
                 case "BATCH_REVALUATION_QUESTION":
+                case "BATCH_EVALUATION_STUDENT":
                     // 批量评估任务 - 传递 TaskService 作为回调
                     future = batchEvaluationExecutor.executeBatchEvaluationTask(taskId, task.getConfig(), (TaskProgressCallback) taskService);
                     break;

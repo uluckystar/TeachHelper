@@ -727,6 +727,10 @@ export interface StudentExamPaperResponse {
   isFullyEvaluated: boolean;
   submittedAt?: string;
   lastUpdated?: string;
+  // 前端增强字段
+  className?: string;
+  completionStatus?: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED';
+  submissionStatus?: 'SUBMITTED' | 'NOT_SUBMITTED';
 }
 
 // 学生答案响应类型增强版 - 统一定义

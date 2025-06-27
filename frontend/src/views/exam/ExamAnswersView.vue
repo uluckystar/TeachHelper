@@ -225,6 +225,14 @@
           <span>学生试卷列表 ({{ paperPagination.total }})</span>
           <div>
             <el-button 
+              type="primary" 
+              icon="Download" 
+              @click="exportAllPapers"
+              :loading="exportingAllPapers"
+            >
+              一键导出所有试卷
+            </el-button>
+            <el-button 
               type="success" 
               icon="Document" 
               @click="batchExportPapers"
@@ -271,6 +279,12 @@
             <el-tag :type="getCompletionTagType(row.completionStatus)" size="small">
               {{ getCompletionStatusText(row.completionStatus) }}
             </el-tag>
+          </template>
+        </el-table-column>
+
+        <el-table-column prop="answeredQuestions" label="答案数量" width="120" sortable="custom">
+          <template #default="{ row }">
+            <span class="answer-count">{{ row.answeredQuestions || 0 }}/{{ row.totalQuestions || 0 }}</span>
           </template>
         </el-table-column>
 
@@ -1751,6 +1765,63 @@ const saveEditedAnswer = async () => {
 }
 
 const exportingPaper = ref<number | null>(null)
+const exportingAllPapers = ref(false)
+
+// 一键导出所有试卷
+const exportAllPapers = async () => {
+  if (paperPagination.total === 0) {
+    ElMessage.warning('没有找到任何学生试卷');
+    return;
+  }
+  
+  try {
+    await ElMessageBox.confirm(
+      `确定要导出考试中所有 ${paperPagination.total} 份学生试卷吗？将生成PDF格式的ZIP压缩包文件。`,
+      '一键导出确认',
+      {
+        confirmButtonText: '确定导出',
+        cancelButtonText: '取消',
+        type: 'info'
+      }
+    );
+    
+    exportingAllPapers.value = true;
+    
+    ElNotification.info({
+      title: '正在导出',
+      message: `正在导出所有学生试卷为PDF格式，请稍候...`,
+      duration: 5000
+    });
+
+    const response = await examApi.exportAllStudentPapers(examId.value, 'pdf');
+    
+    const blob = new Blob([response], { type: 'application/zip' });
+    const link = document.createElement('a');
+    link.href = window.URL.createObjectURL(blob);
+    
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '_');
+    link.download = `所有试卷_${exam.value?.title || '考试'}_${timestamp}.zip`;
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(link.href);
+
+    ElNotification.success({
+      title: '导出成功',
+      message: `所有学生试卷已成功导出为ZIP文件！`,
+      duration: 4000
+    });
+
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      console.error('导出所有试卷失败:', error);
+      ElMessage.error('导出所有试卷失败，请重试');
+    }
+  } finally {
+    exportingAllPapers.value = false;
+  }
+};
 
 const getCompletionStatusText = (status: string) => {
   const map: { [key: string]: string } = {
@@ -1928,5 +1999,11 @@ onMounted(() => {
 
 .class-selection-wrapper .select-all-controls {
   margin-bottom: 8px;
+}
+
+/* 答案数量样式 */
+.answer-count {
+  font-weight: 600;
+  color: #409eff;
 }
 </style>

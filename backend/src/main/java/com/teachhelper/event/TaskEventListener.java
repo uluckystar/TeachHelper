@@ -43,6 +43,9 @@ public class TaskEventListener implements ApplicationListener<TaskCreatedEvent> 
                 case "BATCH_EVALUATION_QUESTION":
                 case "BATCH_EVALUATION_ALL_QUESTION":
                 case "BATCH_REVALUATION_QUESTION":
+                case "BATCH_EVALUATION_STUDENT":
+                case "SINGLE_EVALUATION":
+                case "SINGLE_REVALUATION":
                     // 批量评估任务 - 传递 TaskService 作为回调
                     future = batchEvaluationExecutor.executeBatchEvaluationTask(
                         taskId, 

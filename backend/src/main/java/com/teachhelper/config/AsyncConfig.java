@@ -22,9 +22,9 @@ public class AsyncConfig {
     @Bean(name = "securityContextTaskExecutor")
     public Executor securityContextTaskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(5);
-        executor.setMaxPoolSize(10);
-        executor.setQueueCapacity(25);
+        executor.setCorePoolSize(200);
+        executor.setMaxPoolSize(500);
+        executor.setQueueCapacity(1000);
         executor.setThreadNamePrefix("SecurityContextAsync-");
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(60);

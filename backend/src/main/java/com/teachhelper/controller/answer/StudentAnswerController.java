@@ -239,18 +239,35 @@ public class StudentAnswerController {
     }
     
     @PutMapping("/{id}")
-    @Operation(summary = "更新答案", description = "更新学生答案信息")
+    @Operation(summary = "更新答案", description = "部分更新学生答案信息（答案内容/分数/反馈）")
     @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
     public ResponseEntity<StudentAnswerResponse> updateAnswer(
             @PathVariable Long id,
-            @Valid @RequestBody StudentAnswerSubmitRequest request) {
-        
-        StudentAnswer answerDetails = new StudentAnswer();
-        answerDetails.setAnswerText(request.getAnswerText());
-        
-        StudentAnswer updatedAnswer = studentAnswerService.updateAnswer(id, answerDetails);
-        StudentAnswerResponse response = convertToResponse(updatedAnswer);
-        return ResponseEntity.ok(response);
+            @RequestBody com.teachhelper.dto.request.StudentAnswerUpdateRequest request) {
+        // 先获取现有答案
+        StudentAnswer existing = studentAnswerService.getAnswerById(id);
+
+        // 仅在字段非空时才更新，避免覆盖原值
+        if (request.getAnswerText() != null) {
+            existing.setAnswerText(request.getAnswerText());
+        }
+        if (request.getScore() != null) {
+            existing.setScore(java.math.BigDecimal.valueOf(request.getScore()));
+        }
+        if (request.getFeedback() != null) {
+            existing.setFeedback(request.getFeedback());
+        }
+        if (request.getEvaluated() != null) {
+            existing.setEvaluated(request.getEvaluated());
+        }
+
+        // 如果设置了分数或反馈则默认标记为已批阅
+        if ((request.getScore() != null || request.getFeedback() != null) && !existing.isEvaluated()) {
+            existing.setEvaluated(true);
+        }
+
+        StudentAnswer saved = studentAnswerService.save(existing);
+        return ResponseEntity.ok(convertToResponse(saved));
     }
     
     @DeleteMapping("/{id}")

@@ -126,6 +126,12 @@ export const examApi = {
     return response.data
   },
 
+  // 一键导出所有试卷
+  exportAllStudentPapers: async (examId: number, format: string = 'pdf'): Promise<BlobPart> => {
+    const response = await api.get<BlobPart>(`/exams/${examId}/papers/export-all?format=${format}`, { responseType: 'blob' })
+    return response.data
+  },
+
   async getExamQuestionsWithStats(examId: number) {
     const response = await api.get(`/exams/${examId}/questions-with-stats`);
     return response.data;

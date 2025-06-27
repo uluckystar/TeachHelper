@@ -746,6 +746,43 @@ public class ExamController {
             return ResponseEntity.internalServerError().build();
         }
     }
+
+    // 一键导出所有学生试卷
+    @GetMapping("/{examId}/papers/export-all")
+    @Operation(summary = "一键导出所有试卷", description = "将考试中所有学生的试卷打包导出为ZIP文件")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<ByteArrayResource> exportAllStudentPapers(
+            @PathVariable Long examId,
+            @RequestParam(defaultValue = "pdf") String format) {
+        try {
+            log.info("开始导出考试 {} 的所有学生试卷，格式: {}", examId, format);
+            
+            // 获取考试信息
+            Exam exam = examService.getExamById(examId);
+            if (exam == null) {
+                return ResponseEntity.notFound().build();
+            }
+            
+            // 导出所有试卷
+            ByteArrayResource zipResource = studentAnswerService.exportAllStudentPapersAsZip(examId, format);
+            
+            String examTitle = exam.getTitle().replaceAll("[\\\\/:*?\"<>|]", "_");
+            String filename = String.format("所有试卷_%s_%s.zip", examTitle, 
+                java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")));
+            
+            log.info("成功导出考试 {} 的所有学生试卷，文件名: {}", examId, filename);
+            
+            return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/zip"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, 
+                    "attachment; filename=\"" + java.net.URLEncoder.encode(filename, "UTF-8") + "\"")
+                .body(zipResource);
+                
+        } catch (Exception e) {
+            log.error("导出所有学生试卷失败: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
     
     private ExamResponse convertToResponse(Exam exam) {
         ExamResponse response = new ExamResponse();

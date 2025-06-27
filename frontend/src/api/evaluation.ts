@@ -3,7 +3,8 @@ import type {
   StudentAnswerResponse,
   ManualEvaluationRequest,
   BatchEvaluationResult,
-  EvaluationStatistics
+  EvaluationStatistics,
+  TaskStatistics
 } from '@/types/api'
 
 export const evaluationApi = {
@@ -162,8 +163,8 @@ export const evaluationApi = {
   },
 
   // 获取任务统计信息
-  async getTaskStats(): Promise<EvaluationStatistics> {
-    const response = await api.get('/evaluations/tasks/stats')
+  async getTaskStats(): Promise<TaskStatistics> {
+    const response = await api.get<TaskStatistics>('/evaluations/tasks/stats')
     return response.data
   },
 
@@ -209,6 +210,12 @@ export const evaluationApi = {
   // 恢复任务
   async resumeTask(taskId: string): Promise<any> {
     const response = await api.post(`/evaluations/tasks/${taskId}/resume`)
+    return response.data
+  },
+
+  // 批量评估特定学生的所有答案
+  async batchEvaluateStudentAnswers(examId: number, studentId: number): Promise<string> {
+    const response = await api.post<string>(`/evaluations/batch/student/${studentId}/exam/${examId}`)
     return response.data
   }
 }

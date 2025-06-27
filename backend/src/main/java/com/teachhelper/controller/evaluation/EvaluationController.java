@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import com.teachhelper.entity.Exam;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -289,6 +290,39 @@ public class EvaluationController {
     }
 
     /**
+     * 批量评估特定学生在特定考试中的所有答案
+     */
+    @PostMapping("/batch/student/{studentId}/exam/{examId}")
+    @Operation(summary = "批量批阅学生答案", description = "批量批阅指定学生在指定考试中的所有答案")
+    public ResponseEntity<String> batchEvaluateStudentAnswers(@PathVariable Long studentId, @PathVariable Long examId) {
+        try {
+            // 检查考试和学生是否存在
+            Exam exam = examService.getExamById(examId);
+            if (exam == null) {
+                return ResponseEntity.badRequest().body("考试不存在: " + examId);
+            }
+            
+            // 构建任务创建请求
+            TaskCreateRequest taskRequest = new TaskCreateRequest();
+            taskRequest.setType("BATCH_EVALUATION_STUDENT");
+            taskRequest.setName("批量评估学生答案");
+            taskRequest.setDescription("批量评估学生ID: " + studentId + " 在考试ID: " + examId + " 中的所有答案");
+            
+            Map<String, Object> config = new HashMap<>();
+            config.put("studentId", studentId);
+            config.put("examId", examId);
+            config.put("evaluateAll", false); // 只评估未评估的答案
+            taskRequest.setConfig(config);
+
+            TaskResponse task = taskService.createTask(taskRequest);
+            
+            return ResponseEntity.accepted().body("Batch student evaluation task created with ID: " + task.getTaskId());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Failed to create batch student evaluation task: " + e.getMessage());
+        }
+    }
+
+    /**
      * 获取批量评估结果
      */
     @GetMapping("/result/{taskId}")
@@ -416,62 +450,31 @@ public class EvaluationController {
      */
     @PostMapping("/answer/{answerId}")
     @Operation(summary = "批阅单个答案", description = "使用AI批阅单个学生答案")
-    public ResponseEntity<StudentAnswerResponse> evaluateAnswer(@PathVariable Long answerId) {
+    public ResponseEntity<Map<String, Object>> evaluateAnswer(@PathVariable Long answerId) {
         try {
-            System.out.println("=== 开始评估答案 ===");
-            System.out.println("答案ID: " + answerId);
+            // 构建任务创建请求
+            TaskCreateRequest taskRequest = new TaskCreateRequest();
+            taskRequest.setType("SINGLE_EVALUATION");
+            taskRequest.setName("评估答案 " + answerId);
+            taskRequest.setDescription("使用AI评估单个答案，ID: " + answerId);
             
-            // 获取答案
-            StudentAnswer answer = studentAnswerService.getAnswerById(answerId);
-            System.out.println("✅ 成功获取答案");
-            System.out.println("  - 学生: " + (answer.getStudent() != null ? answer.getStudent().getName() : "未知"));
-            System.out.println("  - 题目: " + (answer.getQuestion() != null ? answer.getQuestion().getTitle() : "未知"));
-            System.out.println("  - 答案长度: " + answer.getAnswerText().length());
+            Map<String, Object> config = new HashMap<>();
+            config.put("answerId", answerId);
+            taskRequest.setConfig(config);
+
+            TaskResponse task = taskService.createTask(taskRequest);
             
-            // 调用AI评估服务
-            System.out.println("🚀 开始调用AI评估服务...");
-            AIEvaluationService.EvaluationResult result = aiEvaluationService.evaluateAnswer(answer);
-            
-            if (result.isSuccess()) {
-                System.out.println("✅ AI评估成功!");
-                System.out.println("  - 得分: " + result.getScore());
-                System.out.println("  - 反馈长度: " + result.getFeedback().length());
-                
-                // 更新答案评估结果
-                answer.setScore(result.getScore());
-                answer.setFeedback(result.getFeedback());
-                answer.setEvaluated(true);
-                answer.setEvaluatedAt(java.time.LocalDateTime.now());
-                
-                // 设置评估类型为AI评估
-                if (answer.getEvaluationType() == null) {
-                    answer.setEvaluationType(com.teachhelper.entity.EvaluationType.AI_AUTO);
-                }
-                
-                System.out.println("💾 保存评估结果...");
-                // 保存评估结果
-                StudentAnswer evaluatedAnswer = studentAnswerService.updateAnswer(answerId, answer);
-                StudentAnswerResponse response = convertToResponse(evaluatedAnswer);
-                
-                System.out.println("✅ 答案评估完成!");
-                return ResponseEntity.ok(response);
-                
-            } else {
-                System.err.println("❌ AI评估失败: " + result.getFeedback());
-                
-                // AI评估失败，返回错误信息
-                Map<String, String> errorResponse = new HashMap<>();
-                errorResponse.put("error", "AI评估失败");
-                errorResponse.put("message", result.getFeedback());
-                return ResponseEntity.internalServerError().body(null);
-            }
-            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("taskId", task.getTaskId());
+            response.put("message", "单答案评估任务已创建");
+
+            return ResponseEntity.accepted().body(response);
         } catch (Exception e) {
-            System.err.println("❌ 评估答案时发生异常:");
-            System.err.println("  - 异常类型: " + e.getClass().getSimpleName());
-            System.err.println("  - 异常信息: " + e.getMessage());
-            e.printStackTrace();
-            return ResponseEntity.internalServerError().build();
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("message", "创建单答案评估任务失败: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(errorResponse);
         }
     }
 
@@ -513,39 +516,33 @@ public class EvaluationController {
      */
     @PostMapping("/revaluate/{answerId}")
     @Operation(summary = "重新批阅答案", description = "重新批阅已批阅的答案")
-    public ResponseEntity<StudentAnswerResponse> revaluateAnswer(@PathVariable Long answerId) {
+    public ResponseEntity<Map<String, Object>> revaluateAnswer(@PathVariable Long answerId) {
         try {
-            System.out.println("🔄 开始重新评估答案: " + answerId);
+            // 构建任务创建请求
+            TaskCreateRequest taskRequest = new TaskCreateRequest();
+            taskRequest.setType("SINGLE_REVALUATION");
+            taskRequest.setName("重新评估答案 " + answerId);
+            taskRequest.setDescription("使用AI重新评估单个答案，ID: " + answerId);
             
-            // 获取答案信息
-            StudentAnswer answer = studentAnswerService.getAnswerById(answerId);
-            if (answer == null) {
-                System.out.println("❌ 答案不存在: " + answerId);
-                return ResponseEntity.notFound().build();
-            }
+            Map<String, Object> config = new HashMap<>();
+            config.put("answerId", answerId);
+            // 重新评估时，应该强制评估
+            config.put("evaluateAll", true); 
+            taskRequest.setConfig(config);
+
+            TaskResponse task = taskService.createTask(taskRequest);
             
-            System.out.println("📝 答案信息:");
-            System.out.println("  - 答案ID: " + answer.getId());
-            System.out.println("  - 题目ID: " + (answer.getQuestion() != null ? answer.getQuestion().getId() : "null"));
-            System.out.println("  - 学生ID: " + (answer.getStudent() != null ? answer.getStudent().getId() : "null"));
-            System.out.println("  - 当前评估状态: " + answer.isEvaluated());
-            System.out.println("  - 当前分数: " + answer.getScore());
-            
-            // 重置评估状态，强制重新评估
-            answer.setEvaluated(false);
-            answer.setScore(null);
-            answer.setFeedback(null);
-            answer.setEvaluatedAt(null);
-            answer.setEvaluationType(null);
-            
-            System.out.println("🔄 重置评估状态完成，开始重新评估...");
-            
-            // 直接调用评估方法，会覆盖之前的评估结果
-            return evaluateAnswer(answerId);
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("taskId", task.getTaskId());
+            response.put("message", "单答案重新评估任务已创建");
+
+            return ResponseEntity.accepted().body(response);
         } catch (Exception e) {
-            System.err.println("❌ 重新评估失败: " + e.getMessage());
-            e.printStackTrace();
-            return ResponseEntity.internalServerError().build();
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("message", "创建单答案重新评估任务失败: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(errorResponse);
         }
     }
 
