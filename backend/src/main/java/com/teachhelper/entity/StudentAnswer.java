@@ -4,6 +4,8 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.teachhelper.dto.EvaluationDetails;
+import com.teachhelper.entity.converter.EvaluationDetailsConverter;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -14,6 +16,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.persistence.Convert;
 
 @Entity
 @Table(name = "student_answers")
@@ -56,6 +59,24 @@ public class StudentAnswer extends BaseEntity {
     
     @Column(name = "file_path")
     private String filePath; // For file uploads
+    
+    @JsonIgnore
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "exam_id")
+    private Exam exam;
+    
+    @Column(name = "answer_content", columnDefinition = "TEXT")
+    private String answerContent;
+    
+    @Column(name = "submitted_at")
+    private LocalDateTime submittedAt;
+    
+    @Column(name = "evaluation_details", columnDefinition = "JSON")
+    @Convert(converter = EvaluationDetailsConverter.class)
+    private EvaluationDetails evaluationDetails;
+    
+    @Column(name = "weakness_tags", length = 1024)
+    private String weaknessTags;
     
     // Constructors
     public StudentAnswer() {}
@@ -155,5 +176,45 @@ public class StudentAnswer extends BaseEntity {
     
     public void setFilePath(String filePath) {
         this.filePath = filePath;
+    }
+    
+    public Exam getExam() {
+        return exam;
+    }
+    
+    public void setExam(Exam exam) {
+        this.exam = exam;
+    }
+    
+    public String getAnswerContent() {
+        return answerContent;
+    }
+    
+    public void setAnswerContent(String answerContent) {
+        this.answerContent = answerContent;
+    }
+    
+    public LocalDateTime getSubmittedAt() {
+        return submittedAt;
+    }
+    
+    public void setSubmittedAt(LocalDateTime submittedAt) {
+        this.submittedAt = submittedAt;
+    }
+    
+    public EvaluationDetails getEvaluationDetails() {
+        return evaluationDetails;
+    }
+    
+    public void setEvaluationDetails(EvaluationDetails evaluationDetails) {
+        this.evaluationDetails = evaluationDetails;
+    }
+    
+    public String getWeaknessTags() {
+        return weaknessTags;
+    }
+    
+    public void setWeaknessTags(String weaknessTags) {
+        this.weaknessTags = weaknessTags;
     }
 }

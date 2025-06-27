@@ -26,6 +26,7 @@ import jakarta.validation.constraints.Size;
 public class Question extends BaseEntity {
     
     // 关联到题目库（题目的归属）
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "question_bank_id", nullable = true)
     private QuestionBank questionBank;
@@ -33,7 +34,7 @@ public class Question extends BaseEntity {
     // 原有的直接关联到考试（为了保持向后兼容，将被逐步替换为QuestionReference）
     @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "exam_id")
+    @JoinColumn(name = "exam_id", nullable = true)
     private Exam exam;
     
     @NotBlank

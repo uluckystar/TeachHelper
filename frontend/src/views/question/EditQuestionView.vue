@@ -40,6 +40,8 @@
             <el-radio label="ESSAY">论述题</el-radio>
             <el-radio label="CODING">编程题</el-radio>
             <el-radio label="CASE_ANALYSIS">案例分析</el-radio>
+            <el-radio label="CALCULATION">计算题</el-radio>
+            <el-radio label="FILL_BLANK">填空题</el-radio>
           </el-radio-group>
         </el-form-item>
 
@@ -145,16 +147,26 @@
         <!-- 主观题参考答案 -->
         <el-card v-if="isSubjectiveQuestion" class="form-card">
           <template #header>
-            <span>参考答案</span>
+            <div class="d-flex align-center justify-between">
+              <span>参考答案</span>
+              <el-button
+                type="primary"
+                size="small"
+                :loading="generatingAnswer"
+                @click="generateReferenceAnswer"
+              >
+                AI生成参考答案
+              </el-button>
+            </div>
           </template>
           
           <el-form-item label="参考答案" prop="referenceAnswer">
             <el-input 
               v-model="form.referenceAnswer" 
               type="textarea" 
-              :rows="4"
-              placeholder="请输入参考答案（可选）"
-              maxlength="1000"
+              :rows="8"
+              placeholder="可由AI生成或手动输入参考答案"
+              maxlength="4000"
               show-word-limit
             />
           </el-form-item>
@@ -181,13 +193,13 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { questionApi } from '@/api/question'
 import { examApi } from '@/api/exam'
 import AIQuestionAssistant from '@/components/ai/AIQuestionAssistant.vue'
-import type { QuestionCreateRequest, QuestionResponse } from '@/types/api'
+import type { QuestionCreateRequest, QuestionResponse, QuestionType } from '@/types/api'
 
 // 扩展表单接口以包含所有需要的属性
 interface EditQuestionForm {
   title: string
   content: string
-  questionType: 'ESSAY' | 'SHORT_ANSWER' | 'SINGLE_CHOICE' | 'MULTIPLE_CHOICE' | 'TRUE_FALSE' | 'CODING' | 'CASE_ANALYSIS'
+  questionType: QuestionType
   maxScore: number
   examId: number
   options: { content: string; isCorrect: boolean }[]
@@ -200,6 +212,7 @@ const route = useRoute()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const submitting = ref(false)
+const generatingAnswer = ref(false)
 const examTitle = ref('')
 
 const questionId = computed(() => {
@@ -475,11 +488,33 @@ const handleQuestionFilled = (questionData: any) => {
     }))
   }
   
+  form.value.examId = questionData.examId
+  
+  if (questionData.questionType === 'SINGLE_CHOICE') {
+    const correctIndex = questionData.options.findIndex((opt: { isCorrect: boolean; }) => opt.isCorrect)
+    correctOptionIndex.value = correctIndex >= 0 ? correctIndex : 0
+  }
+  
   ElMessage.success('AI智能填充完成，请检查并完善内容')
 }
 
 const handleRubricUpdated = () => {
   ElMessage.success('评分标准已更新')
+}
+
+const generateReferenceAnswer = async () => {
+  if (!questionId.value) return
+  generatingAnswer.value = true
+  try {
+    const res = await questionApi.generateReferenceAnswer(questionId.value)
+    form.value.referenceAnswer = res.referenceAnswer
+    ElMessage.success('AI参考答案已生成')
+  } catch (error) {
+    console.error('AI生成参考答案失败:', error)
+    ElMessage.error('AI生成参考答案失败，请稍后重试。')
+  } finally {
+    generatingAnswer.value = false
+  }
 }
 
 onMounted(() => {

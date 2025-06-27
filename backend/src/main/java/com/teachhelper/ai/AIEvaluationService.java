@@ -4,13 +4,24 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.teachhelper.dto.RubricSuggestion;
 import com.teachhelper.dto.response.RubricSuggestionResponse;
+import com.teachhelper.entity.Question;
 import com.teachhelper.entity.QuestionType;
+import com.teachhelper.entity.RubricCriterion;
+import com.teachhelper.entity.SystemRubric;
+import com.teachhelper.entity.SystemRubricCriterion;
+import com.teachhelper.entity.ScoreLevel;
 import com.teachhelper.entity.UserAIConfig;
+import com.teachhelper.enums.PromptName;
+import com.teachhelper.exception.EvaluationException;
+import com.teachhelper.service.PromptService;
+import com.teachhelper.service.RubricService;
 import com.teachhelper.service.UserAIConfigService;
 import com.teachhelper.service.ai.AIClient;
 import com.teachhelper.service.ai.AIClientFactory;
 import com.teachhelper.service.ai.AIResponse;
 import com.teachhelper.service.auth.AuthService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContext;
@@ -18,11 +29,13 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * AI评估服务 - 使用LLM大模型生成评分标准
@@ -30,6 +43,8 @@ import java.util.Set;
  */
 @Service
 public class AIEvaluationService {
+    
+    private static final Logger log = LoggerFactory.getLogger(AIEvaluationService.class);
     
     @Autowired
     private UserAIConfigService userAIConfigService;
@@ -39,6 +54,12 @@ public class AIEvaluationService {
     
     @Autowired
     private AuthService authService;
+    
+    @Autowired
+    private PromptService promptService;
+    
+    @Autowired
+    private RubricService rubricService;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -138,9 +159,43 @@ public class AIEvaluationService {
     }
     
     /**
-     * 构建AI评分标准生成提示词
+     * 构建AI评分标准生成提示词 - 使用新的提示词系统（增强版，考虑参考答案上下文）
      */
     private String buildRubricGenerationPrompt(com.teachhelper.entity.Question question, String customPrompt) {
+        try {
+            // 检查是否有参考答案作为上下文
+            String referenceAnswer = question.getReferenceAnswer();
+            
+            // 使用新的提示词服务构建提示词
+            String prompt = promptService.buildPromptForRubricGeneration(question);
+            
+            // 如果有参考答案，加入上下文
+            if (referenceAnswer != null && !referenceAnswer.trim().isEmpty()) {
+                StringBuilder enhancedPrompt = new StringBuilder(prompt);
+                enhancedPrompt.append("\n\n=== 参考答案（请参考制定评分标准） ===\n");
+                enhancedPrompt.append(referenceAnswer);
+                enhancedPrompt.append("\n\n**请根据上述参考答案的内容结构和知识点分布，制定相应的评分标准。");
+                enhancedPrompt.append("确保评分标准能够有效评估学生答案与参考答案的符合程度。**\n");
+                prompt = enhancedPrompt.toString();
+                log.info("已将参考答案加入评分标准生成的上下文");
+            }
+            
+            // 如果有自定义提示词，添加到最后
+            if (customPrompt != null && !customPrompt.trim().isEmpty()) {
+                prompt += "\n\n特殊要求：" + customPrompt;
+            }
+            
+            return prompt;
+        } catch (Exception e) {
+            log.warn("使用新提示词系统失败，回退到传统方式: {}", e.getMessage());
+            return buildLegacyRubricGenerationPrompt(question, customPrompt);
+        }
+    }
+    
+    /**
+     * 传统的评分标准生成提示词（备用方案）
+     */
+    private String buildLegacyRubricGenerationPrompt(com.teachhelper.entity.Question question, String customPrompt) {
         StringBuilder prompt = new StringBuilder();
         
         prompt.append("你是一位专业的教育评估专家，请为以下题目生成详细、针对性的评分标准。\n\n");
@@ -170,7 +225,9 @@ public class AIEvaluationService {
         }
         
         if (question.getReferenceAnswer() != null && !question.getReferenceAnswer().trim().isEmpty()) {
-            prompt.append("参考答案：").append(question.getReferenceAnswer()).append("\n");
+            prompt.append("\n=== 参考答案（请参考制定评分标准） ===\n");
+            prompt.append(question.getReferenceAnswer()).append("\n");
+            prompt.append("**请根据上述参考答案的内容结构和知识点分布，制定相应的评分标准。**\n");
         }
         
         prompt.append("总分：").append(question.getMaxScore()).append("分\n");
@@ -685,6 +742,200 @@ public class AIEvaluationService {
     }
     
     /**
+     * 使用指定评分风格评估学生答案
+     */
+    public EvaluationResult evaluateAnswerWithStyle(com.teachhelper.entity.StudentAnswer studentAnswer, 
+                                                   PromptName evaluationStyle, 
+                                                   List<RubricCriterion> rubricCriteria) {
+        log.info("开始AI评估 - 风格: {}, 学生: {}, 题目: {}", 
+                evaluationStyle, studentAnswer.getStudent().getId(), studentAnswer.getQuestion().getId());
+        
+        try {
+            // 获取用户的AI配置
+            Long userId = authService.getCurrentUser().getId();
+            Optional<UserAIConfig> configOpt = userAIConfigService.getUserDefaultAIConfig(userId);
+            
+            if (!configOpt.isPresent()) {
+                log.warn("用户 {} 没有AI配置，使用基础评估", userId);
+                return createBasicEvaluation(studentAnswer);
+            }
+            
+            UserAIConfig aiConfig = configOpt.get();
+            AIClient aiClient = aiClientFactory.getClient(aiConfig.getProvider());
+            
+            // 使用新的提示词系统构建评估提示词
+            String prompt = promptService.buildPromptForQuestionEvaluation(
+                evaluationStyle, 
+                studentAnswer.getQuestion(), 
+                studentAnswer.getAnswerText(), 
+                rubricCriteria
+            );
+            
+            log.debug("构建的评估提示词长度: {}", prompt.length());
+            
+            // 调用AI进行评估
+            AIResponse aiResponse = aiClient.chat(prompt, aiConfig);
+            
+            if (aiResponse.isSuccess()) {
+                log.info("AI评估成功 - 输入Token: {}, 输出Token: {}", 
+                        aiResponse.getInputTokens(), aiResponse.getOutputTokens());
+                
+                // 解析AI响应
+                EvaluationResult result = parseAIEvaluationResponse(
+                    aiResponse.getContent(), 
+                    studentAnswer.getQuestion().getMaxScore(),
+                    rubricCriteria
+                );
+                
+                return result != null ? result : createBasicEvaluation(studentAnswer);
+            } else {
+                log.error("AI评估失败: {}", aiResponse.getErrorMessage());
+                return createBasicEvaluation(studentAnswer);
+            }
+            
+        } catch (Exception e) {
+            log.error("AI评估出现异常", e);
+            return createBasicEvaluation(studentAnswer);
+        }
+    }
+    
+    /**
+     * 解析AI评估响应
+     */
+    private EvaluationResult parseAIEvaluationResponse(String aiResponse, BigDecimal maxScore, List<RubricCriterion> rubricCriteria) {
+        try {
+            // 从AI响应中提取最终得分
+            BigDecimal finalScore = extractFinalScore(aiResponse, maxScore);
+            
+            // 提取评价反馈
+            String feedback = extractFeedback(aiResponse);
+            
+            // 解析分项评分
+            List<CriterionEvaluation> criteriaEvaluations = extractCriteriaEvaluations(aiResponse, rubricCriteria);
+            
+            // 创建评估结果
+            EvaluationResult result = new EvaluationResult(true, finalScore, feedback, criteriaEvaluations);
+            
+            System.out.println("✅ AI评估结果解析完成:");
+            System.out.println("  - 最终得分: " + result.getScore());
+            System.out.println("  - 反馈总长度: " + result.getFeedback().length());
+            System.out.println("  - 评分标准详情数: " + result.getCriteriaEvaluations().size());
+            
+            return result;
+            
+        } catch (Exception e) {
+            log.error("解析AI评估响应失败", e);
+            return null;
+        }
+    }
+    
+    /**
+     * 从AI响应中提取最终得分
+     */
+    private BigDecimal extractFinalScore(String aiResponse, BigDecimal maxScore) {
+        // 查找"总分：XX分"的模式
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("总分：\\s*(\\d+(?:\\.\\d+)?)\\s*分");
+        java.util.regex.Matcher matcher = pattern.matcher(aiResponse);
+        
+        if (matcher.find()) {
+            try {
+                BigDecimal score = new BigDecimal(matcher.group(1));
+                // 确保分数不超过满分
+                return score.min(maxScore);
+            } catch (NumberFormatException e) {
+                log.warn("解析最终得分失败: {}", matcher.group(1));
+            }
+        }
+        
+        // 如果无法提取，返回基于答案长度的估算分数
+        return maxScore.multiply(new BigDecimal("0.6"));
+    }
+    
+    /**
+     * 从AI响应中提取评价反馈
+     */
+    private String extractFeedback(String aiResponse) {
+        // 查找"评价反馈"部分
+        int feedbackStart = aiResponse.indexOf("==== 评价反馈 ====");
+        if (feedbackStart != -1) {
+            int nextSection = aiResponse.indexOf("====", feedbackStart + 20);
+            if (nextSection != -1) {
+                return aiResponse.substring(feedbackStart + 18, nextSection).trim();
+            } else {
+                return aiResponse.substring(feedbackStart + 18).trim();
+            }
+        }
+        
+        return "AI已完成评估，请查看详细分析。";
+    }
+    
+    /**
+     * 从AI响应中提取分项评分
+     */
+    private List<CriterionEvaluation> extractCriteriaEvaluations(String aiResponse, List<RubricCriterion> rubricCriteria) {
+        List<CriterionEvaluation> evaluations = new ArrayList<>();
+        
+        if (rubricCriteria == null || rubricCriteria.isEmpty()) {
+            return evaluations;
+        }
+        
+        try {
+            // 查找"分项评分"部分
+            int sectionStart = aiResponse.indexOf("==== 分项评分 ====");
+            if (sectionStart != -1) {
+                int sectionEnd = aiResponse.indexOf("==== 最终评分 ====");
+                if (sectionEnd == -1) sectionEnd = aiResponse.length();
+                
+                String sectionContent = aiResponse.substring(sectionStart, sectionEnd);
+                
+                // 为每个评分标准提取得分
+                for (RubricCriterion criterion : rubricCriteria) {
+                    BigDecimal earnedPoints = extractCriterionScore(sectionContent, criterion);
+                    CriterionEvaluation evaluation = new CriterionEvaluation(
+                        criterion.getCriterionText(),
+                        earnedPoints,
+                        criterion.getPoints(),
+                        "AI评估结果"
+                    );
+                    evaluations.add(evaluation);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("提取分项评分失败", e);
+        }
+        
+        return evaluations;
+    }
+    
+    /**
+     * 提取单个标准的得分
+     */
+    private BigDecimal extractCriterionScore(String sectionContent, RubricCriterion criterion) {
+        // 查找该标准的得分模式
+        String criterionName = criterion.getCriterionText();
+        if (criterionName.length() > 10) {
+            criterionName = criterionName.substring(0, 10); // 只使用前10个字符匹配
+        }
+        
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+            criterionName + ".*?本项得分：\\s*(\\d+(?:\\.\\d+)?)\\s*分"
+        );
+        java.util.regex.Matcher matcher = pattern.matcher(sectionContent);
+        
+        if (matcher.find()) {
+            try {
+                BigDecimal score = new BigDecimal(matcher.group(1));
+                return score.min(criterion.getPoints()); // 不超过该标准的满分
+            } catch (NumberFormatException e) {
+                log.warn("解析标准 {} 得分失败: {}", criterionName, matcher.group(1));
+            }
+        }
+        
+        // 如果无法提取，按比例分配
+        return criterion.getPoints().multiply(new BigDecimal("0.7"));
+    }
+
+    /**
      * 构建AI答案评估提示词
      */
     private String buildEvaluationPrompt(com.teachhelper.entity.StudentAnswer studentAnswer) {
@@ -718,12 +969,13 @@ public class AIEvaluationService {
             System.out.println("⚠️  无法加载题目选项（LazyInitializationException），跳过选项显示");
         }
         
-        // 参考答案
-        if (question.getReferenceAnswer() != null && !question.getReferenceAnswer().trim().isEmpty()) {
-            prompt.append("参考答案：").append(question.getReferenceAnswer()).append("\n");
-        }
-        
         prompt.append("题目满分：").append(question.getMaxScore()).append("分\n");
+        
+        // 优化1: 上下文带上参考答案
+        if (question.getReferenceAnswer() != null && !question.getReferenceAnswer().trim().isEmpty()) {
+            prompt.append("\n=== 参考答案 ===\n");
+            prompt.append(question.getReferenceAnswer()).append("\n");
+        }
         
         // 评分标准
         if (question.getRubricCriteria() != null && !question.getRubricCriteria().isEmpty()) {
@@ -791,25 +1043,27 @@ public class AIEvaluationService {
                 prompt.append("2. 理解深度和表达清晰度\n");
                 break;
         }
+        prompt.append("5. 最后，请根据学生的回答，提炼出1-3个最需要加强的薄弱知识点，并以'#知识点'的格式放在`weakness_tags`数组中。\n");
         
         // 输出格式要求
         prompt.append("\n=== 输出格式 ===\n");
         prompt.append("请严格按照以下JSON格式返回评估结果：\n");
         prompt.append("{\n");
         prompt.append("  \"score\": 分数(数字，保留1位小数),\n");
-        prompt.append("  \"feedback\": \"详细的评分反馈\",\n");
-        prompt.append("  \"strengths\": \"答案的优点\",\n");
-        prompt.append("  \"improvements\": \"改进建议\",\n");
+        prompt.append("  \"feedback\": \"总体评价。必须包含一个名为'【得分点分析】'的独立部分，在该部分中，请明确列出学生此题回答中获得分数的所有具体要点，并与参考答案进行对比说明。每个得分点的得分情况请使用 '-> [得分: X分]' 的格式清晰标出。此外，请注意，您的所有输出都将直接嵌入Word文档，因此请不要使用任何Markdown语法\",\n");
+        prompt.append("  \"strengths\": \"[请在此处列出答案的优点，不要包含'答案优点：'或类似的标题]\",\n");
+        prompt.append("  \"improvements\": \"[请在此处列出具体的改进建议，不要包含'改进建议：'或类似的标题]\",\n");
         if (question.getRubricCriteria() != null && !question.getRubricCriteria().isEmpty()) {
             prompt.append("  \"criteriaEvaluations\": [\n");
             prompt.append("    {\n");
             prompt.append("      \"criterionText\": \"评分标准名称\",\n");
             prompt.append("      \"earnedPoints\": 获得分数(数字),\n");
             prompt.append("      \"maxPoints\": 满分(数字),\n");
-            prompt.append("      \"comment\": \"针对该标准的评价\"\n");
+            prompt.append("      \"comment\": \"请严格遵循'引用-分析-结论'三步法：1.【引用回答】请仔细检查学生答案的**全文**，找到并原文引用与本评分标准最相关的内容。学生的回答可能是分点或分条列出的（例如，以'1.'、'2.'、'首先'等开头），请务必注意这些格式。如果确实找不到任何相关内容，则明确写出'未找到相关作答内容'。2.【对比分析】将引用内容与参考答案或评分要点进行对比分析。3.【评价结论】基于分析给出该项的评价和得分理由。\"\n");
             prompt.append("    }\n");
-            prompt.append("  ]\n");
+            prompt.append("  ],\n");
         }
+        prompt.append("  \"weakness_tags\": [\"#知识点标签1\", \"#知识点标签2\"]\n");
         prompt.append("}\n\n");
         
         prompt.append("注意事项：\n");
@@ -817,7 +1071,7 @@ public class AIEvaluationService {
         prompt.append("- 分数要合理，避免过于严格或过于宽松\n");
         prompt.append("- 反馈要具体、建设性，帮助学生改进\n");
         prompt.append("- 评分要客观公正，基于答案质量而非主观偏好\n");
-        prompt.append("- 如果有评分标准，每个标准的得分总和应该等于或接近总分\n");
+        prompt.append("- 如果有评分标准，每个标准的得分总和应该等于总分\n");
         
         return prompt.toString();
     }
@@ -892,6 +1146,14 @@ public class AIEvaluationService {
                 }
             }
             
+            // 解析知识点标签
+            List<String> weaknessTags = new ArrayList<>();
+            if (rootNode.has("weakness_tags") && rootNode.get("weakness_tags").isArray()) {
+                for (JsonNode tagNode : rootNode.get("weakness_tags")) {
+                    weaknessTags.add(tagNode.asText());
+                }
+            }
+
             // 构建完整反馈
             StringBuilder fullFeedback = new StringBuilder();
             if (!feedback.trim().isEmpty()) {
@@ -905,6 +1167,7 @@ public class AIEvaluationService {
             }
             
             EvaluationResult result = new EvaluationResult(true, score, fullFeedback.toString(), criteriaEvaluations);
+            result.setWeaknessTags(weaknessTags);
             
             System.out.println("✅ AI评估结果解析完成:");
             System.out.println("  - 最终得分: " + result.getScore());
@@ -1202,18 +1465,25 @@ public class AIEvaluationService {
         private final BigDecimal score;
         private final String feedback;
         private final List<CriterionEvaluation> criteriaEvaluations;
+        private Long rubricId; // 非final字段，可以后续设置
+        private List<String> weaknessTags = new ArrayList<>(); // 新增字段
         
         public EvaluationResult(boolean success, BigDecimal score, String feedback, List<CriterionEvaluation> criteriaEvaluations) {
             this.success = success;
             this.score = score;
             this.feedback = feedback;
-            this.criteriaEvaluations = criteriaEvaluations != null ? criteriaEvaluations : new ArrayList<>();
+            this.criteriaEvaluations = criteriaEvaluations;
         }
         
         public boolean isSuccess() { return success; }
         public BigDecimal getScore() { return score; }
         public String getFeedback() { return feedback; }
         public List<CriterionEvaluation> getCriteriaEvaluations() { return criteriaEvaluations; }
+        
+        public Long getRubricId() { return rubricId; }
+        public void setRubricId(Long rubricId) { this.rubricId = rubricId; }
+        public List<String> getWeaknessTags() { return weaknessTags; }
+        public void setWeaknessTags(List<String> weaknessTags) { this.weaknessTags = weaknessTags; }
     }
     
     /**
@@ -1236,5 +1506,398 @@ public class AIEvaluationService {
         public BigDecimal getEarnedPoints() { return earnedPoints; }
         public BigDecimal getMaxPoints() { return maxPoints; }
         public String getComment() { return comment; }
+    }
+
+    /**
+     * 生成参考答案（增强版，考虑评分标准上下文）
+     */
+    public String generateReferenceAnswer(Question question) {
+        try {
+            Long userId = authService.getCurrentUser().getId();
+            Optional<UserAIConfig> configOpt = userAIConfigService.getUserDefaultAIConfig(userId);
+
+            if (configOpt.isEmpty()) {
+                log.error("用户 {} 没有默认的AI配置，无法生成参考答案。", userId);
+                throw new EvaluationException("User has no default AI config for reference answer generation.");
+            }
+            UserAIConfig aiConfig = configOpt.get();
+            
+            AIClient aiClient = aiClientFactory.getClient(aiConfig.getProvider());
+            
+            // 检查是否有现有的评分标准，作为上下文
+            List<RubricCriterion> existingCriteria = null;
+            try {
+                existingCriteria = rubricService.getRubricCriteriaByQuestion(question);
+                if (existingCriteria != null && !existingCriteria.isEmpty()) {
+                    log.info("找到现有评分标准（{}个标准），将作为生成参考答案的上下文", existingCriteria.size());
+                }
+            } catch (Exception e) {
+                log.info("没有找到现有评分标准，将生成通用参考答案");
+            }
+            
+            // 构建参考答案生成提示词（包含评分标准上下文）
+            String prompt = buildReferenceAnswerPromptWithContext(question, existingCriteria);
+            
+            log.info("向AI发送生成参考答案的请求...");
+            AIResponse aiResponse = aiClient.chat(prompt, aiConfig);
+            
+            if (aiResponse.isSuccess()) {
+                log.info("AI返回参考答案成功。");
+                return aiResponse.getContent();
+            } else {
+                log.error("AI参考答案生成失败: {}", aiResponse.getErrorMessage());
+                throw new EvaluationException("AI服务生成参考答案失败: " + aiResponse.getErrorMessage());
+            }
+            
+        } catch (Exception e) {
+            log.error("调用AI服务生成参考答案时出错: {}", e.getMessage(), e);
+            // 重新包装异常，以便上层可以捕获更具体的错误类型
+            if (e instanceof EvaluationException) {
+                throw e;
+            }
+            throw new EvaluationException("调用AI服务生成参考答案时发生意外错误", e);
+        }
+    }
+
+    /**
+     * 构建生成参考答案的AI提示（带评分标准上下文）
+     */
+    private String buildReferenceAnswerPromptWithContext(Question question, List<RubricCriterion> existingCriteria) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("你是一位资深的学科专家和出题人，请为以下题目提供一份详尽、准确、权威的参考答案。\n\n");
+        
+        prompt.append("=== 题目信息 ===\n");
+        prompt.append("题目类型: ").append(getQuestionTypeDescription(question.getQuestionType())).append("\n");
+        prompt.append("题干: ").append(question.getContent()).append("\n");
+        if (question.getOptions() != null && !question.getOptions().isEmpty()) {
+            prompt.append("选项:\n");
+            char optionChar = 'A';
+            for (var option : question.getOptions()) {
+                prompt.append(optionChar++).append(". ").append(option.getContent()).append("\n");
+            }
+        }
+        prompt.append("分值: ").append(question.getMaxScore()).append("分\n");
+        
+        // 如果有评分标准，加入上下文
+        if (existingCriteria != null && !existingCriteria.isEmpty()) {
+            prompt.append("\n=== 现有评分标准（请参考生成答案） ===\n");
+            BigDecimal totalPoints = existingCriteria.stream()
+                .map(RubricCriterion::getPoints)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+            
+            for (RubricCriterion criterion : existingCriteria) {
+                prompt.append("• ").append(criterion.getCriterionText())
+                     .append("（").append(criterion.getPoints()).append("分）\n");
+                // RubricCriterion实体没有description字段，使用criterionText作为描述
+                prompt.append("  评分要点：").append(criterion.getCriterionText()).append("\n");
+            }
+            prompt.append("评分标准总分: ").append(totalPoints).append("分\n");
+            prompt.append("\n**请根据上述评分标准，确保参考答案能充分覆盖各个评分点，并明确标注各部分对应的得分要点。**\n");
+        }
+        
+        prompt.append("\n=== 答案要求 ===\n");
+        prompt.append("1.  **准确性**: 答案必须科学、严谨，无事实性错误。\n");
+        prompt.append("2.  **全面性**: 覆盖题目考查的所有知识点和能力点。对于主观题，应提供多个角度或层面的分析。\n");
+        prompt.append("3.  **条理性**: 结构清晰，逻辑严密。适当使用点列、分段等形式，便于理解和评分。\n");
+        prompt.append("4.  **专业性**: 使用规范的学科术语和表达方式。\n");
+        prompt.append("5.  **针对性**: 答案应直接回应题目问题，避免无关信息。\n");
+        
+        // 如果有评分标准，添加特殊要求
+        if (existingCriteria != null && !existingCriteria.isEmpty()) {
+            prompt.append("6.  **得分点标注**: 在答案中清楚标注各部分对应的评分维度和建议得分，格式如：[知识理解 8分] [分析深度 6分]等。\n");
+            prompt.append("7.  **分值对应**: 确保答案内容的深度和广度与题目总分值（").append(question.getMaxScore()).append("分）相匹配。\n");
+        }
+        
+        prompt.append("8.  **输出**: 直接输出参考答案内容，不要包含任何多余的前缀，例如'参考答案：'或'回答：'。\n\n");
+        
+        prompt.append("=== 请开始生成参考答案 ===\n");
+        
+        return prompt.toString();
+    }
+    
+    /**
+     * 构建生成参考答案的AI提示（保留原方法作为备用）
+     */
+    private String buildReferenceAnswerPrompt(Question question) {
+        return buildReferenceAnswerPromptWithContext(question, null);
+    }
+    
+    /**
+     * 评估风格枚举
+     */
+    public enum EvaluationStyle {
+        NORMAL("普通"),
+        STRICT("严格"),
+        LENIENT("宽松");
+        
+        private final String description;
+        
+        EvaluationStyle(String description) {
+            this.description = description;
+        }
+        
+        public String getDescription() {
+            return description;
+        }
+    }
+    
+    /**
+     * 使用指定风格评估学生答案
+     */
+    public EvaluationResult evaluateAnswerWithStyle(String questionContent, String studentAnswer, 
+                                                   BigDecimal questionPoints, EvaluationStyle style) {
+        try {
+            log.info("开始AI评估（{}风格）: 题目分值={}", style.name(), questionPoints);
+            
+            // 获取评估提示词
+            String promptName = getPromptNameByStyle(style);
+            String evaluationPrompt = promptService.buildEvaluationPrompt(
+                promptName, questionContent, studentAnswer, questionPoints);
+            
+            if (evaluationPrompt == null) {
+                log.error("无法构建评估提示词");
+                return createErrorResult("无法构建评估提示词");
+            }
+            
+            // 调用AI进行评估
+            String aiResponse = callAIForEvaluation(evaluationPrompt);
+            
+            // 解析AI返回结果
+            return parseAIEvaluationResponse(aiResponse, questionPoints);
+            
+        } catch (Exception e) {
+            log.error("AI评估失败", e);
+            return createErrorResult("AI评估过程中发生错误: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 使用比例评分标准评估学生答案
+     */
+    public EvaluationResult evaluateAnswerWithProportionalRubric(String questionContent, String studentAnswer, 
+                                                                BigDecimal questionPoints, EvaluationStyle style, 
+                                                                String rubricTitle) {
+        try {
+            log.info("开始基于比例评分标准的AI评估（{}风格）: 题目分值={}", style.name(), questionPoints);
+            
+            // 创建或获取比例评分标准
+            SystemRubric rubric = rubricService.createProportionalRubricForQuestion(
+                questionContent, questionPoints, rubricTitle);
+            
+            // 获取评估提示词（包含评分标准信息）
+            String promptName = getPromptNameByStyle(style);
+            String evaluationPrompt = promptService.buildEvaluationPromptWithRubric(
+                promptName, questionContent, studentAnswer, questionPoints, rubric);
+            
+            if (evaluationPrompt == null) {
+                log.error("无法构建包含评分标准的评估提示词");
+                return createErrorResult("无法构建评估提示词");
+            }
+            
+            // 调用AI进行评估
+            String aiResponse = callAIForEvaluation(evaluationPrompt);
+            
+            // 解析AI返回结果（包含分项评分）
+            EvaluationResult result = parseAIEvaluationResponseWithRubric(aiResponse, questionPoints, rubric);
+            
+            // 设置使用的评分标准ID
+            result.setRubricId(rubric.getId());
+            
+            return result;
+            
+        } catch (Exception e) {
+            log.error("基于比例评分标准的AI评估失败", e);
+            return createErrorResult("AI评估过程中发生错误: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 根据评估风格获取对应的提示词名称
+     */
+    private String getPromptNameByStyle(EvaluationStyle style) {
+        switch (style) {
+            case NORMAL:
+                return "EVALUATE_ANSWER_NORMAL";
+            case STRICT:
+                return "EVALUATE_ANSWER_STRICT";
+            case LENIENT:
+                return "EVALUATE_ANSWER_LENIENT";
+            default:
+                return "EVALUATE_ANSWER_NORMAL";
+        }
+    }
+    
+    /**
+     * 调用AI进行评估
+     */
+    private String callAIForEvaluation(String prompt) {
+        try {
+            // 获取用户的默认AI配置
+            Long userId = authService.getCurrentUser().getId();
+            Optional<UserAIConfig> configOpt = userAIConfigService.getUserDefaultAIConfig(userId);
+            
+            if (!configOpt.isPresent()) {
+                throw new RuntimeException("用户没有配置默认AI模型");
+            }
+            
+            UserAIConfig aiConfig = configOpt.get();
+            AIClient aiClient = aiClientFactory.getClient(aiConfig.getProvider());
+            
+            // 调用AI
+            AIResponse aiResponse = aiClient.chat(prompt, aiConfig);
+            
+            if (aiResponse.isSuccess()) {
+                return aiResponse.getContent();
+            } else {
+                throw new RuntimeException("AI调用失败: " + aiResponse.getErrorMessage());
+            }
+            
+        } catch (Exception e) {
+            log.error("调用AI评估失败", e);
+            throw new RuntimeException("AI评估失败: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * 解析AI评估响应（简单版本）
+     */
+    private EvaluationResult parseAIEvaluationResponse(String aiResponse, BigDecimal maxPoints) {
+        try {
+            // 提取总分
+            BigDecimal score = extractFinalScore(aiResponse, maxPoints);
+            
+            // 提取反馈
+            String feedback = extractFeedback(aiResponse);
+            
+            // 创建评估结果
+            EvaluationResult result = new EvaluationResult(true, score, feedback, null);
+            
+            return result;
+            
+        } catch (Exception e) {
+            log.error("解析AI评估响应失败", e);
+            return createErrorResult("解析AI评估结果失败: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 解析AI评估响应（包含评分标准）
+     */
+    private EvaluationResult parseAIEvaluationResponseWithRubric(String aiResponse, BigDecimal maxPoints, SystemRubric rubric) {
+        try {
+            // 提取总分
+            BigDecimal score = extractFinalScore(aiResponse, maxPoints);
+            
+            // 提取反馈
+            String feedback = extractFeedback(aiResponse);
+            
+            // 提取分项评分（基于评分标准）
+            List<CriterionEvaluation> criteriaEvaluations = extractCriteriaEvaluationsFromRubric(aiResponse, rubric);
+            
+            // 创建评估结果
+            EvaluationResult result = new EvaluationResult(true, score, feedback, criteriaEvaluations);
+            
+            return result;
+            
+        } catch (Exception e) {
+            log.error("解析包含评分标准的AI评估响应失败", e);
+            return createErrorResult("解析AI评估结果失败: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 从评分标准中提取分项评分
+     */
+    private List<CriterionEvaluation> extractCriteriaEvaluationsFromRubric(String aiResponse, SystemRubric rubric) {
+        List<CriterionEvaluation> evaluations = new ArrayList<>();
+        
+        if (rubric.getCriteria() != null) {
+            for (SystemRubricCriterion criterion : rubric.getCriteria()) {
+                try {
+                    // 在AI响应中查找该维度的评分
+                    BigDecimal earnedPoints = extractCriterionScoreFromResponse(aiResponse, criterion.getName());
+                    if (earnedPoints == null) {
+                        // 如果没有找到具体分数，使用默认分配
+                        earnedPoints = BigDecimal.valueOf(criterion.getWeight() * 0.7); // 默认70%
+                    }
+                    
+                    String comment = extractCriterionCommentFromResponse(aiResponse, criterion.getName());
+                    
+                    CriterionEvaluation evaluation = new CriterionEvaluation(
+                        criterion.getName(),
+                        earnedPoints,
+                        BigDecimal.valueOf(criterion.getWeight()),
+                        comment != null ? comment : "评价详见总体反馈"
+                    );
+                    
+                    evaluations.add(evaluation);
+                    
+                } catch (Exception e) {
+                    log.warn("提取维度 {} 的评分失败", criterion.getName(), e);
+                }
+            }
+        }
+        
+        return evaluations;
+    }
+    
+    /**
+     * 从AI响应中提取特定维度的得分
+     */
+    private BigDecimal extractCriterionScoreFromResponse(String aiResponse, String criterionName) {
+        try {
+            // 简单的模式匹配，查找类似 "知识理解：8.5分" 的模式
+            String pattern = criterionName + "[：:][^\\d]*(\\d+(?:\\.\\d+)?)";
+            java.util.regex.Pattern regex = java.util.regex.Pattern.compile(pattern);
+            java.util.regex.Matcher matcher = regex.matcher(aiResponse);
+            
+            if (matcher.find()) {
+                return new BigDecimal(matcher.group(1));
+            }
+            
+            return null;
+        } catch (Exception e) {
+            log.warn("提取维度得分失败: {}", criterionName, e);
+            return null;
+        }
+    }
+    
+    /**
+     * 从AI响应中提取特定维度的评价
+     */
+    private String extractCriterionCommentFromResponse(String aiResponse, String criterionName) {
+        try {
+            // 查找维度名称后的评价内容
+            String[] lines = aiResponse.split("\n");
+            boolean inCriterionSection = false;
+            StringBuilder comment = new StringBuilder();
+            
+            for (String line : lines) {
+                if (line.contains(criterionName)) {
+                    inCriterionSection = true;
+                    // 提取当前行维度名称后的内容
+                    int index = line.indexOf(criterionName);
+                    if (index >= 0) {
+                        String remaining = line.substring(index + criterionName.length());
+                        // 移除分数部分，保留评价
+                        remaining = remaining.replaceAll("[：:]?[^\\d]*(\\d+(?:\\.\\d+)?)[分]?", "").trim();
+                        if (!remaining.isEmpty()) {
+                            comment.append(remaining);
+                        }
+                    }
+                } else if (inCriterionSection) {
+                    if (line.trim().isEmpty() || line.matches(".*[：:].*(\\d+(?:\\.\\d+)?)[分]?.*")) {
+                        // 遇到空行或下一个维度，停止
+                        break;
+                    }
+                    comment.append(" ").append(line.trim());
+                }
+            }
+            
+            return comment.length() > 0 ? comment.toString().trim() : null;
+        } catch (Exception e) {
+            log.warn("提取维度评价失败: {}", criterionName, e);
+            return null;
+        }
     }
 }

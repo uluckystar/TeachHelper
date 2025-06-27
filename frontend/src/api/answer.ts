@@ -1,4 +1,5 @@
 import api from '@/utils/request'
+import { longTimeoutApi } from '@/utils/request'
 import type {
   StudentAnswer,
   StudentAnswerSubmitRequest,
@@ -7,7 +8,7 @@ import type {
   StudentExamPaperResponse
 } from '@/types/api'
 
-export const studentAnswerApi = {
+export const answerApi = {
   // 提交单个答案
   async submitAnswer(answerData: StudentAnswerSubmitRequest): Promise<StudentAnswerResponse> {
     const response = await api.post<StudentAnswerResponse>('/student-answers', answerData)
@@ -21,7 +22,7 @@ export const studentAnswerApi = {
   },
 
   // 更新答案
-  async updateAnswer(id: number, answerData: StudentAnswerSubmitRequest): Promise<StudentAnswerResponse> {
+  async updateAnswer(id: number, answerData: Partial<StudentAnswer>): Promise<StudentAnswerResponse> {
     const response = await api.put<StudentAnswerResponse>(`/student-answers/${id}`, answerData)
     return response.data
   },
@@ -67,21 +68,21 @@ export const studentAnswerApi = {
     keyword?: string
   ): Promise<PageResponse<StudentAnswerResponse>> {
     const params = new URLSearchParams({
-      page: page.toString(),
-      size: size.toString()
+      page: String(page),
+      size: String(size)
     })
     
     if (questionId !== undefined) {
-      params.append('questionId', questionId.toString())
+      params.append('questionId', String(questionId))
     }
     if (evaluated !== undefined) {
-      params.append('evaluated', evaluated.toString())
+      params.append('evaluated', String(evaluated))
     }
     if (keyword && keyword.trim()) {
       params.append('keyword', keyword.trim())
     }
     
-    const response = await api.get<PageResponse<StudentAnswerResponse>>(`/exams/${examId}/answers?${params}`)
+    const response = await api.get<PageResponse<StudentAnswerResponse>>(`/exams/${examId}/answers?${params.toString()}`)
     return response.data
   },
 
@@ -93,15 +94,15 @@ export const studentAnswerApi = {
     studentKeyword?: string
   ): Promise<PageResponse<StudentExamPaperResponse>> {
     const params = new URLSearchParams({
-      page: page.toString(),
-      size: size.toString()
+      page: String(page),
+      size: String(size)
     })
     
     if (studentKeyword && studentKeyword.trim()) {
       params.append('studentKeyword', studentKeyword.trim())
     }
     
-    const response = await api.get<PageResponse<StudentExamPaperResponse>>(`/exams/${examId}/papers?${params}`)
+    const response = await api.get<PageResponse<StudentExamPaperResponse>>(`/exams/${examId}/papers?${params.toString()}`)
     return response.data
   },
 
@@ -151,14 +152,20 @@ export const studentAnswerApi = {
   },
 
   // 导出答案
-  async exportAnswers(examId?: number, questionId?: number, evaluated?: boolean): Promise<string> {
+  async exportAnswers(examId?: number, questionId?: number, evaluated?: boolean): Promise<void> {
     const params: Record<string, any> = {}
     if (examId !== undefined) params.examId = examId
     if (questionId !== undefined) params.questionId = questionId
     if (evaluated !== undefined) params.evaluated = evaluated
     
-    const response = await api.get<string>('/student-answers/export', { params })
-    return response.data
+    const response = await api.get('/student-answers/export', { params, responseType: 'blob' });
+    const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `answers_export_${new Date().getTime()}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   },
 
   // 获取我的考试答案（学生视角）
@@ -171,7 +178,6 @@ export const studentAnswerApi = {
   async importAnswersToExam(examId: number, file: File): Promise<string> {
     const formData = new FormData()
     formData.append('file', file)
-    formData.append('examId', examId.toString())
     const response = await api.post<string>(`/student-answers/exam/${examId}/import`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
@@ -224,8 +230,82 @@ export const studentAnswerApi = {
     })
     return response.data
   },
-}
 
-// 导出answerApi作为默认导出和命名导出
-export { studentAnswerApi as answerApi }
-export default studentAnswerApi
+  // 获取学习通可用科目列表
+  async getLearningSubjects(): Promise<string[]> {
+    const response = await api.get<string[]>('/student-answers/learning/subjects')
+    return response.data
+  },
+
+  // 获取学习通科目下的班级列表
+  async getLearningSubjectClasses(subject: string): Promise<string[]> {
+    const response = await api.get<string[]>(`/student-answers/learning/subjects/${encodeURIComponent(subject)}/classes`)
+    return response.data
+  },
+  
+  // 导入学习通答案文件到指定考试（异步）
+  async importLearningAnswerFile(file: File, examId?: number): Promise<{ success: boolean; message: string; taskId: string; fileName: string }> {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (examId !== undefined) {
+      formData.append('examId', String(examId))
+    }
+    const response = await api.post('/student-answers/import/learning-file', formData)
+    return response.data
+  },
+
+  // 删除某个学生在某场考试中的所有答案
+  async deleteStudentExamAnswers(studentId: number, examId: number): Promise<void> {
+    await api.delete(`/student-answers/student/${studentId}/exam/${examId}`)
+  },
+
+  // 批量删除考试答案
+  async batchDeleteExamAnswers(examId: number, request: {
+    deleteType: 'answers' | 'students',
+    answerIds?: number[],
+    studentIds?: number[]
+  }): Promise<{ message: string; deletedCount: number; examId: number }> {
+    const response = await api.delete<{ message: string; deletedCount: number; examId: number }>(`/exams/${examId}/answers/batch`, {
+      data: request
+    })
+    return response.data
+  },
+
+  // 异步导入学习通答案
+  async importLearningAnswersAsync(
+    subject: string, 
+    classFolders: string[], 
+    examId?: number
+  ): Promise<{
+    data: {
+      success: boolean;
+      message: string;
+      taskId: string;
+      fileName?: string;
+    }
+  }> {
+    const requestBody = { subject, classFolders, examId };
+    const response = await api.post('/student-answers/import/learning-async', requestBody);
+    return response.data;
+  },
+
+  // 基于模板导入学习通答案（异步）
+  async importLearningAnswersWithTemplate(
+    subject: string,
+    classFolders: string[],
+    templateId: number,
+    examId?: number
+  ): Promise<{ success: boolean; message: string; result: any; }> {
+    const params = new URLSearchParams({
+      subject,
+      templateId: String(templateId),
+    });
+    classFolders.forEach(cf => params.append('classFolders', cf));
+    if (examId) {
+      params.append('examId', String(examId));
+    }
+
+    const response = await longTimeoutApi.post(`/student-answers/import/learning-with-template?${params.toString()}`)
+    return response.data
+  },
+}

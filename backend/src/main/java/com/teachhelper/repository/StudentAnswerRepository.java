@@ -11,6 +11,8 @@ import org.springframework.stereotype.Repository;
 
 import com.teachhelper.entity.EvaluationType;
 import com.teachhelper.entity.StudentAnswer;
+import com.teachhelper.entity.Exam;
+import com.teachhelper.entity.User;
 
 @Repository
 public interface StudentAnswerRepository extends JpaRepository<StudentAnswer, Long> {
@@ -157,6 +159,9 @@ public interface StudentAnswerRepository extends JpaRepository<StudentAnswer, Lo
     
     @Query("SELECT sa FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND sa.student.id = :studentId ORDER BY sa.question.id ASC")
     List<StudentAnswer> findByQuestionExamIdAndStudentIdOrderByQuestionIdAsc(@Param("examId") Long examId, @Param("studentId") Long studentId);
+    
+    // 删除指定考试和学生的所有答案
+    void deleteByExamAndStudent(Exam exam, User student);
     
     @Query("SELECT sa FROM StudentAnswer sa WHERE sa.question.exam.id = :examId AND " +
            "(LOWER(sa.student.realName) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +

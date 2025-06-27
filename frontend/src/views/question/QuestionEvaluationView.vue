@@ -155,7 +155,7 @@
                   block
                   size="default"
                 >
-                  AI批量批阅 ({{ statistics?.unevaluatedAnswers || 0 }}个)
+                  AI并发批阅 ({{ statistics?.unevaluatedAnswers || 0 }}个)
                 </el-button>
               </el-col>
               <el-col :span="12">
@@ -346,22 +346,22 @@
     <!-- 批量批阅对话框 -->
     <el-dialog
       v-model="batchDialogVisible"
-      title="AI批量批阅"
+      title="AI并发批量批阅"
       width="500px"
       :close-on-click-modal="false"
     >
       <div class="batch-evaluation">
         <el-alert
-          title="批量批阅说明"
-          description="将对所有未批阅的答案进行AI自动批阅，请确认是否继续。"
-          type="info"
+          title="并发批量批阅说明"
+          description="将为每个未批阅的答案并发起AI自动批阅请求。这可能会在短时间内消耗较多资源。请确认是否继续。"
+          type="warning"
           :closable="false"
           style="margin-bottom: 20px"
         />
         
         <div class="batch-info">
           <p>待批阅答案数量：<strong>{{ statistics?.unevaluatedAnswers || 0 }}</strong></p>
-          <p>预计处理时间：<strong>{{ Math.ceil((statistics?.unevaluatedAnswers || 0) * 2 / 60) }}</strong> 分钟</p>
+          <p>处理方式：<strong>前端并发请求</strong></p>
         </div>
       </div>
       
@@ -373,7 +373,7 @@
             @click="startBatchEvaluation"
             :loading="batchEvaluating"
           >
-            开始批量批阅
+            开始并发批阅
           </el-button>
         </span>
       </template>
@@ -876,37 +876,55 @@ const showBatchEvaluationDialog = () => {
 }
 
 const startBatchEvaluation = async () => {
-  try {
-    batchEvaluating.value = true
-    await evaluationApi.batchEvaluateAnswersByQuestion(questionId.value)
-    
-    ElNotification.success({
-      title: '批量批阅已开始',
-      message: '正在后台处理，请稍后查看结果'
-    })
-    
-    batchDialogVisible.value = false
-    
-    // 定期刷新数据
-    const refreshInterval = setInterval(async () => {
-      await loadAnswers()
-      await loadStatistics()
-      
-      if (statistics.value && statistics.value.unevaluatedAnswers === 0) {
-        clearInterval(refreshInterval)
-        ElNotification.success({
-          title: '批量批阅完成',
-          message: '所有答案已批阅完成'
-        })
-      }
-    }, 5000)
-    
-  } catch (error) {
-    console.error('批量批阅失败:', error)
-    ElMessage.error('批量批阅失败')
-  } finally {
-    batchEvaluating.value = false
+  batchDialogVisible.value = false;
+  batchEvaluating.value = true;
+
+  const unevaluatedAnswers = answers.value.filter(a => !a.evaluated);
+  const total = unevaluatedAnswers.length;
+
+  if (total === 0) {
+    ElMessage.info('没有需要批阅的答案');
+    batchEvaluating.value = false;
+    return;
   }
+
+  ElNotification({
+    title: '批量批阅开始',
+    message: `开始并发处理 ${total} 个答案...`,
+    type: 'info',
+    duration: 3000
+  });
+
+  const evaluationPromises = unevaluatedAnswers.map(answer => 
+    evaluationApi.aiEvaluateAnswer(answer.id)
+  );
+
+  const results = await Promise.allSettled(evaluationPromises);
+
+  let successCount = 0;
+  let failureCount = 0;
+
+  results.forEach(result => {
+    if (result.status === 'fulfilled') {
+      successCount++;
+    } else {
+      failureCount++;
+      console.error('一个AI批阅请求失败:', result.reason);
+    }
+  });
+
+  ElNotification({
+    title: '批量批阅完成',
+    message: `成功: ${successCount}, 失败: ${failureCount}. 总共: ${total}.`,
+    type: failureCount === 0 ? 'success' : 'warning',
+    duration: 4000
+  });
+
+  // Refresh data
+  await loadAnswers();
+  await loadStatistics();
+
+  batchEvaluating.value = false;
 }
 
 const markAllAsEvaluated = async () => {
@@ -1152,7 +1170,8 @@ const getQuestionTypeText = (type: string) => {
     'MULTIPLE_CHOICE': '多选题',
     'TRUE_FALSE': '判断题',
     'CODING': '编程题',
-    'CASE_ANALYSIS': '案例分析题'
+    'CASE_ANALYSIS': '案例分析题',
+    'CALCULATION': '计算题'
   }
   return typeMap[type as keyof typeof typeMap] || type
 }

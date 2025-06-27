@@ -79,7 +79,7 @@ public class SecurityConfig {
                 // Teacher and Admin can manage exams and questions, Students can view exams for taking
                 .requestMatchers("/api/exams", "/api/exams/").hasAnyRole("TEACHER", "ADMIN", "STUDENT") // 学生可以查看考试列表
                 .requestMatchers("/api/exams/student/**").hasRole("STUDENT") // 学生专用API路径，必须在其他规则之前
-                .requestMatchers("/api/exams/available").hasRole("STUDENT") // 学生可以查看可参加的考试
+                .requestMatchers("/api/exams/available").hasAnyRole("TEACHER", "ADMIN", "STUDENT") // 教师、管理员和学生都可以查看可用的考试
                 .requestMatchers("/api/exams/*/take").hasAnyRole("TEACHER", "ADMIN", "STUDENT") // 学生可以参加考试（如果需要专门的API）
                 .requestMatchers("/api/exams/*/statistics").hasAnyRole("TEACHER", "ADMIN") // 统计信息仅限教师和管理员
                 .requestMatchers("/api/exams/*/classrooms").hasAnyRole("TEACHER", "ADMIN") // 班级管理仅限教师和管理员
@@ -102,6 +102,9 @@ public class SecurityConfig {
                 
                 // User AI config endpoints
                 .requestMatchers("/api/user-ai-config/**").hasAnyRole("TEACHER", "ADMIN")
+                
+                // Exam template endpoints
+                .requestMatchers("/api/exam-templates/**").hasAnyRole("TEACHER", "ADMIN")
                 
                 // All other requests need authentication
                 .anyRequest().authenticated()

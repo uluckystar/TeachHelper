@@ -17,6 +17,8 @@ import com.teachhelper.entity.ExamStatus;
 @Repository
 public interface ExamRepository extends JpaRepository<Exam, Long> {
     
+    boolean existsByIdAndCreatedById(Long id, Long createdById);
+    
     List<Exam> findByCreatedByIdOrderByCreatedAtDesc(Long createdById);
     
     Page<Exam> findByCreatedById(Long createdById, Pageable pageable);

@@ -44,6 +44,15 @@
             >
               评分标准
             </el-button>
+            <el-button 
+              type="warning" 
+              icon="Document"
+              @click="navigateToReferenceAnswerManagement"
+              :disabled="loading"
+              size="default"
+            >
+              参考答案
+            </el-button>
             <el-dropdown @command="handleDropdownCommand">
               <el-button type="default" icon="More" size="default">
                 更多操作<el-icon class="el-icon--right"><arrow-down /></el-icon>
@@ -56,6 +65,7 @@
                   <el-dropdown-item command="classrooms" icon="School" divided>调整班级</el-dropdown-item>
                   <el-dropdown-item command="edit" icon="Edit">编辑考试</el-dropdown-item>
                   <el-dropdown-item command="export" icon="Download">导出考试</el-dropdown-item>
+                  <el-dropdown-item command="export_results" icon="DataAnalysis" :disabled="!exam || questions.length === 0">导出成绩单</el-dropdown-item>
                   <el-dropdown-item command="delete" icon="Delete" divided>删除考试</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
@@ -319,15 +329,7 @@
               @click="viewAnswers"
               block
             >
-              查看学生答案
-            </el-button>
-            <el-button 
-              type="warning" 
-              icon="Upload"
-              @click="showImportDialog"
-              block
-            >
-              导入学生答案
+              查看和导入学生答案
             </el-button>
             <el-button 
               type="info" 
@@ -355,46 +357,6 @@
         </template>
       </el-skeleton>
     </div>
-
-    <!-- 导入对话框 -->
-    <el-dialog
-      v-model="importDialogVisible"
-      title="导入学生答案"
-      width="500px"
-    >
-      <el-upload
-        class="upload-demo"
-        drag
-        action="#"
-        :auto-upload="false"
-        :on-change="handleFileChange"
-        accept=".xlsx,.xls,.csv"
-      >
-        <el-icon class="el-icon--upload"><upload-filled /></el-icon>
-        <div class="el-upload__text">
-          将文件拖到此处，或<em>点击上传</em>
-        </div>
-        <template #tip>
-          <div class="el-upload__tip">
-            只能上传 xlsx/xls/csv 文件
-          </div>
-        </template>
-      </el-upload>
-      
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="importDialogVisible = false">取消</el-button>
-          <el-button 
-            type="primary" 
-            @click="confirmImport"
-            :loading="importLoading"
-            :disabled="!selectedFile"
-          >
-            确认导入
-          </el-button>
-        </span>
-      </template>
-    </el-dialog>
 
     <!-- 班级调整/发布对话框 -->
     <el-dialog
@@ -577,7 +539,8 @@ import {
   Refresh,
   Upload,
   UploadFilled,
-  Setting
+  Setting,
+  DataAnalysis
 } from '@element-plus/icons-vue'
 import { examApi } from '@/api/exam'
 import { questionApi } from '@/api/question'
@@ -795,6 +758,17 @@ const navigateToRubricManagement = () => {
   })
 }
 
+const navigateToReferenceAnswerManagement = () => {
+  // 传递来源页面信息
+  router.push({
+    path: `/exams/${examId.value}/reference-answer-management`,
+    query: { 
+      from: 'exam-detail',
+      action: 'reference-answer' // 用户想要进行的操作
+    }
+  })
+}
+
 const navigateToAddQuestion = () => {
   router.push(`/exams/${examId.value}/questions/new`)
 }
@@ -859,18 +833,64 @@ const handleDropdownCommand = async (command: string) => {
       await openClassroomDialog()
       break
     case 'edit':
-      router.push(`/exams/${examId.value}/edit`)
+      navigateToEditExam()
       break
     case 'export':
-      exportExamData()
+      handleExportExam()
+      break
+    case 'export_results':
+      handleExportResults()
       break
     case 'delete':
-      deleteExam()
+      handleDeleteExam()
       break
   }
 }
 
-const deleteExam = async () => {
+const handleExportExam = () => {
+  ElMessage.info('导出考试功能正在开发中...')
+}
+
+const handleExportResults = async () => {
+  if (!exam.value) return;
+
+  try {
+    ElNotification({
+      title: '正在导出',
+      message: '正在生成成绩单文件，请稍候...',
+      type: 'info',
+      duration: 3000
+    });
+
+    const response = await examApi.exportExamResults(examId.value);
+    
+    const blob = new Blob([response], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    
+    const link = document.createElement('a');
+    link.href = window.URL.createObjectURL(blob);
+    link.download = `${exam.value.title}_成绩单.xlsx`;
+    
+    document.body.appendChild(link);
+    link.click();
+    
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(link.href);
+
+    ElNotification({
+      title: '导出成功',
+      message: '成绩单已成功下载。',
+      type: 'success',
+      duration: 3000
+    });
+
+  } catch (error) {
+    console.error('导出成绩单失败:', error);
+    ElMessage.error('导出成绩单失败，请检查控制台获取更多信息。');
+  }
+};
+
+const handleDeleteExam = async () => {
+  if (!exam.value) return
   try {
     await ElMessageBox.confirm(
       `确定要删除考试"${exam.value?.title}"吗？此操作不可恢复。`,
@@ -893,49 +913,6 @@ const deleteExam = async () => {
   }
 }
 
-const exportExamData = async () => {
-  try {
-    // 这里应该调用导出API，目前暂时模拟
-    ElMessage.info('导出功能正在开发中')
-  } catch (error) {
-    console.error('Failed to export exam:', error)
-    ElMessage.error('导出失败')
-  }
-}
-
-const showImportDialog = () => {
-  importDialogVisible.value = true
-  selectedFile.value = null
-}
-
-const handleFileChange = (file: any) => {
-  selectedFile.value = file.raw
-}
-
-const confirmImport = async () => {
-  if (!selectedFile.value) {
-    ElMessage.warning('请选择要导入的文件')
-    return
-  }
-  
-  try {
-    importLoading.value = true
-    await answerApi.importAnswers(selectedFile.value)
-    ElMessage.success('导入成功')
-    importDialogVisible.value = false
-    selectedFile.value = null
-    
-    // 刷新统计信息
-    await refreshStatistics()
-  } catch (error) {
-    console.error('Failed to import answers:', error)
-    ElMessage.error('导入失败')
-  } finally {
-    importLoading.value = false
-  }
-}
-
-// 考试状态管理方法
 const publishExam = async () => {
   try {
     // 设置为发布模式并打开班级选择对话框
@@ -1141,7 +1118,8 @@ const getQuestionTypeText = (type: string) => {
     'MULTIPLE_CHOICE': '多选题',
     'TRUE_FALSE': '判断题',
     'CODING': '编程题',
-    'CASE_ANALYSIS': '案例分析题'
+    'CASE_ANALYSIS': '案例分析题',
+    'CALCULATION': '计算题'
   }
   return typeMap[type as keyof typeof typeMap] || type
 }
@@ -1154,7 +1132,8 @@ const getQuestionTypeTag = (type: string): 'primary' | 'success' | 'warning' | '
     'MULTIPLE_CHOICE': 'warning',
     'TRUE_FALSE': 'info',
     'CODING': 'danger',
-    'CASE_ANALYSIS': 'primary'
+    'CASE_ANALYSIS': 'primary',
+    'CALCULATION': 'success'
   }
   return tagMap[type] || 'primary'
 }

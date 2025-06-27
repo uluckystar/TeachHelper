@@ -49,6 +49,11 @@ public interface QuestionBankRepository extends JpaRepository<QuestionBank, Long
     boolean existsByNameAndCreatedBy(String name, Long createdBy);
     
     /**
+     * 根据名称和创建者查找题库
+     */
+    Optional<QuestionBank> findByNameAndCreatedBy(String name, Long createdBy);
+    
+    /**
      * 获取所有不重复的科目
      */
     @Query("SELECT DISTINCT qb.subject FROM QuestionBank qb WHERE qb.isActive = true AND qb.subject IS NOT NULL")

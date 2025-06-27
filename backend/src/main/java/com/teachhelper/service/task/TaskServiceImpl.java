@@ -467,7 +467,20 @@ public class TaskServiceImpl implements TaskService, TaskProgressCallback {
         }
     }
 
-
+    /**
+     * 根据taskId查找任务
+     */
+    public Task findTaskByTaskId(String taskId) {
+        Optional<Task> taskOpt = taskRepository.findByTaskId(taskId);
+        return taskOpt.orElse(null);
+    }
+    
+    /**
+     * 保存任务
+     */
+    public Task saveTask(Task task) {
+        return taskRepository.save(task);
+    }
 
     /**
      * 广播任务更新事件
@@ -490,5 +503,30 @@ public class TaskServiceImpl implements TaskService, TaskProgressCallback {
             System.err.println("❌ 广播任务更新失败: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+    
+    @Override
+    public String createLearningAnswerImportTask(String subject, List<String> classFolders, Long examId, String operator) {
+        System.out.println("创建学习通答案导入任务: subject=" + subject + ", examId=" + examId + ", classFolders=" + classFolders);
+        
+        // 创建任务请求
+        TaskCreateRequest taskRequest = new TaskCreateRequest();
+        taskRequest.setName("学习通答案导入: " + subject);
+        taskRequest.setDescription("导入学习通答案 - 科目: " + subject + ", 班级: " + String.join(", ", classFolders) + 
+                                  (examId != null ? ", 考试ID: " + examId : ""));
+        taskRequest.setType("LEARNING_ANSWER_IMPORT");
+        taskRequest.setPriority("MEDIUM");
+        
+        // 设置任务参数
+        Map<String, Object> params = new HashMap<>();
+        params.put("subject", subject);
+        params.put("classFolders", classFolders);
+        params.put("examId", examId);
+        params.put("operator", operator);
+        taskRequest.setConfig(params);
+        
+        // 创建任务
+        TaskResponse taskResponse = createTask(taskRequest);
+        return taskResponse.getTaskId();
     }
 }

@@ -152,6 +152,7 @@ public class EvaluationController {
             taskRequest.setType("BATCH_EVALUATION");
             taskRequest.setName("批量批阅任务");
             taskRequest.setDescription("批量批阅学生答案");
+            // 将前端请求的所有参数都作为config传递
             taskRequest.setConfig(request);
 
             TaskResponse task = taskService.createTask(taskRequest);

@@ -623,7 +623,7 @@ import { classroomApi, type ClassroomResponse } from '@/api/classroom'
 import { evaluationApi } from '@/api/evaluation'
 import { questionApi } from '@/api/question'
 import { rubricApi } from '@/api/rubric'
-import { studentAnswerApi } from '@/api/answer'
+import { answerApi } from '@/api/answer'
 import type { Exam } from '@/types/api'
 
 const router = useRouter()

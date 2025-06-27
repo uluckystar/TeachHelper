@@ -1,5 +1,6 @@
 package com.teachhelper.service.question;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -59,25 +60,43 @@ public class QuestionService {
             }
         }
         
+        question.setUpdatedAt(LocalDateTime.now());
+        return questionRepository.save(question);
+    }
+    
+    public Question save(Question question) {
         return questionRepository.save(question);
     }
     
     public void deleteQuestion(Long id) {
-        Question question = questionRepository.findById(id)
-            .orElseThrow(() -> new ResourceNotFoundException("Question not found with id: " + id));
+        Question question = getQuestionById(id);
         questionRepository.delete(question);
     }
     
     @Transactional(readOnly = true)
     public Question getQuestionById(Long id) {
-        // 首先获取题目基本信息和选项
-        Question question = questionRepository.findByIdWithOptions(id)
+        // 获取题目基本信息
+        Question question = questionRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Question not found with id: " + id));
         
-        // 然后获取评分标准（通过单独查询避免 MultipleBagFetchException）
-        Optional<Question> questionWithCriteria = questionRepository.findByIdWithCriteria(id);
-        if (questionWithCriteria.isPresent()) {
-            question.setRubricCriteria(questionWithCriteria.get().getRubricCriteria());
+        // 在事务内手动触发所有懒加载，确保数据完整性
+        try {
+            // 手动触发所有懒加载，避免 no Session 错误
+            if (question.getOptions() != null) {
+                question.getOptions().size();
+            }
+            if (question.getRubricCriteria() != null) {
+                question.getRubricCriteria().size();
+            }
+            if (question.getExam() != null) {
+                question.getExam().getTitle();
+            }
+            if (question.getQuestionBank() != null) {
+                question.getQuestionBank().getName();
+            }
+        } catch (Exception e) {
+            // 如果懒加载失败，记录错误但不中断处理
+            System.err.println("Failed to load question relationships for ID " + question.getId() + ": " + e.getMessage());
         }
         
         return question;
@@ -102,21 +121,28 @@ public class QuestionService {
     
     @Transactional(readOnly = true)
     public List<Question> getQuestionsByExamId(Long examId) {
-        // 首先获取题目基本信息和选项
-        List<Question> questions = questionRepository.findByExamIdWithOptions(examId);
+        // 使用EntityGraph预加载所有关联对象的查询
+        List<Question> questions = questionRepository.findByExamId(examId);
         
-        // 然后为每个题目获取评分标准
-        if (!questions.isEmpty()) {
-            List<Question> questionsWithCriteria = questionRepository.findByExamIdWithCriteria(examId);
-            
-            // 将评分标准合并到对应的题目中
+        // 在事务内手动触发所有懒加载，确保数据完整性
             for (Question question : questions) {
-                for (Question questionWithCriteria : questionsWithCriteria) {
-                    if (question.getId().equals(questionWithCriteria.getId())) {
-                        question.setRubricCriteria(questionWithCriteria.getRubricCriteria());
-                        break;
-                    }
+            try {
+                // 手动触发所有懒加载，避免 no Session 错误
+                if (question.getOptions() != null) {
+                    question.getOptions().size();
                 }
+                if (question.getRubricCriteria() != null) {
+                    question.getRubricCriteria().size();
+                }
+                if (question.getExam() != null) {
+                    question.getExam().getTitle();
+                }
+                if (question.getQuestionBank() != null) {
+                    question.getQuestionBank().getName();
+                }
+            } catch (Exception e) {
+                // 如果懒加载失败，记录错误但不中断处理
+                System.err.println("Failed to load question relationships for ID " + question.getId() + ": " + e.getMessage());
             }
         }
         

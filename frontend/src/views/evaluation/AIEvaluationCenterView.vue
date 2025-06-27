@@ -8,7 +8,7 @@
     <!-- 功能入口卡片 -->
     <el-row :gutter="24" class="feature-cards">
       <el-col :span="8">
-        <el-card class="feature-card" @click="goToBatchEvaluation">
+        <el-card class="feature-card" @click="startNewTask">
           <div class="feature-content">
             <div class="feature-icon">
               <el-icon size="48" color="#409eff"><MagicStick /></el-icon>
@@ -96,17 +96,17 @@
       </template>
 
       <el-table :data="recentTasks" v-loading="loading">
-        <el-table-column prop="examTitle" label="考试名称" />
-        <el-table-column prop="taskType" label="任务类型" width="120">
+        <el-table-column prop="name" label="任务名称" />
+        <el-table-column prop="type" label="任务类型" width="120">
           <template #default="{ row }">
-            <el-tag :type="getTaskTypeTag(row.taskType) as any">>
-              {{ getTaskTypeText(row.taskType) }}
+            <el-tag :type="getTaskTypeTag(row.type)">
+              {{ getTaskTypeText(row.type) }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="getStatusTag(row.status) as any">>
+            <el-tag :type="getStatusTag(row.status)">
               {{ getStatusText(row.status) }}
             </el-tag>
           </template>
@@ -128,21 +128,13 @@
         <el-table-column label="操作" width="180">
           <template #default="{ row }">
             <el-button-group>
-              <el-button size="small" @click="viewTaskDetail(row.id)">
+              <el-button size="small" @click="viewTaskDetail(row.taskId)">
                 详情
               </el-button>
               <el-button 
                 size="small" 
-                type="primary" 
-                @click="viewResults(row.id)"
-                :disabled="row.status !== 'COMPLETED'"
-              >
-                查看结果
-              </el-button>
-              <el-button 
-                size="small" 
                 type="danger" 
-                @click="cancelTask(row.id)"
+                @click="cancelTask(row.taskId)"
                 :disabled="!['PENDING', 'RUNNING'].includes(row.status)"
               >
                 取消
@@ -170,23 +162,11 @@
           @selection-change="handleExamSelection"
           ref="examTable"
           v-loading="loadingExams"
+          highlight-current-row
         >
           <el-table-column type="selection" width="55" />
           <el-table-column prop="title" label="考试名称" />
           <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
-          <el-table-column prop="createdBy" label="创建者" width="120" />
-          <el-table-column prop="status" label="状态" width="100">
-            <template #default="{ row }">
-              <el-tag :type="row.status === 'active' ? 'success' : 'info'">
-                {{ row.status === 'active' ? '激活' : row.status === 'draft' ? '草稿' : '未激活' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="createdAt" label="创建时间" width="180">
-            <template #default="{ row }">
-              {{ formatDate(row.createdAt) }}
-            </template>
-          </el-table-column>
         </el-table>
       </div>
 
@@ -214,156 +194,93 @@
           </el-table-column>
           <el-table-column prop="maxScore" label="满分" width="80" />
           <el-table-column prop="unevaluatedCount" label="未批阅" width="100">
-            <template #default="{ row }">
-              <el-tag :type="row.unevaluatedCount > 0 ? 'warning' : 'success'">
-                {{ row.unevaluatedCount || 0 }}
-              </el-tag>
-            </template>
+             <template #default="{ row }">
+                <el-tag :type="row.unevaluatedCount > 0 ? 'warning' : 'success'">
+                  {{ row.unevaluatedCount || 0 }}
+                </el-tag>
+             </template>
           </el-table-column>
         </el-table>
-
-        <div class="selection-actions" style="margin-top: 16px;">
-          <el-button @click="selectAllQuestions">全选</el-button>
-          <el-button @click="selectUnevaluatedQuestions">选择未批阅</el-button>
-          <el-button @click="clearQuestionSelection">清空选择</el-button>
-        </div>
       </div>
 
       <!-- 步骤3: 配置参数 -->
       <div v-if="newTaskStep === 2" class="step-content">
         <h3>配置批阅参数</h3>
         <el-form :model="newTaskForm" label-width="120px">
-          <el-form-item label="批阅类型">
-            <el-radio-group v-model="newTaskForm.taskType">
-              <el-radio label="FULL_EVALUATION">完整批阅</el-radio>
-              <el-radio label="QUICK_EVALUATION">快速批阅</el-radio>
-              <el-radio label="RUBRIC_BASED">基于标准批阅</el-radio>
+          <el-form-item label="重复批阅策略">
+            <el-radio-group v-model="newTaskForm.reEvaluate">
+              <el-radio :value="false">仅批阅未批阅</el-radio>
+              <el-radio :value="true">全部重新批阅</el-radio>
             </el-radio-group>
+             <div class="el-form-item__description">
+              "全部重新批阅"会覆盖之前所有的AI或手动批阅结果。
+            </div>
           </el-form-item>
-          
-          <el-form-item label="评分标准" v-if="newTaskForm.taskType === 'RUBRIC_BASED'">
-            <el-select v-model="newTaskForm.rubricId" placeholder="选择评分标准" style="width: 100%">
-              <el-option 
-                v-for="rubric in availableRubrics" 
-                :key="rubric.id" 
-                :label="rubric.name" 
-                :value="rubric.id"
-              />
-            </el-select>
-          </el-form-item>
-
-          <el-form-item label="批处理大小">
-            <el-input-number 
-              v-model="newTaskForm.batchSize" 
-              :min="1" 
-              :max="50" 
-              placeholder="每批处理的答案数量"
-              style="width: 100%;"
-            />
-            <div class="form-tip">建议值：10-20，过大可能导致处理超时</div>
-          </el-form-item>
-
-          <el-form-item label="并发数量">
-            <el-input-number 
+          <el-form-item label="AI并发数">
+            <el-slider 
               v-model="newTaskForm.concurrency" 
               :min="1" 
-              :max="10" 
-              placeholder="同时处理的任务数"
-              style="width: 100%;"
+              :max="50" 
+              show-input
             />
-            <div class="form-tip">建议值：2-5，过大可能导致API限流</div>
-          </el-form-item>
-
-          <el-form-item label="任务优先级">
-            <el-select v-model="newTaskForm.priority" placeholder="选择优先级" style="width: 100%">
-              <el-option label="低" value="LOW" />
-              <el-option label="普通" value="NORMAL" />
-              <el-option label="高" value="HIGH" />
-            </el-select>
-          </el-form-item>
-
-          <el-form-item label="描述">
-            <el-input 
-              v-model="newTaskForm.description" 
-              type="textarea" 
-              placeholder="请输入任务描述（可选）"
-              :rows="3"
-            />
+            <div class="el-form-item__description">
+              设置同时执行的AI批阅任务数量。较高的值会加快批阅速度，但会增加服务器和AI服务负载。建议范围5-20。
+            </div>
           </el-form-item>
         </el-form>
       </div>
 
-      <!-- 步骤4: 确认创建 -->
+      <!-- 步骤4: 确认 -->
       <div v-if="newTaskStep === 3" class="step-content">
-        <h3>确认任务信息</h3>
-        <el-descriptions :column="2" border>
-          <el-descriptions-item label="选中考试">{{ selectedExam?.title || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="选中题目">{{ selectedQuestions.length }} 道</el-descriptions-item>
-          <el-descriptions-item label="评估类型">{{ getTaskTypeText(newTaskForm.taskType) }}</el-descriptions-item>
-          <el-descriptions-item label="批处理大小">{{ newTaskForm.batchSize }}</el-descriptions-item>
-          <el-descriptions-item label="并发数量">{{ newTaskForm.concurrency }}</el-descriptions-item>
-          <el-descriptions-item label="任务优先级">{{ getPriorityText(newTaskForm.priority) }}</el-descriptions-item>
-          <el-descriptions-item label="评分标准" v-if="newTaskForm.rubricId">
-            {{ getRubricName(newTaskForm.rubricId) }}
-          </el-descriptions-item>
-          <el-descriptions-item label="描述" :span="2" v-if="newTaskForm.description">
-            {{ newTaskForm.description }}
-          </el-descriptions-item>
-        </el-descriptions>
-
-        <el-alert
-          title="任务预估信息"
-          type="info"
-          :closable="false"
-          style="margin-top: 16px;"
-        >
-          <ul>
-            <li>预计处理答案数：{{ estimatedAnswerCount }} 个</li>
-            <li>预计处理时间：{{ estimatedDuration }}</li>
-            <li>任务将在后台异步执行，您可以在任务监控中查看进度</li>
-          </ul>
-        </el-alert>
+        <h3>确认创建任务</h3>
+        <div v-if="preCheckResult" class="precheck-result">
+            <el-alert
+              :title="preCheckResult.message"
+              :type="preCheckResult.warningLevel === 'WARNING' ? 'warning' : preCheckResult.warningLevel === 'ERROR' ? 'error' : 'info'"
+              :closable="false"
+              show-icon
+            >
+              <p>总答案数: {{ preCheckResult.totalAnswers }}</p>
+              <p>已批阅: {{ preCheckResult.evaluatedAnswers }}</p>
+              <p>将处理: {{ preCheckResult.unevaluatedAnswers }} 个答案</p>
+              <p v-if="preCheckResult.suggestion"><b>建议: {{ preCheckResult.suggestion }}</b></p>
+            </el-alert>
+        </div>
+        <p style="margin-top: 20px;">确认要创建批量批阅任务吗？</p>
       </div>
 
       <template #footer>
-        <div class="dialog-footer">
-          <el-button @click="showNewTaskDialog = false">取消</el-button>
-          <el-button v-if="newTaskStep > 0" @click="prevStep">上一步</el-button>
-          <el-button 
-            v-if="newTaskStep < 3" 
-            type="primary" 
-            @click="nextStep"
-            :disabled="!canProceedNext"
-          >
-            下一步
-          </el-button>
-          <el-button 
-            v-if="newTaskStep === 3" 
-            type="primary" 
-            @click="createTask" 
-            :loading="creating"
-          >
-            创建任务
-          </el-button>
-        </div>
+        <el-button @click="prevStep" v-if="newTaskStep > 0">上一步</el-button>
+        <el-button @click="nextStep" v-if="newTaskStep < 3" :disabled="!canProceedToNextStep">下一步</el-button>
+        <el-button 
+          type="primary" 
+          @click="createTask" 
+          v-if="newTaskStep === 3" 
+          :loading="creatingTask"
+          :disabled="preCheckResult && !preCheckResult.canProceed"
+        >
+          确认创建
+        </el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { MagicStick, DocumentChecked, Monitor, Plus } from '@element-plus/icons-vue'
-import { evaluationApi } from '@/api/evaluation'
-import { examApi } from '@/api/exam'
+import * as evaluationApi from '@/api/evaluation'
+import * as examApi from '@/api/exam'
+import * as rubricApi from '@/api/rubric'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Exam } from '@/types/api'
+import { formatDate, getStatusTag, getStatusText, getTaskTypeTag, getTaskTypeText as getTaskTypeTextUtil, getQuestionTypeText } from '@/utils/formatters'
 
 const router = useRouter()
 
 const loading = ref(false)
-const creating = ref(false)
+const creatingTask = ref(false)
 const showNewTaskDialog = ref(false)
 const recentTasks = ref<any[]>([])
 const availableExams = ref<Exam[]>([])
@@ -383,25 +300,24 @@ const selectedExam = ref<any>(null)
 const examQuestions = ref<any[]>([])
 const selectedQuestions = ref<any[]>([])
 const availableRubrics = ref<any[]>([])
+const preCheckResult = ref<any>(null)
 
 interface TaskForm {
-  examId: string
+  examIds: number[]
+  questionIds: number[]
   taskType: string
-  description: string
-  rubricId: string
-  batchSize: number
+  rubricId: string | null
+  reEvaluate: boolean
   concurrency: number
-  priority: string
 }
 
 const newTaskForm = ref<TaskForm>({
-  examId: '',
+  examIds: [],
+  questionIds: [],
   taskType: 'FULL_EVALUATION',
-  description: '',
-  rubricId: '',
-  batchSize: 10,
-  concurrency: 3,
-  priority: 'NORMAL'
+  rubricId: null,
+  reEvaluate: false,
+  concurrency: 5
 })
 
 const loadRecentTasks = async () => {
@@ -436,13 +352,8 @@ const loadTaskStats = async () => {
 const loadAvailableExams = async () => {
   loadingExams.value = true
   try {
-    const response = await examApi.getExams()
-    // 处理分页数据或直接数组数据
-    if (response.data) {
-      availableExams.value = Array.isArray(response.data) ? response.data : response.data.content || []
-    } else {
-      availableExams.value = Array.isArray(response) ? response : []
-    }
+    const response = await examApi.getExams({ page: 1, pageSize: 100 })
+    availableExams.value = response.data
   } catch (error) {
     console.error('加载考试列表失败:', error)
     ElMessage.error('加载考试列表失败')
@@ -490,33 +401,32 @@ const startNewTask = () => {
 }
 
 const createTask = async () => {
-  if (!newTaskForm.value.examId) {
-    ElMessage.warning('请选择考试')
+  if (preCheckResult.value && !preCheckResult.value.canProceed) {
+    ElMessage.error('预检查不通过，无法创建任务。')
     return
   }
 
-  if (selectedQuestions.value.length === 0) {
-    ElMessage.warning('请选择要评估的题目')
-    return
-  }
-
-  creating.value = true
+  creatingTask.value = true
   try {
-    const taskData = {
+    const config = {
       ...newTaskForm.value,
-      questionIds: selectedQuestions.value.map(q => q.id)
     }
-    await evaluationApi.createBatchTask(taskData)
-    ElMessage.success('任务创建成功')
-    showNewTaskDialog.value = false
-    resetNewTaskForm()
-    loadRecentTasks()
-    loadTaskStats() // 更新统计数据
-  } catch (error) {
+
+    const res = await evaluationApi.createBatchTask(config)
+    
+    if (res.success) {
+      ElMessage.success(res.message || '批量批阅任务创建成功！')
+      showNewTaskDialog.value = false
+      fetchRecentTasks()
+      fetchTaskStats()
+    } else {
+      ElMessage.error(res.message || '创建任务失败')
+    }
+  } catch (error: any) {
     console.error('创建任务失败:', error)
-    ElMessage.error('创建任务失败')
+    ElMessage.error(error.message || '创建任务时发生错误')
   } finally {
-    creating.value = false
+    creatingTask.value = false
   }
 }
 
@@ -556,12 +466,9 @@ const getTaskTypeTag = (type: string) => {
 }
 
 const getTaskTypeText = (type: string) => {
-  const map: Record<string, string> = {
-    'FULL_EVALUATION': '完整评估',
-    'QUICK_EVALUATION': '快速评估',
-    'RUBRIC_BASED': '标准评估'
-  }
-  return map[type] || type
+  if (!type) return '未知类型'
+  if (type.includes('EVALUATION')) return '批量批阅'
+  return getTaskTypeTextUtil(type)
 }
 
 const getStatusTag = (status: string) => {
@@ -595,28 +502,24 @@ const formatDate = (dateString: string) => {
 const resetNewTaskForm = () => {
   newTaskStep.value = 0
   selectedExam.value = null
-  examQuestions.value = []
   selectedQuestions.value = []
+  preCheckResult.value = null
   newTaskForm.value = {
-    examId: '',
+    examIds: [],
+    questionIds: [],
     taskType: 'FULL_EVALUATION',
-    description: '',
-    rubricId: '',
-    batchSize: 10,
-    concurrency: 3,
-    priority: 'NORMAL'
+    rubricId: null,
+    reEvaluate: false,
+    concurrency: 5
   }
 }
 
 const handleExamSelection = (selection: any[]) => {
-  if (selection.length > 0) {
-    selectedExam.value = selection[0]
-    newTaskForm.value.examId = selection[0].id
-    loadExamQuestions(selection[0].id)
+  selectedExam.value = selection.length > 0 ? selection[0] : null
+  if (selectedExam.value) {
+    newTaskForm.value.examIds = [selectedExam.value.id]
   } else {
-    selectedExam.value = null
-    newTaskForm.value.examId = ''
-    examQuestions.value = []
+    newTaskForm.value.examIds = []
   }
 }
 
@@ -663,6 +566,7 @@ const loadExamQuestions = async (examId: string) => {
 
 const handleQuestionSelection = (selection: any[]) => {
   selectedQuestions.value = selection
+  newTaskForm.value.questionIds = selection.map(q => q.id)
 }
 
 const selectAllQuestions = () => {
@@ -694,12 +598,13 @@ const loadRubrics = async () => {
   }
 }
 
-const nextStep = () => {
+const nextStep = async () => {
   if (newTaskStep.value < 3) {
-    newTaskStep.value++
     if (newTaskStep.value === 2) {
-      loadRubrics()
+      // 进入最后一步前进行预检查
+      await performPreCheck()
     }
+    newTaskStep.value++
   }
 }
 
@@ -709,18 +614,29 @@ const prevStep = () => {
   }
 }
 
-const canProceedNext = computed(() => {
-  switch (newTaskStep.value) {
-    case 0:
-      return selectedExam.value !== null
-    case 1:
-      return selectedQuestions.value.length > 0
-    case 2:
-      return newTaskForm.value.taskType !== 'RUBRIC_BASED' || newTaskForm.value.rubricId
-    default:
-      return false
+const canProceedToNextStep = computed(() => {
+  if (newTaskStep.value === 0) {
+    return selectedExam.value !== null
   }
+  if (newTaskStep.value === 1) {
+    return selectedQuestions.value.length > 0
+  }
+  return true
 })
+
+const performPreCheck = async () => {
+  const config = {
+    examIds: newTaskForm.value.examIds,
+    questionIds: newTaskForm.value.questionIds,
+    evaluateAll: newTaskForm.value.reEvaluate
+  }
+  try {
+    preCheckResult.value = await evaluationApi.precheckBatchTask(config)
+  } catch (error) {
+    console.error('预检查失败:', error)
+    ElMessage.error('预检查失败')
+  }
+}
 
 // 辅助函数
 const getQuestionTypeText = (type: string) => {
@@ -733,39 +649,6 @@ const getQuestionTypeText = (type: string) => {
   }
   return map[type] || type
 }
-
-const getPriorityText = (priority: string) => {
-  const map: Record<string, string> = {
-    'LOW': '低',
-    'NORMAL': '普通',
-    'HIGH': '高'
-  }
-  return map[priority] || priority
-}
-
-const getRubricName = (rubricId: string) => {
-  const rubric = availableRubrics.value.find(r => r.id === rubricId)
-  return rubric?.name || ''
-}
-
-const estimatedAnswerCount = computed(() => {
-  if (!selectedExam.value || selectedQuestions.value.length === 0) return 0
-  return selectedQuestions.value.reduce((total, question) => {
-    return total + (question.answerCount || 0)
-  }, 0)
-})
-
-const estimatedDuration = computed(() => {
-  const answerCount = estimatedAnswerCount.value
-  if (answerCount === 0) return '0分钟'
-  
-  const avgTimePerAnswer = 5 // 假设每个答案平均处理5秒
-  const totalSeconds = Math.ceil(answerCount * avgTimePerAnswer / newTaskForm.value.concurrency)
-  
-  if (totalSeconds < 60) return `${totalSeconds}秒`
-  if (totalSeconds < 3600) return `${Math.ceil(totalSeconds / 60)}分钟`
-  return `${Math.ceil(totalSeconds / 3600)}小时`
-})
 
 onMounted(() => {
   loadRecentTasks()

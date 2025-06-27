@@ -49,7 +49,7 @@ export const userAIConfigApi = {
   async testConfig(id: number, testRequest: AIConfigTestRequest): Promise<AIConfigTestResponse> {
     // AI测试请求需要更长的超时时间
     const response = await api.post<AIConfigTestResponse>(`/user-ai-config/${id}/test`, testRequest, {
-      timeout: 60000 // 60秒超时
+      timeout: 0 // 不设置超时限制
     })
     return response.data
   },

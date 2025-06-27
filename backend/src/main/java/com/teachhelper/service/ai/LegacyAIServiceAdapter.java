@@ -1,16 +1,16 @@
 package com.teachhelper.service.ai;
 
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
  * 旧AI服务适配器 - 用于兼容现有的AI服务调用
  */
 @Service
-@RequiredArgsConstructor
-@Slf4j
 public class LegacyAIServiceAdapter {
+    
+    private static final Logger log = LoggerFactory.getLogger(LegacyAIServiceAdapter.class);
     
     /**
      * 适配旧的AI调用方式

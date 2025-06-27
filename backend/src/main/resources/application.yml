@@ -56,12 +56,27 @@ app:
       requests-per-minute: ${AI_RATE_LIMIT:60}  # 速率限制
     enable-knowledge-extraction: ${AI_ENABLE_KNOWLEDGE:true}
     enable-vectorization: ${AI_ENABLE_VECTOR:true}
+    default-provider: "deepseek"
+    enabled: true
+    timeout: 60
     
   # 文件上传配置
   upload:
     dir: ${UPLOAD_DIR:/Users/jiangjiaxing/project/vvv/TeachHelper/uploads}  # 文件上传目录
     max-file-size: 52428800 # 50MB
     allowed-types: .pdf,.doc,.docx,.txt,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.bmp
+  
+  # 文档解析配置
+  document:
+    parsing:
+      enable-libre-office-conversion: ${DOC_ENABLE_LIBREOFFICE:true}  # 启用LibreOffice转换
+      libre-office-timeout: ${DOC_LIBREOFFICE_TIMEOUT:30}  # LibreOffice转换超时时间（秒）
+      libre-office-path: ${DOC_LIBREOFFICE_PATH:}  # 自定义LibreOffice路径（可选）
+      temp-file-retention-minutes: ${DOC_TEMP_RETENTION:60}  # 临时文件保留时间（分钟）
+      enable-tika-parser: ${DOC_ENABLE_TIKA:true}  # 启用Apache Tika解析
+      enable-plain-text-fallback: ${DOC_ENABLE_PLAINTEXT:true}  # 启用纯文本回退
+      max-file-size-mb: ${DOC_MAX_SIZE:50}  # 最大文件大小（MB）
+      max-parsing-threads: ${DOC_MAX_THREADS:5}  # 最大解析线程数
   
   # 向量数据库通用配置
   vector:
@@ -75,6 +90,16 @@ app:
     # Embedding模型配置
     embedding-model: ${EMBEDDING_MODEL:nomic-embed-text:latest} # 使用nomic-embed-text模型
     embedding-provider: ${EMBEDDING_PROVIDER:ollama} # ollama, openai, huggingface等
+  
+  # 异步任务执行器配置
+  async:
+    core-pool-size: 10
+    max-pool-size: 50
+    queue-capacity: 1000
+  # 评估相关配置
+  evaluation:
+    # 批量评估并发任务数
+    max-concurrent-tasks: 5
 
 # Spring Boot Actuator 监控配置
 management:
@@ -86,11 +111,13 @@ management:
   endpoint:
     health:
       show-details: always  # 健康检查显示详细信息：总是显示详细状态
-
-# API文档配置 - SpringDoc OpenAPI
-springdoc:
-  api-docs:
-    path: /api-docs  # API文档JSON路径
   swagger-ui:
     path: /swagger-ui.html  # Swagger UI界面访问路径
     enabled: ${SWAGGER_ENABLED:true}  # 启用Swagger UI
+
+logging:
+  level:
+    org.springframework.transaction.interceptor: TRACE
+    com.teachhelper: DEBUG # 全局DEBUG级别
+    # com.teachhelper.service.task: DEBUG
+    # com.teachhelper.service.answer: DEBUG

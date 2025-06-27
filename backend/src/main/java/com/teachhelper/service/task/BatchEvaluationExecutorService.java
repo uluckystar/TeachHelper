@@ -23,6 +23,8 @@ import org.springframework.security.concurrent.DelegatingSecurityContextCallable
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import javax.annotation.PostConstruct;
 import java.util.concurrent.Executor;
 
 import com.teachhelper.ai.AIEvaluationService;
@@ -54,11 +56,6 @@ public class BatchEvaluationExecutorService {
     @Autowired
     @Qualifier("securityContextTaskExecutor")
     private Executor securityContextTaskExecutor;
-    
-
-    
-    // 控制并发评估数量的信号量
-    private final Semaphore evaluationSemaphore = new Semaphore(3); // 最多3个并发评估
     
     /**
      * 异步执行批量评估任务
@@ -254,225 +251,120 @@ public class BatchEvaluationExecutorService {
     }
     
     /**
-     * 执行批量评估
+     * 执行批量评估的核心逻辑
      */
     private CompletableFuture<Void> executeBatchEvaluation(String taskId, List<Long> answerIds, Map<String, Object> config, TaskProgressCallback callback) {
-        return CompletableFuture.runAsync(() -> {
-            AtomicInteger successCount = new AtomicInteger(0);
-            AtomicInteger failureCount = new AtomicInteger(0);
-            AtomicInteger processedCount = new AtomicInteger(0);
+        
+        // 从配置中获取并发数，默认值为3
+        int concurrency = 3;
+        if (config != null && config.get("concurrency") instanceof Number) {
+            concurrency = ((Number) config.get("concurrency")).intValue();
+        }
+        // 限制并发数在1到50之间，防止过高导致系统不稳定
+        concurrency = Math.max(1, Math.min(concurrency, 50));
+        logger.info("任务 {} 设置并发数: {}", taskId, concurrency);
+        callback.addTaskLog(taskId, "INFO", "设置AI并发数为: " + concurrency);
+
+        final Semaphore evaluationSemaphore = new Semaphore(concurrency);
+
+        final int totalAnswers = answerIds.size();
+        final AtomicInteger processedCount = new AtomicInteger(0);
+        final AtomicInteger successCount = new AtomicInteger(0);
+        final AtomicInteger failureCount = new AtomicInteger(0);
+        
+        // 用于收集详细的评估结果
+        List<Map<String, Object>> detailedResults = Collections.synchronizedList(new ArrayList<>());
+        
+        logger.info("开始评估 {} 个答案", totalAnswers);
+        callback.addTaskLog(taskId, "INFO", "开始批量评估，总计 " + totalAnswers + " 个答案");
+        
+        // 获取当前SecurityContext以传播到并行线程
+        SecurityContext securityContext = SecurityContextHolder.getContext();
+        Authentication authentication = securityContext.getAuthentication();
+        
+        Long currentUserId = null;
+        String currentUsername = null;
+        
+        if (config != null) {
+            Object configUserId = config.get("userId");
+            Object configUsername = config.get("username");
             
-            // 用于收集详细的评估结果
-            List<Map<String, Object>> detailedResults = Collections.synchronizedList(new ArrayList<>());
-            
-            int totalCount = answerIds.size();
-            
-            logger.info("开始评估 {} 个答案", totalCount);
-            callback.addTaskLog(taskId, "INFO", "开始批量评估，总计 " + totalCount + " 个答案");
-            
-            // 获取当前SecurityContext以传播到并行线程
-            SecurityContext securityContext = SecurityContextHolder.getContext();
-            Authentication authentication = securityContext.getAuthentication();
-            
-            logger.info("=== SecurityContext 调试信息 ===");
-            logger.info("SecurityContext 对象: {}", securityContext);
-            logger.info("Authentication 对象: {}", authentication);
-            logger.info("Authentication 是否为null: {}", authentication == null);
-            
-            if (authentication != null) {
-                logger.info("Authentication 类型: {}", authentication.getClass().getName());
-                logger.info("Authentication getName(): {}", authentication.getName());
-                logger.info("Authentication getPrincipal(): {}", authentication.getPrincipal());
-                logger.info("Authentication getAuthorities(): {}", authentication.getAuthorities());
-                logger.info("Authentication isAuthenticated(): {}", authentication.isAuthenticated());
+            if (configUserId != null) {
+                currentUserId = extractLongValue(configUserId);
             }
             
-            // 获取当前用户ID以传递给AI评估服务 - 在主线程中获取，避免并行线程中的SecurityContext问题
-            Long currentUserId = null;
-            String currentUsername = null;
-            
-            // 首先尝试从任务配置中获取用户信息
-            if (config != null) {
-                Object configUserId = config.get("userId");
-                Object configUsername = config.get("username");
-                
-                if (configUserId != null) {
-                    currentUserId = extractLongValue(configUserId);
-                    logger.info("从任务配置中获取用户ID: {}", currentUserId);
-                }
-                
-                if (configUsername != null) {
-                    currentUsername = configUsername.toString();
-                    logger.info("从任务配置中获取用户名: {}", currentUsername);
-                }
+            if (configUsername != null) {
+                currentUsername = configUsername.toString();
             }
-            
-            // 如果配置中没有用户信息，尝试从SecurityContext获取
-            if (currentUsername == null && authentication != null && authentication.getName() != null) {
+        }
+        
+        if (currentUsername == null && authentication != null && authentication.getName() != null) {
+            currentUsername = authentication.getName();
+        }
+        
+        if (currentUsername == null) {
+            currentUsername = "system";
+        }
+        
+        final Long evaluatorUserId = currentUserId;
+        final String evaluatorUsername = currentUsername;
+        
+        List<StudentAnswer> answers;
+        try {
+            answers = studentAnswerService.getAnswersByIdsWithFetch(answerIds);
+        } catch (Exception e) {
+            logger.error("预加载答案信息失败: {}", e.getMessage(), e);
+            callback.updateTaskProgress(taskId, 0, totalAnswers, "FAILED");
+            callback.addTaskLog(taskId, "ERROR", "预加载答案信息失败: " + e.getMessage());
+            return CompletableFuture.completedFuture(null);
+        }
+        
+        List<CompletableFuture<Void>> evaluationFutures = new ArrayList<>();
+        for (StudentAnswer answer : answers) {
+            CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                boolean success = false;
                 try {
-                    currentUsername = authentication.getName();
-                    logger.info("✅ 从SecurityContext成功获取用户名: {}", currentUsername);
-                    // 这里可以通过其他方式获取用户ID，但为了简化，我们传递用户名
-                } catch (Exception e) {
-                    logger.error("❌ 从SecurityContext获取用户信息失败: {}", e.getMessage(), e);
-                }
-            }
-            
-            // 如果仍然没有用户信息，使用默认值
-            if (currentUsername == null) {
-                currentUsername = "system";
-                logger.warn("⚠️  无法获取用户信息，使用默认用户: {}", currentUsername);
-            }
-            
-            final Long evaluatorUserId = currentUserId; // 保存为final变量用于lambda
-            final String evaluatorUsername = currentUsername; // 保存用户名为final变量
-            
-            logger.info("最终传递给并行线程的用户信息:");
-            logger.info("- evaluatorUserId: {}", evaluatorUserId);
-            logger.info("- evaluatorUsername: {}", evaluatorUsername);
-            
-            // 预加载所有答案及其关联实体以避免LazyInitializationException
-            List<StudentAnswer> answers;
-            try {
-                answers = studentAnswerService.getAnswersByIdsWithFetch(answerIds);
-                logger.info("成功预加载 {} 个答案的完整信息", answers.size());
-                callback.addTaskLog(taskId, "INFO", "已预加载 " + answers.size() + " 个答案的完整信息");
-            } catch (Exception e) {
-                logger.error("预加载答案信息失败: {}", e.getMessage(), e);
-                callback.updateTaskProgress(taskId, 0, totalCount, "FAILED");
-                callback.addTaskLog(taskId, "ERROR", "预加载答案信息失败: " + e.getMessage());
-                return;
-            }
-            
-            // 使用配置的securityContextTaskExecutor来确保SecurityContext传播
-            List<CompletableFuture<Boolean>> futures = answers.stream()
-                .map(answer -> {
-                    return CompletableFuture.supplyAsync(() -> {
-                        try {
-                            // 获取信号量以控制并发
-                            evaluationSemaphore.acquire();
-                            
-                            try {
-                                // 更新进度
-                                int processed = processedCount.get();
-                                if (processed % 5 == 0) { // 减少进度更新频率
-                                    callback.updateTaskProgress(taskId, processed, totalCount, "RUNNING");
-                                }
-                                
-                                // 直接使用主线程中获取的用户信息，不再依赖SecurityContext传播
-                                logger.debug("=== 并行线程用户信息调试 ===");
-                                logger.debug("从主线程传递的用户名: {}", evaluatorUsername);
-                                logger.debug("从主线程传递的用户ID: {}", evaluatorUserId);
-                                
-                                // 检查当前线程的SecurityContext状态（用于调试）
-                                try {
-                                    SecurityContext currentContext = SecurityContextHolder.getContext();
-                                    Authentication currentAuth = currentContext.getAuthentication();
-                                    logger.debug("并行线程SecurityContext: {}", currentContext);
-                                    logger.debug("并行线程Authentication: {}", currentAuth);
-                                    if (currentAuth != null) {
-                                        logger.debug("并行线程Authentication用户名: {}", currentAuth.getName());
-                                    }
-                                } catch (Exception e) {
-                                    logger.debug("并行线程SecurityContext检查异常: {}", e.getMessage());
-                                }
-                                 
-                                // 评估单个答案（使用预加载的答案对象）
-                                Map<String, Object> evaluationResult = evaluateSingleAnswerWithFetchedData(taskId, answer, callback, evaluatorUserId, evaluatorUsername);
-                                
-                                // 根据evaluationStatus判断是否成功
-                                String status = (String) evaluationResult.getOrDefault("evaluationStatus", "failed");
-                                boolean success = "success".equals(status);
-                                    
-                                if (success) {
-                                    successCount.incrementAndGet();
-                                    logger.debug("答案 {} 评估成功", answer.getId());
-                                } else {
-                                    failureCount.incrementAndGet();
-                                    logger.warn("答案 {} 评估失败，状态: {}", answer.getId(), status);
-                                }
-                                
-                                // 无论成功失败都添加到详细结果中
-                                detailedResults.add(evaluationResult);
-                                    
-                                return success;
-                                
-                            } finally {
-                                evaluationSemaphore.release();
-                                int currentProcessed = processedCount.incrementAndGet();
-                                
-                                // 每处理20个答案或处理完成时记录一次进度
-                                if (currentProcessed % 20 == 0 || currentProcessed == totalCount) {
-                                    int successTotal = successCount.get();
-                                    int failureTotal = failureCount.get();
-                                    
-                                    String progressMsg = String.format(
-                                        "已处理 %d/%d 个答案，成功: %d，失败: %d (%.1f%%)", 
-                                        currentProcessed, totalCount, successTotal, failureTotal,
-                                        (currentProcessed * 100.0 / totalCount)
-                                    );
-                                    
-                                    callback.addTaskLog(taskId, "INFO", progressMsg);
-                                    logger.info(progressMsg);
-                                    
-                                    // 更新最终进度
-                                    callback.updateTaskProgress(taskId, currentProcessed, totalCount, "RUNNING");
-                                }
-                            }
-                            
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            logger.error("批量评估任务被中断: {}", e.getMessage());
-                            callback.addTaskLog(taskId, "ERROR", "任务被中断: " + e.getMessage());
-                            return false;
-                        } catch (Exception e) {
-                            logger.error("处理答案 {} 时发生错误: {}", answer.getId(), e.getMessage(), e);
-                            callback.addTaskLog(taskId, "ERROR", "处理答案 " + answer.getId() + " 时发生错误: " + e.getMessage());
+                    evaluationSemaphore.acquire();
+                    try {
+                        Map<String, Object> evaluationResult = evaluateSingleAnswerWithFetchedData(taskId, answer, callback, evaluatorUserId, evaluatorUsername);
+                        detailedResults.add(evaluationResult);
+                        String status = (String) evaluationResult.getOrDefault("evaluationStatus", "failed");
+                        if ("success".equals(status)) {
+                            successCount.incrementAndGet();
+                        } else {
                             failureCount.incrementAndGet();
-                            processedCount.incrementAndGet();
-                            return false;
                         }
-                    }, securityContextTaskExecutor);
-                })
-                .toList();
-            
-            // 等待所有任务完成
-            CompletableFuture<Void> allTasks = CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new));
-            allTasks.join();
-            
-            // 完成任务
-            int finalProcessed = processedCount.get();
-            int finalSuccess = successCount.get();
-            int finalFailure = failureCount.get();
-            
-            String status = finalFailure == 0 ? "COMPLETED" : (finalSuccess > 0 ? "COMPLETED_WITH_ERRORS" : "FAILED");
-            callback.updateTaskProgress(taskId, finalProcessed, totalCount, status);
-            
-            String completionMsg = String.format(
-                "批量评估任务完成！总计: %d，成功: %d，失败: %d，成功率: %.1f%%", 
-                finalProcessed, finalSuccess, finalFailure,
-                finalProcessed > 0 ? (finalSuccess * 100.0 / finalProcessed) : 0
-            );
-            
-            callback.addTaskLog(taskId, "INFO", completionMsg);
-            logger.info("任务 {} 完成: {}", taskId, completionMsg);
-            
-            // 保存任务结果（包含详细评估结果）
-            Map<String, Object> results = Map.of(
-                "totalAnswers", totalCount,
-                "successfulEvaluations", finalSuccess,
-                "failedEvaluations", finalFailure,
-                "completionRate", finalProcessed * 100.0 / totalCount,
-                "successRate", finalProcessed > 0 ? (finalSuccess * 100.0 / finalProcessed) : 0.0,
-                "completedAt", LocalDateTime.now().toString(),
-                "detailedResults", detailedResults
-            );
-            
-            callback.saveTaskResults(taskId, results);
-            
-            // 任务完成后，检查并更新相关考试的状态
-            checkAndUpdateExamStatusAfterEvaluation(answerIds, taskId);
-        }, securityContextTaskExecutor);
+                    } finally {
+                        evaluationSemaphore.release();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    logger.error("评估任务被中断", e);
+                    failureCount.incrementAndGet();
+                } catch (Exception e) {
+                    logger.error("评估答案 " + answer.getId() + " 时发生未知异常", e);
+                    failureCount.incrementAndGet();
+                } finally {
+                    int currentProcessed = processedCount.incrementAndGet();
+                    callback.updateTaskProgress(taskId, currentProcessed, totalAnswers, "RUNNING");
+                }
+            }, securityContextTaskExecutor);
+            evaluationFutures.add(future);
+        }
+        
+        return CompletableFuture.allOf(evaluationFutures.toArray(new CompletableFuture[0]))
+            .whenComplete((res, err) -> {
+                String finalStatus = failureCount.get() == 0 ? "COMPLETED" : (successCount.get() > 0 ? "COMPLETED_WITH_ERRORS" : "FAILED");
+                callback.updateTaskProgress(taskId, totalAnswers, totalAnswers, finalStatus);
+                String completionMsg = String.format(
+                    "批量评估任务完成！总计: %d，成功: %d，失败: %d",
+                    totalAnswers, successCount.get(), failureCount.get()
+                );
+                callback.addTaskLog(taskId, "INFO", completionMsg);
+                logger.info("任务 {} 完成: {}", taskId, completionMsg);
+                
+                checkAndUpdateExamStatusAfterEvaluation(answerIds, taskId);
+            });
     }
     
     /**

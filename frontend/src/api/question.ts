@@ -79,7 +79,7 @@ export const questionApi = {
   // 生成AI评分标准建议
   async generateRubric(questionId: number): Promise<RubricSuggestionItem[]> {
     const response = await api.post<RubricSuggestionItem[]>(`/questions/${questionId}/generate-rubric`, {}, {
-      timeout: 60000 // 设置60秒超时，因为AI生成需要更多时间
+      timeout: 0 // 不设置超时限制，AI生成需要更多时间
     })
     return response.data
   },
@@ -271,6 +271,15 @@ export const questionApi = {
   // 确认AI整理的题目
   async confirmAIOrganizedQuestion(questionId: number): Promise<void> {
     await api.patch(`/questions/${questionId}/confirm-ai-organized`)
+  },
+
+  // AI生成参考答案
+  async generateReferenceAnswer(questionId: number): Promise<{ referenceAnswer: string }> {
+    // AI生成需要更长时间，不设置超时限制
+    const response = await api.post<{ referenceAnswer: string }>(`/questions/${questionId}/generate-reference-answer`, {}, {
+      timeout: 0 // 不设置超时限制
+    })
+    return response.data
   },
 }
 

@@ -93,7 +93,7 @@ export const examApi = {
   },
 
   // 获取考试列表（简化版本）
-  async getExams(params?: any): Promise<any> {
+  async getExams(params: any): Promise<any> {
     const response = await api.get('/exams', { params })
     return response.data
   },
@@ -114,5 +114,20 @@ export const examApi = {
   async getAvailableExams(): Promise<ExamResponse[]> {
     const response = await api.get<ExamResponse[]>('/exams/available')
     return response.data
+  },
+
+  exportExamResults: async (id: number): Promise<BlobPart> => {
+    const response = await api.get<BlobPart>(`/exams/${id}/export-results`, { responseType: 'blob' })
+    return response.data
+  },
+
+  exportStudentPaper: async (examId: number, studentId: number, format: string): Promise<BlobPart> => {
+    const response = await api.get<BlobPart>(`/exams/${examId}/papers/${studentId}/export?format=${format}`, { responseType: 'blob' })
+    return response.data
+  },
+
+  async getExamQuestionsWithStats(examId: number) {
+    const response = await api.get(`/exams/${examId}/questions-with-stats`);
+    return response.data;
   }
 }

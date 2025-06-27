@@ -184,6 +184,29 @@
             show-word-limit
           />
         </el-form-item>
+        <el-form-item label="标准答案">
+          <template #label>
+            <span>标准答案</span>
+            <el-button
+              v-if="isEdit"
+              type="primary"
+              size="small"
+              :loading="generatingAnswer"
+              @click="generateStandardAnswer"
+              style="margin-left: 10px;"
+            >
+              AI生成
+            </el-button>
+          </template>
+          <el-input
+            v-model="formData.standardAnswer"
+            type="textarea"
+            :rows="6"
+            placeholder="可由AI生成或手动输入详细的标准答案"
+            maxlength="4000"
+            show-word-limit
+          />
+        </el-form-item>
       </div>
 
       <el-row :gutter="20">
@@ -314,6 +337,7 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import AIQuestionAssistant from '@/components/ai/AIQuestionAssistant.vue'
+import { questionApi } from '@/api/question'
 
 // Props
 const props = defineProps<{
@@ -334,11 +358,12 @@ const visible = computed({
   set: (value) => emit('update:modelValue', value)
 })
 
-const formRef = ref<FormInstance>()
+const formRef = ref<FormInstance | null>(null)
 const submitting = ref(false)
 const showTagInput = ref(false)
 const newTag = ref('')
 const tagInputRef = ref()
+const generatingAnswer = ref(false)
 
 const isEdit = computed(() => !!props.editingQuestion?.id)
 
@@ -358,6 +383,7 @@ const formData = ref({
     { answer: '' }
   ],
   referenceAnswer: '',
+  standardAnswer: '',
   score: 5,
   estimatedTime: 3,
   source: 'original',
@@ -408,6 +434,7 @@ watch(() => props.editingQuestion, (question) => {
       ],
       blanks: question.blanks || [{ answer: '' }],
       referenceAnswer: question.referenceAnswer || '',
+      standardAnswer: question.standardAnswer || '',
       score: question.score || 5,
       estimatedTime: question.estimatedTime || 3,
       source: question.source || 'original',
@@ -434,6 +461,7 @@ const resetForm = () => {
     ],
     blanks: [{ answer: '' }],
     referenceAnswer: '',
+    standardAnswer: '',
     score: 5,
     estimatedTime: 3,
     source: 'original',
@@ -516,6 +544,24 @@ const removeTag = (index: number) => {
   formData.value.tags.splice(index, 1)
 }
 
+const generateStandardAnswer = async () => {
+  if (!formData.value.id) {
+    ElMessage.warning('请先保存题目，再生成标准答案。')
+    return
+  }
+  generatingAnswer.value = true
+  try {
+    const res = await questionApi.generateStandardAnswer(formData.value.id)
+    formData.value.standardAnswer = res.standardAnswer
+    ElMessage.success('标准答案生成成功！')
+  } catch (error) {
+    console.error('AI生成标准答案失败:', error)
+    ElMessage.error('AI生成标准答案失败，请稍后重试。')
+  } finally {
+    generatingAnswer.value = false
+  }
+}
+
 const handleSubmit = async () => {
   if (!formRef.value) return
 
@@ -589,6 +635,7 @@ const handleQuestionFilled = (questionData: any) => {
   if (questionData.difficulty) formData.value.difficulty = questionData.difficulty
   if (questionData.score) formData.value.score = questionData.score
   if (questionData.referenceAnswer) formData.value.referenceAnswer = questionData.referenceAnswer
+  if (questionData.standardAnswer) formData.value.standardAnswer = questionData.standardAnswer
   
   // 处理选择题选项
   if (questionData.options && questionData.options.length > 0) {

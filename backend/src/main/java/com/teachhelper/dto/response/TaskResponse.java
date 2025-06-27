@@ -3,6 +3,7 @@ package com.teachhelper.dto.response;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -117,7 +118,7 @@ public class TaskResponse {
 
     // Constructors
     public TaskResponse() {}
-
+    
     public TaskResponse(String taskId, String type, String name, String status) {
         this.taskId = taskId;
         this.type = type;

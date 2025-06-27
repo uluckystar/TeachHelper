@@ -45,15 +45,25 @@ import com.teachhelper.service.auth.AuthService;
 import com.teachhelper.service.exam.ExamService;
 import com.teachhelper.service.student.StudentAnswerService;
 import com.teachhelper.repository.UserRepository;
+import com.teachhelper.dto.request.BatchDeleteRequest;
+import com.teachhelper.dto.ExamExportData;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.ByteArrayInputStream;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 
 @RestController
 @RequestMapping("/api/exams")
 @Tag(name = "考试管理", description = "考试的创建、查询、修改、删除等操作")
 public class ExamController {
+    
+    private static final Logger log = LoggerFactory.getLogger(ExamController.class);
     
     @Autowired
     private ExamService examService;
@@ -301,13 +311,47 @@ public class ExamController {
     @Operation(summary = "导出考试", description = "导出考试及其题目信息")
     public ResponseEntity<Resource> exportExam(@PathVariable Long examId) {
         try {
-            ByteArrayResource resource = examService.exportExamToFile(examId);
+            Resource resource = examService.exportExamToFile(examId);
+            String filename = "exam_" + examId + ".json";
+            
             return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=exam_" + examId + ".xlsx")
-                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                    .body(resource);
-        } catch (IOException | RuntimeException e) {
-            return ResponseEntity.badRequest().build();
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(resource);
+        } catch (IOException e) {
+            log.error("导出考试失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+    
+    @GetMapping("/{examId}/export-results")
+    @Operation(summary = "导出考试成绩单", description = "导出考试的完整成绩单为Excel文件")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<Resource> exportExamResults(@PathVariable Long examId) {
+        try {
+            User currentUser = authService.getCurrentUser();
+            log.info("用户 {} 请求导出考试 {} 的成绩单", currentUser.getUsername(), examId);
+
+            // 调用新的服务方法，同时获取数据流和考试标题
+            ExamExportData exportData = examService.exportExamResults(examId);
+
+            String fileName = URLEncoder.encode(exportData.examTitle() + "-成绩单.xlsx", StandardCharsets.UTF_8.toString())
+                    .replaceAll("\\+", "%20");
+            
+            HttpHeaders headers = new HttpHeaders();
+            headers.add(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + fileName);
+            headers.add(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION);
+
+            return ResponseEntity.ok()
+                    .headers(headers)
+                    .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                    .body(new ByteArrayResource(exportData.inputStream().readAllBytes()));
+        } catch (IOException e) {
+            log.error("导出考试 {} 成绩单时发生IO异常", examId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        } catch (Exception e) {
+            log.error("导出考试 {} 成绩单时发生未知异常", examId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
     
@@ -526,6 +570,52 @@ public class ExamController {
         return ResponseEntity.ok("答案导入功能暂未实现，请使用 /api/student-answers/import/exam/{examId} 端点");
     }
 
+    @DeleteMapping("/{examId}/answers/batch")
+    @Operation(summary = "批量删除考试答案", description = "批量删除指定考试中的学生答案")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> batchDeleteExamAnswers(
+            @PathVariable Long examId,
+            @RequestBody BatchDeleteRequest request) {
+        try {
+            List<Long> answerIds = request.getAnswerIds();
+            List<Long> studentIds = request.getStudentIds();
+            String deleteType = request.getDeleteType(); // "answers" or "students"
+            
+            Map<String, Object> result = new HashMap<>();
+            int deletedCount = 0;
+            
+            if ("students".equals(deleteType) && studentIds != null && !studentIds.isEmpty()) {
+                // 按学生批量删除
+                for (Long studentId : studentIds) {
+                    try {
+                        studentAnswerService.deleteStudentExamAnswers(studentId, examId);
+                        deletedCount++;
+                    } catch (Exception e) {
+                        log.error("删除学生 {} 在考试 {} 中的答案失败: {}", studentId, examId, e.getMessage());
+                    }
+                }
+                result.put("message", String.format("成功删除 %d 个学生的考试答案", deletedCount));
+            } else if ("answers".equals(deleteType) && answerIds != null && !answerIds.isEmpty()) {
+                // 按答案ID批量删除
+                deletedCount = studentAnswerService.batchDeleteAnswers(answerIds, examId);
+                result.put("message", String.format("成功删除 %d 个答案", deletedCount));
+            } else {
+                result.put("error", "请指定有效的删除类型和ID列表");
+                return ResponseEntity.badRequest().body(result);
+            }
+            
+            result.put("deletedCount", deletedCount);
+            result.put("examId", examId);
+            
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("批量删除考试答案失败: {}", e.getMessage(), e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("error", "批量删除失败: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+        }
+    }
+
     @PostMapping("/check-expired")
     @Operation(summary = "手动检查过期考试", description = "手动触发检查并结束过期的考试（用于测试和调试）")
     @PreAuthorize("hasRole('ADMIN')")
@@ -612,7 +702,7 @@ public class ExamController {
 
     // 导出学生试卷
     @GetMapping("/{examId}/papers/{studentId}/export")
-    @Operation(summary = "导出学生试卷", description = "导出指定学生的试卷为PDF或Excel")
+    @Operation(summary = "导出学生试卷", description = "导出指定学生的试卷为PDF或Word")
     @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
     public ResponseEntity<ByteArrayResource> exportStudentPaper(
             @PathVariable Long examId,
@@ -630,23 +720,24 @@ public class ExamController {
             String filename;
             String contentType;
             
-            if ("excel".equalsIgnoreCase(format)) {
-                resource = studentAnswerService.exportStudentPaperAsExcel(paper);
-                filename = String.format("学生试卷_%s_%s.xlsx", 
-                    paper.getStudentName(), paper.getExamTitle());
-                contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            String studentName = paper.getStudentName().replaceAll("[\\\\/:*?\"<>|]", "_");
+            String examTitle = paper.getExamTitle().replaceAll("[\\\\/:*?\"<>|]", "_");
+
+            if ("word".equalsIgnoreCase(format) || "docx".equalsIgnoreCase(format)) {
+                resource = studentAnswerService.exportStudentPaperAsWord(paper);
+                filename = String.format("学生试卷_%s_%s.docx", studentName, examTitle);
+                contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
             } else {
                 // 默认PDF格式
                 resource = studentAnswerService.exportStudentPaperAsPdf(paper);
-                filename = String.format("学生试卷_%s_%s.pdf", 
-                    paper.getStudentName(), paper.getExamTitle());
+                filename = String.format("学生试卷_%s_%s.pdf", studentName, examTitle);
                 contentType = "application/pdf";
             }
             
             return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(contentType))
                 .header(HttpHeaders.CONTENT_DISPOSITION, 
-                    "attachment; filename=\"" + filename + "\"")
+                    "attachment; filename=\"" + java.net.URLEncoder.encode(filename, "UTF-8") + "\"")
                 .body(resource);
                 
         } catch (Exception e) {

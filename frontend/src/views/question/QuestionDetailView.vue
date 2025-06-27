@@ -68,7 +68,7 @@
           <div class="options-list">
             <div 
               v-for="(option, index) in parsedOptions" 
-              :key="index"
+              :key="index" 
               class="option-item"
               :class="{ 'correct-option': option.isCorrect }"
             >
@@ -86,6 +86,24 @@
             {{ trueFalseAnswer ? '正确' : '错误' }}
           </el-tag>
         </div>
+
+        <!-- 参考答案 -->
+        <el-card v-if="question && isSubjectiveQuestion" class="reference-answer-card">
+          <template #header>
+            <div class="card-header">
+              <span>参考答案</span>
+              <el-button 
+                type="primary" 
+                size="small" 
+                @click="generateReferenceAnswer"
+                :loading="generatingReferenceAnswer"
+              >
+                AI生成参考答案
+              </el-button>
+            </div>
+          </template>
+          <MarkdownRenderer :content="question.referenceAnswer" />
+        </el-card>
       </el-card>
 
       <!-- 评分标准 -->
@@ -169,15 +187,16 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { questionApi } from '@/api/question'
 import RubricManagementDialog from '@/components/evaluation/RubricManagementDialog.vue'
+import MarkdownRenderer from '@/components/common/MarkdownRenderer.vue'
 import type { QuestionResponse, RubricCriterionResponse, QuestionOption } from '@/types/api' // Changed RubricCriterion to RubricCriterionResponse
 
 const router = useRouter()
 const route = useRoute()
 const loading = ref(false)
 const question = ref<QuestionResponse | null>(null)
-// const rubricCriteria = ref<RubricCriterion[]>([])
 const rubricCriteria = ref<RubricCriterionResponse[]>([]) // Changed type to RubricCriterionResponse
 const rubricDialogVisible = ref(false)
+const generatingReferenceAnswer = ref(false)
 
 const questionId = computed(() => {
   const id = route.params.id
@@ -223,6 +242,23 @@ const loadQuestion = async () => {
     router.back()
   } finally {
     loading.value = false
+  }
+}
+
+const generateReferenceAnswer = async () => {
+  if (!question.value) return;
+  generatingReferenceAnswer.value = true;
+  try {
+    const response = await questionApi.generateReferenceAnswer(questionId.value);
+    if (question.value) {
+      question.value.referenceAnswer = response.referenceAnswer;
+    }
+    ElMessage.success('AI参考答案生成成功');
+  } catch (error) {
+    console.error('Failed to generate reference answer:', error);
+    ElMessage.error('AI参考答案生成失败');
+  } finally {
+    generatingReferenceAnswer.value = false;
   }
 }
 
@@ -319,8 +355,11 @@ const getQuestionTypeTag = (type: string) => {
 }
 
 onMounted(() => {
-  loadQuestion()
-  loadRubricCriteria()
+  loadQuestion().then(() => {
+    if (isSubjectiveQuestion.value) {
+      loadRubricCriteria()
+    }
+  })
 })
 </script>
 
@@ -472,5 +511,19 @@ onMounted(() => {
 .stat-label {
   font-size: 14px;
   color: #909399;
+}
+
+.question-card, .rubric-card, .stats-card, .reference-answer-card {
+  border-radius: 8px;
+}
+
+.reference-answer-card {
+  margin-top: 20px;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 </style>

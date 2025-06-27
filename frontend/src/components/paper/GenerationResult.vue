@@ -296,7 +296,8 @@ const getQuestionTypeText = (type: string) => {
     'SHORT_ANSWER': '简答题',
     'ESSAY': '论述题',
     'CODING': '编程题',
-    'CASE_ANALYSIS': '案例分析题'
+    'CASE_ANALYSIS': '案例分析题',
+    'CALCULATION': '计算题'
   }
   return typeMap[type] || type
 }
@@ -309,7 +310,8 @@ const getQuestionTypeTagType = (type: string): 'success' | 'primary' | 'warning'
     'SHORT_ANSWER': 'info',
     'ESSAY': 'danger',
     'CODING': 'info',
-    'CASE_ANALYSIS': 'success'
+    'CASE_ANALYSIS': 'success',
+    'CALCULATION': 'primary'
   }
   return typeMap[type] || 'info'
 }

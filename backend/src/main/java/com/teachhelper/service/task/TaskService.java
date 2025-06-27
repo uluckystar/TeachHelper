@@ -106,4 +106,9 @@ public interface TaskService {
      * 保存任务结果
      */
     void saveTaskResults(String taskId, Map<String, Object> results);
+    
+    /**
+     * 创建学习通答案导入任务
+     */
+    String createLearningAnswerImportTask(String subject, List<String> classFolders, Long examId, String operator);
 }

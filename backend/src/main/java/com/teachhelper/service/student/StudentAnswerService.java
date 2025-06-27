@@ -1,55 +1,87 @@
 package com.teachhelper.service.student;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
-
+import com.itextpdf.kernel.colors.DeviceRgb;
+import com.itextpdf.kernel.font.PdfFont;
+import com.itextpdf.kernel.font.PdfFontFactory;
+import com.itextpdf.kernel.geom.PageSize;
+import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfWriter;
+import com.itextpdf.layout.Document;
+import com.itextpdf.layout.element.Paragraph;
+import com.itextpdf.layout.element.Text;
+import com.itextpdf.layout.properties.TextAlignment;
+import com.teachhelper.dto.request.StudentAnswerImportData;
+import com.teachhelper.dto.response.ImportResult;
+import com.teachhelper.dto.response.StudentAnswerResponse;
+import com.teachhelper.dto.response.StudentExamPaperResponse;
+import com.teachhelper.entity.*;
+import com.teachhelper.exception.ResourceNotFoundException;
+import com.teachhelper.repository.*;
+import com.teachhelper.service.answer.LearningAnswerParserService;
+import com.teachhelper.service.answer.SmartQuestionMatchingService;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFRun;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import com.teachhelper.entity.Question;
-import com.teachhelper.entity.User;
-import com.teachhelper.entity.StudentAnswer;
-import com.teachhelper.dto.response.StudentAnswerResponse;
-import com.teachhelper.dto.response.StudentExamPaperResponse;
-import com.teachhelper.exception.ResourceNotFoundException;
-import com.teachhelper.repository.ExamSubmissionRepository;
-import com.teachhelper.repository.QuestionRepository;
-import com.teachhelper.repository.StudentAnswerRepository;
-import com.teachhelper.repository.UserRepository;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
-@Transactional
 public class StudentAnswerService {
-    
+
+    private static final Logger log = LoggerFactory.getLogger(StudentAnswerService.class);
+
     @Autowired
     private StudentAnswerRepository studentAnswerRepository;
-    
+
     @Autowired
     private UserRepository userRepository;
-    
+
     @Autowired
     private QuestionRepository questionRepository;
-    
+
     @Autowired
     private ExamSubmissionRepository examSubmissionRepository;
+
+    @Autowired
+    private ExamRepository examRepository;
+
+    @Autowired
+    private QuestionBankRepository questionBankRepository;
+
+    @Value("${app.upload.dir}")
+    private String uploadDir;
     
+    @Autowired
+    private LearningAnswerParserService learningAnswerParserService;
+    
+    @Autowired
+    private SmartQuestionMatchingService smartQuestionMatchingService;
+
+    @Transactional
     public StudentAnswer submitAnswer(StudentAnswer studentAnswer) {
         // Validate question exists
         Question question = questionRepository.findById(studentAnswer.getQuestion().getId())
@@ -93,6 +125,7 @@ public class StudentAnswerService {
         }
     }
     
+    @Transactional
     public StudentAnswer updateAnswer(Long id, StudentAnswer answerDetails) {
         StudentAnswer answer = studentAnswerRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Student answer not found with id: " + id));
@@ -109,10 +142,39 @@ public class StudentAnswerService {
         return studentAnswerRepository.save(answer);
     }
     
+    @Transactional
     public void deleteAnswer(Long id) {
         StudentAnswer answer = studentAnswerRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Student answer not found with id: " + id));
         studentAnswerRepository.delete(answer);
+    }
+    
+    @Transactional
+    public int batchDeleteAnswers(List<Long> answerIds, Long examId) {
+        int deletedCount = 0;
+        for (Long answerId : answerIds) {
+            try {
+                StudentAnswer answer = studentAnswerRepository.findById(answerId).orElse(null);
+                if (answer != null) {
+                    // 验证答案属于指定的考试
+                    if (examId == null || (answer.getQuestion() != null 
+                            && answer.getQuestion().getExam() != null 
+                            && examId.equals(answer.getQuestion().getExam().getId()))) {
+                        studentAnswerRepository.deleteById(answerId);
+                        deletedCount++;
+                        log.info("成功删除答案 ID: {}", answerId);
+                    } else {
+                        log.warn("答案 {} 不属于考试 {}, 跳过删除", answerId, examId);
+                    }
+                } else {
+                    log.warn("答案 {} 不存在, 跳过删除", answerId);
+                }
+            } catch (Exception e) {
+                log.error("删除答案 {} 失败: {}", answerId, e.getMessage());
+            }
+        }
+        log.info("批量删除答案完成，删除数量: {}/{}", deletedCount, answerIds.size());
+        return deletedCount;
     }
     
     @Transactional(readOnly = true)
@@ -250,6 +312,7 @@ public class StudentAnswerService {
     }
     
     // Batch operations
+    @Transactional
     public List<StudentAnswer> submitAnswersInBatch(List<StudentAnswer> answers) {
         // Process each answer to ensure proper user and question references
         for (StudentAnswer answer : answers) {
@@ -331,6 +394,7 @@ public class StudentAnswerService {
         }
     }
 
+    @Transactional(readOnly = true)
     public ByteArrayResource exportAnswersToFile(Long examId, Long questionId, Boolean evaluated) throws IOException {
         List<StudentAnswer> answers = getAnswersForExport(examId, questionId, evaluated);
         
@@ -381,6 +445,7 @@ public class StudentAnswerService {
         return new ByteArrayResource(outputStream.toByteArray());
     }
 
+    @Transactional(readOnly = true)
     public ByteArrayResource exportAnswersByStudent(Long studentId) throws IOException {
         List<StudentAnswer> answers = getAnswersByStudentId(studentId);
         
@@ -425,15 +490,820 @@ public class StudentAnswerService {
         return new ByteArrayResource(outputStream.toByteArray());
     }
 
-    // Future implementation for import functionality
+    // 导入普通Excel/CSV格式的答案文件
+    @Transactional
     public int importAnswersFromFile(MultipartFile file) throws IOException {
-        // TODO: Implement import from file logic using User entities
+        if (file.isEmpty()) {
+            throw new IllegalArgumentException("上传文件为空");
+        }
+        
+        String filename = file.getOriginalFilename();
+        if (filename == null) {
+            throw new IllegalArgumentException("文件名为空");
+        }
+        
+        int importedCount = 0;
+        
+        try {
+            if (filename.toLowerCase().endsWith(".csv")) {
+                importedCount = importCSVAnswers(file);
+            } else if (filename.toLowerCase().endsWith(".xlsx") || filename.toLowerCase().endsWith(".xls")) {
+                importedCount = importExcelAnswers(file);
+            } else {
+                throw new IllegalArgumentException("不支持的文件格式，仅支持 CSV 和 Excel 文件");
+            }
+        } catch (Exception e) {
+            log.error("导入答案文件失败: {}", e.getMessage(), e);
+            throw new IOException("导入失败: " + e.getMessage(), e);
+        }
+        
+        return importedCount;
+    }
+
+    // 导入答案到指定考试
+    @Transactional
+    public int importAnswersToExam(Long examId, MultipartFile file) throws IOException {
+        if (file.isEmpty()) {
+            throw new IllegalArgumentException("上传文件为空");
+        }
+        
+        // 验证考试是否存在
+        Optional<Exam> examOpt = examRepository.findById(examId);
+        if (examOpt.isEmpty()) {
+            throw new IllegalArgumentException("考试不存在: " + examId);
+        }
+        
+        return importAnswersFromFile(file);
+    }
+
+    // 批量导入学习通答案（不指定考试ID）
+    public ImportResult importLearningAnswers(String subject, List<String> classFolders) throws IOException {
+        return importLearningAnswers(subject, classFolders, null);
+    }
+
+    // 批量导入学习通答案（指定考试ID）
+    public ImportResult importLearningAnswers(String subject, List<String> classFolders, Long examId) throws IOException {
+        log.info("🚀 开始批量导入学习通答案 - 科目: {}, 班级数: {}, 考试ID: {}", subject, classFolders.size(), examId);
+        
+        ImportResult result = new ImportResult();
+        int totalFiles = 0;
+        int successCount = 0;
+        int failedCount = 0;
+        int skippedCount = 0;
+        
+        for (String classFolder : classFolders) {
+            log.info("📁 开始处理班级: {}", classFolder);
+            
+            try {
+                List<File> documents = learningAnswerParserService.getAnswerDocuments(uploadDir, subject, classFolder);
+                totalFiles += documents.size();
+                
+                log.info("📄 班级 {} 共有 {} 个文档", classFolder, documents.size());
+                
+                int classSuccessCount = 0;
+                int classFailedCount = 0;
+                int classSkippedCount = 0;
+                
+                for (File document : documents) {
+                    try {
+                        log.info("📖 开始处理文档: {}", document.getName());
+                        
+                        // 解析文档
+                        StudentAnswerImportData importData = learningAnswerParserService.parseLearningAnswerDocument(document);
+                        
+                        if (importData == null) {
+                            log.warn("⚠️ 跳过无法解析的文档: {}", document.getName());
+                            classSkippedCount++;
+                            continue;
+                        }
+                        
+                        if (importData.getQuestions() == null || importData.getQuestions().isEmpty()) {
+                            log.warn("⚠️ 跳过没有题目的文档: {}", document.getName());
+                            classSkippedCount++;
+                            continue;
+                        }
+                        
+                        // 记录文档基本信息
+                        log.info("📋 文档信息 - 学生: [{}], 学号: [{}], 题目数: {}", 
+                                importData.getStudentName(), importData.getStudentNumber(), 
+                                importData.getQuestions().size());
+                        
+                        // 处理单个学生的答案 - 使用容错机制
+                        int importedAnswers = processSingleStudentAnswersWithRetry(importData, examId, document.getName());
+                        
+                        if (importedAnswers > 0) {
+                            classSuccessCount++;
+                            log.info("✅ 文档处理成功: {} - 导入 {} 个答案", document.getName(), importedAnswers);
+                        } else {
+                            classFailedCount++;
+                            log.warn("❌ 文档处理失败: {} - 未导入任何答案", document.getName());
+                        }
+                        
+                    } catch (Exception e) {
+                        classFailedCount++;
+                        log.error("❌ 处理文档异常: {} - {}", document.getName(), e.getMessage());
+                        
+                        // 记录详细错误信息但不中断处理
+                        if (log.isDebugEnabled()) {
+                            log.debug("文档处理详细错误:", e);
+                        }
+                    }
+                }
+                
+                successCount += classSuccessCount;
+                failedCount += classFailedCount;
+                skippedCount += classSkippedCount;
+                
+                log.info("📊 班级 {} 处理完成 - 成功: {}, 失败: {}, 跳过: {}", 
+                        classFolder, classSuccessCount, classFailedCount, classSkippedCount);
+                
+            } catch (Exception e) {
+                log.error("❌ 处理班级异常: {} - {}", classFolder, e.getMessage(), e);
+                // 班级级别的异常，继续处理下一个班级
+            }
+        }
+        
+        result.setTotalFiles(totalFiles);
+        result.setSuccessCount(successCount);
+        result.setFailedCount(failedCount);
+        result.setSkippedCount(skippedCount);
+        
+        log.info("🎯 批量导入完成 - 总文件: {}, 成功: {}, 失败: {}, 跳过: {}", 
+                totalFiles, successCount, failedCount, skippedCount);
+        
+        return result;
+    }
+    
+    /**
+     * 带重试机制的单个学生答案处理
+     */
+    private int processSingleStudentAnswersWithRetry(StudentAnswerImportData importData, Long examId, String fileName) {
+        int maxRetries = 2;
+        int retryCount = 0;
+        
+        while (retryCount <= maxRetries) {
+            try {
+                if (retryCount > 0) {
+                    log.info("🔄 第 {} 次重试处理学生: {} (文档: {})", retryCount, importData.getStudentName(), fileName);
+                    
+                    // 重试前稍微等待，避免数据库锁定问题
+                    Thread.sleep(100 * retryCount);
+                }
+                
+                return processSingleStudentAnswers(importData, examId);
+                
+            } catch (Exception e) {
+                retryCount++;
+                
+                if (retryCount <= maxRetries) {
+                    log.warn("⚠️ 处理学生失败，准备重试 ({}/{}) - 学生: {}, 错误: {}", 
+                            retryCount, maxRetries, importData.getStudentName(), e.getMessage());
+                } else {
+                    log.error("❌ 处理学生最终失败 - 学生: {}, 文档: {}, 错误: {}", 
+                             importData.getStudentName(), fileName, e.getMessage());
+                    
+                    // 记录失败的学生信息，便于后续排查
+                    log.error("🔍 失败学生详细信息 - 姓名: [{}], 学号: [{}], 班级: [{}], 学院: [{}]",
+                             importData.getStudentName(), importData.getStudentNumber(), 
+                             importData.getClassName(), importData.getCollege());
+                    
+                    return 0; // 最终失败，返回0
+                }
+            }
+        }
+        
         return 0;
     }
 
-    public int importAnswersToExam(Long examId, MultipartFile file) throws IOException {
-        // TODO: Implement import to specific exam logic using User entities
+    // 处理单个学生的答案数据
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    protected int processSingleStudentAnswers(StudentAnswerImportData importData) {
+        return processSingleStudentAnswers(importData, null);
+    }
+
+    // 处理单个学生的答案数据（支持指定考试ID）
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    protected int processSingleStudentAnswers(StudentAnswerImportData importData, Long examId) {
+        try {
+            // 清理分数解析上下文，开始处理新的学生答案文档
+            smartQuestionMatchingService.clearScoreContext();
+            log.debug("开始处理学生{}的答案，已清理分数解析上下文", importData.getStudentName());
+            
+            // 查找或创建学生用户 - 使用更强的验证
+            User student = null;
+            try {
+                student = findOrCreateStudent(importData);
+                if (student == null || student.getId() == null) {
+                    log.error("❌ 无法创建或找到学生用户: {}", importData.getStudentName());
+                    return 0;
+                }
+                log.debug("✅ 找到/创建学生用户: {} (ID: {})", student.getRealName(), student.getId());
+            } catch (Exception e) {
+                log.error("❌ 创建/查找学生用户异常: {} - {}", importData.getStudentName(), e.getMessage());
+                return 0; // 学生用户失败，直接返回，不影响其他学生
+            }
+            
+            int importedCount = 0;
+            
+            for (StudentAnswerImportData.QuestionAnswer qa : importData.getQuestions()) {
+                try {
+                    // 验证题目数据
+                    if (qa == null || qa.getQuestionContent() == null || qa.getQuestionContent().trim().isEmpty()) {
+                        log.warn("跳过无效题目: {}", qa != null ? qa.getQuestionNumber() : "null");
+                        continue;
+                    }
+                    
+                    // 使用智能匹配服务根据题目内容匹配或创建题目
+                    QuestionBank defaultBank = findOrCreateDefaultQuestionBank(importData);
+                    Question question = smartQuestionMatchingService.smartMatchQuestion(qa, examId, defaultBank);
+                    
+                    // 严格验证题目对象
+                    if (question == null) {
+                        log.warn("智能匹配返回空题目: {}", qa.getQuestionContent());
+                        continue;
+                    }
+                    
+                    if (question.getId() == null) {
+                        log.error("题目ID为null: {} - 尝试重新保存", question.getTitle());
+                        try {
+                            question = questionRepository.save(question);
+                            // 移除可能导致Session异常的flush操作
+                            if (question.getId() == null) {
+                                log.error("重新保存题目失败，跳过: {}", question.getTitle());
+                                continue;
+                            }
+                        } catch (Exception e) {
+                            log.error("重新保存题目异常: {}", e.getMessage());
+                            continue;
+                        }
+                    }
+                    
+                    // 如果智能匹配返回的题目需要设置考试关联
+                    if (examId != null && (question.getExam() == null || !Objects.equals(question.getExam().getId(), examId))) {
+                        Optional<Exam> exam = examRepository.findById(examId);
+                        if (exam.isPresent()) {
+                            question.setExam(exam.get());
+                            question = questionRepository.save(question);
+                            log.debug("更新题目考试关联: {} -> 考试{}", question.getTitle(), examId);
+                        }
+                    }
+                    
+                    // 检查是否已存在该学生对该题目的答案
+                    StudentAnswer existingAnswer = studentAnswerRepository
+                        .findByStudentIdAndQuestionId(student.getId(), question.getId());
+                    
+                    // 处理答案内容 - 允许空答案但记录日志
+                    String answerContent = qa.getAnswerContent();
+                    if (answerContent == null || answerContent.trim().isEmpty()) {
+                        answerContent = ""; // 设置为空字符串而不是null
+                        log.debug("题目{}的答案为空，设置为空字符串", qa.getQuestionNumber());
+                    }
+                    
+                    if (existingAnswer != null) {
+                        // 如果已存在，更新答案
+                        existingAnswer.setAnswerText(answerContent);
+                        
+                        // 严格验证更新前的实体状态
+                        if (existingAnswer.getId() == null) {
+                            log.error("现有答案ID为null，跳过更新: 学生{}, 题目{}", student.getRealName(), question.getTitle());
+                            continue;
+                        }
+                        
+                        studentAnswerRepository.save(existingAnswer);
+                        log.debug("更新学生 {} 对题目 {} 的答案", student.getRealName(), question.getTitle());
+                    } else {
+                        // 创建新的答案记录 - 加强验证
+                        if (student.getId() == null || question.getId() == null) {
+                            log.error("关联实体ID为null，无法创建答案: 学生ID={}, 题目ID={}", 
+                                     student.getId(), question.getId());
+                            continue;
+                        }
+                        
+                        StudentAnswer answer = new StudentAnswer();
+                        answer.setStudent(student);
+                        answer.setQuestion(question);
+                        answer.setAnswerText(answerContent);
+                        answer.setEvaluated(false);
+                        
+                        // 验证实体状态
+                        log.debug("创建答案实体: 学生ID={}, 题目ID={}, 答案长度={}", 
+                                 student.getId(), question.getId(), answerContent.length());
+                        
+                        try {
+                            StudentAnswer savedAnswer = studentAnswerRepository.save(answer);
+                            
+                            // 验证保存结果
+                            if (savedAnswer.getId() != null) {
+                                log.debug("✅ 创建学生 {} 对题目 {} 的答案 (ID: {})", 
+                                         student.getRealName(), question.getTitle(), savedAnswer.getId());
+                            } else {
+                                log.error("❌ 答案保存后ID仍为null: 学生{}, 题目{}", 
+                                         student.getRealName(), question.getTitle());
+                                continue;
+                            }
+                        } catch (Exception e) {
+                            log.error("❌ 保存答案失败: 学生{}, 题目{}, 错误: {}", 
+                                     student.getRealName(), question.getTitle(), e.getMessage());
+                            continue;
+                        }
+                    }
+                    
+                    importedCount++;
+                    
+                } catch (Exception e) {
+                    log.error("保存学生 {} 的第{}题答案失败: {}", student.getRealName(), qa.getQuestionNumber(), e.getMessage());
+                    // 继续处理下一题，不要中断整个导入过程
+                    if (log.isDebugEnabled()) {
+                        log.debug("详细错误信息:", e);
+                    }
+                }
+            }
+            
+            log.info("✅ 学生 {} 答案处理完成，成功导入 {} 题", student.getRealName(), importedCount);
+            return importedCount;
+            
+        } catch (Exception e) {
+            log.error("❌ 处理学生 {} 的答案时发生异常: {}", importData.getStudentName(), e.getMessage(), e);
+            // 不再重新抛出异常，避免影响其他学生的处理
+            return 0;
+        }
+    }
+    
+    // 查找或创建题目
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    protected Question findOrCreateQuestion(StudentAnswerImportData.QuestionAnswer qa, StudentAnswerImportData importData) {
+        String questionContent = qa.getQuestionContent();
+        if (questionContent == null || questionContent.trim().isEmpty()) {
+            return null;
+        }
+        
+        // 清理题目内容
+        questionContent = questionContent.trim();
+        
+        // 尝试通过标题模糊匹配现有题目
+        String searchKeyword = questionContent.length() > 30 
+            ? questionContent.substring(0, 30) 
+            : questionContent;
+            
+        try {
+            // 使用现有的搜索方法
+            Page<Question> existingQuestions = questionRepository.searchQuestionsWithFilters(
+                searchKeyword, null, null, null, 
+                PageRequest.of(0, 10));
+            
+            for (Question existingQuestion : existingQuestions.getContent()) {
+                // 计算相似度（简单的包含关系检查）
+                if (existingQuestion.getContent().contains(searchKeyword) ||
+                    questionContent.contains(existingQuestion.getContent().substring(0, Math.min(30, existingQuestion.getContent().length())))) {
+                    log.debug("找到匹配的现有题目: {} (ID: {})", existingQuestion.getTitle(), existingQuestion.getId());
+                    return existingQuestion;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("搜索现有题目时出错: {}", e.getMessage());
+        }
+        
+        // 如果没有找到匹配的题目，创建新题目
+        return createNewQuestion(qa, importData);
+    }
+    
+    // 创建新题目
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    protected Question createNewQuestion(StudentAnswerImportData.QuestionAnswer qa, StudentAnswerImportData importData) {
+        try {
+            Question newQuestion = new Question();
+            
+            // 设置题目标题（从内容中提取前50个字符）
+            String title = qa.getQuestionContent().length() > 50 
+                ? qa.getQuestionContent().substring(0, 47) + "..." 
+                : qa.getQuestionContent();
+            newQuestion.setTitle(title);
+            
+            // 设置题目内容
+            newQuestion.setContent(qa.getQuestionContent());
+            
+            // 设置题目类型为简答题
+            newQuestion.setQuestionType(QuestionType.SHORT_ANSWER);
+            
+            // 设置默认分值
+            newQuestion.setMaxScore(BigDecimal.valueOf(10));
+            
+            // 设置创建者为系统用户（ID为1，通常是admin）
+            newQuestion.setCreatedBy(1L);
+            
+            // 设置题目来源
+            newQuestion.setSourceType("学习通导入");
+            
+            // 设置为未确认状态，需要教师确认
+            newQuestion.setIsConfirmed(false);
+            
+            // 不关联特定考试，设置为题库题目
+            newQuestion.setExam(null);
+            
+            // 为导入的题目设置默认题库
+            QuestionBank defaultBank = findOrCreateDefaultQuestionBank(importData);
+            newQuestion.setQuestionBank(defaultBank);
+            
+            // 保存题目并刷新，确保获得ID
+            Question savedQuestion = questionRepository.save(newQuestion);
+            questionRepository.flush(); // 强制刷新到数据库
+            
+            // 验证保存是否成功
+            if (savedQuestion.getId() == null) {
+                log.error("题目保存失败，未获得ID: {}", savedQuestion.getTitle());
+                return null;
+            }
+            
+            log.info("创建新题目: {} (ID: {}, 来源: {}, 题库: {})", 
+                savedQuestion.getTitle(), savedQuestion.getId(), 
+                importData.getExamTitle(), defaultBank.getName());
+            
+            return savedQuestion;
+            
+        } catch (Exception e) {
+            log.error("创建题目失败: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+    
+    /**
+     * 查找或创建默认题库
+     */
+    @Transactional
+    protected QuestionBank findOrCreateDefaultQuestionBank(StudentAnswerImportData importData) {
+        try {
+            // 根据科目查找或创建题库
+            String subject = importData.getSubject() != null ? importData.getSubject() : "通用";
+            String bankName = "学习通导入-" + subject;
+            
+            // 查找现有题库
+            Optional<QuestionBank> existingBank = questionBankRepository.findByNameAndCreatedBy(bankName, 1L);
+            if (existingBank.isPresent()) {
+                return existingBank.get();
+            }
+            
+            // 创建新题库
+            QuestionBank newBank = new QuestionBank();
+            newBank.setName(bankName);
+            newBank.setDescription("从学习通导入的" + subject + "科目题目");
+            newBank.setSubject(subject);
+            newBank.setCreatedBy(1L);
+            newBank.setIsPublic(false); // 默认私有
+            newBank.setIsActive(true);
+            
+            QuestionBank savedBank = questionBankRepository.save(newBank);
+            log.info("创建新题库: {} (ID: {})", savedBank.getName(), savedBank.getId());
+            
+            return savedBank;
+            
+        } catch (Exception e) {
+            log.error("创建默认题库失败: {}", e.getMessage());
+            // 如果创建失败，返回一个最简单的题库
+            return createFallbackQuestionBank();
+        }
+    }
+    
+    /**
+     * 创建备用题库（如果默认题库创建失败）
+     */
+    @Transactional
+    protected QuestionBank createFallbackQuestionBank() {
+        QuestionBank fallbackBank = new QuestionBank();
+        fallbackBank.setName("导入题库");
+        fallbackBank.setDescription("题目导入时的默认题库");
+        fallbackBank.setCreatedBy(1L);
+        fallbackBank.setIsPublic(false);
+        fallbackBank.setIsActive(true);
+        
+        return questionBankRepository.save(fallbackBank);
+    }
+    
+    // 查找或创建学生用户
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    protected User findOrCreateStudent(StudentAnswerImportData importData) {
+        // 参数验证
+        if (importData == null || importData.getStudentName() == null || importData.getStudentName().trim().isEmpty()) {
+            throw new IllegalArgumentException("学生信息不完整：姓名不能为空");
+        }
+        
+        // 记录学生数据特征，帮助定位问题
+        String studentName = importData.getStudentName().trim();
+        String studentNumber = importData.getStudentNumber();
+        String className = importData.getClassName();
+        
+        log.info("🔍 处理学生数据 - 姓名: [{}], 学号: [{}], 班级: [{}], 学院: [{}]", 
+                studentName, studentNumber, className, importData.getCollege());
+        
+        // 检查数据特征
+        if (studentName.length() > 50) {
+            log.warn("⚠️ 学生姓名过长: {} 字符", studentName.length());
+        }
+        if (studentNumber != null && studentNumber.length() > 50) {
+            log.warn("⚠️ 学号过长: {} 字符", studentNumber.length());
+        }
+        if (studentName.matches(".*[\\p{Cntrl}].*")) {
+            log.warn("⚠️ 学生姓名包含控制字符");
+        }
+        if (studentNumber != null && studentNumber.matches(".*[\\p{Cntrl}].*")) {
+            log.warn("⚠️ 学号包含控制字符");
+        }
+        
+        try {
+            // 首先尝试通过学号查找
+            if (studentNumber != null && !studentNumber.trim().isEmpty()) {
+                String cleanStudentNumber = studentNumber.trim();
+                log.debug("🔎 通过学号查找用户: [{}]", cleanStudentNumber);
+                
+                Optional<User> existingUser = userRepository.findByStudentNumber(cleanStudentNumber);
+                if (existingUser.isPresent()) {
+                    User user = existingUser.get();
+                    log.info("✅ 通过学号找到现有用户: {} (ID: {}) - 学号: [{}]", 
+                            user.getRealName(), user.getId(), user.getStudentNumber());
+                    return user;
+                }
+                log.debug("❌ 学号未找到现有用户: [{}]", cleanStudentNumber);
+            }
+            
+            // 如果通过学号找不到，尝试通过姓名模糊匹配
+            log.debug("🔎 通过姓名模糊查找用户: [{}]", studentName);
+            List<User> usersByName = userRepository.findByRealNameContaining(studentName);
+            log.debug("📋 姓名模糊查找结果: {} 个用户", usersByName.size());
+            
+            if (!usersByName.isEmpty()) {
+                // 记录所有匹配的用户
+                for (User u : usersByName) {
+                    log.debug("  - 匹配用户: {} (ID: {}, 学号: {}, 角色: {})", 
+                            u.getRealName(), u.getId(), u.getStudentNumber(), u.getRoles());
+                }
+                
+                // 优先选择学生角色的用户
+                Optional<User> studentUser = usersByName.stream()
+                    .filter(User::isStudent)
+                    .filter(u -> u.getRealName().equals(studentName)) // 精确匹配姓名
+                    .findFirst();
+                if (studentUser.isPresent()) {
+                    User user = studentUser.get();
+                    log.info("✅ 通过姓名找到现有学生用户: {} (ID: {}) - 学号: [{}]", 
+                            user.getRealName(), user.getId(), user.getStudentNumber());
+                    return user;
+                }
+            }
+            
+            // 如果找不到现有用户，创建新用户
+            log.info("🆕 未找到现有用户，准备创建新学生: [{}]", studentName);
+            return createNewStudent(importData);
+            
+        } catch (Exception e) {
+            log.error("❌ 查找或创建学生用户时发生异常: {}", e.getMessage(), e);
+            
+            // 记录详细的异常信息和学生数据
+            log.error("🔍 异常发生时的学生数据 - 姓名: [{}], 学号: [{}], 班级: [{}]", 
+                     studentName, studentNumber, className);
+            
+            // 如果是Session异常，直接抛出，不尝试回退
+            if (e.getMessage() != null && e.getMessage().contains("null id in")) {
+                log.error("💥 检测到Hibernate Session异常，直接失败");
+                throw new RuntimeException(String.format(
+                    "Hibernate Session异常。学生姓名: [%s], 学号: [%s], 班级: [%s]", 
+                    studentName, studentNumber, className), e);
+            }
+            
+            // 如果是创建用户时的异常，尝试使用更安全的回退方案
+            if (e.getMessage() != null && e.getMessage().contains("无法创建学生用户")) {
+                log.warn("🔄 创建用户失败，尝试回退方案查找现有用户");
+                try {
+                    // 使用只读事务进行回退查询，避免Session异常
+                    User fallbackUser = findExistingUserSafely(importData);
+                    if (fallbackUser != null) {
+                        log.info("✅ 回退方案成功找到用户: {} (ID: {})", 
+                                fallbackUser.getRealName(), fallbackUser.getId());
+                        return fallbackUser;
+                    }
+                } catch (Exception fallbackException) {
+                    log.debug("❌ 安全回退查找也失败: {}", fallbackException.getMessage());
+                }
+            }
+            
+            // 完全失败时，抛出包含详细信息的异常
+            throw new RuntimeException(String.format(
+                "无法查找或创建学生用户。学生姓名: [%s], 学号: [%s], 班级: [%s], 错误: %s", 
+                studentName, studentNumber, className, e.getMessage()), e);
+        }
+    }
+
+    // 创建新的学生用户
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    protected User createNewStudent(StudentAnswerImportData importData) {
+        String studentName = importData.getStudentName();
+        String studentNumber = importData.getStudentNumber();
+        String className = importData.getClassName();
+        
+        log.info("🆕 开始创建新学生用户 - 姓名: [{}], 学号: [{}], 班级: [{}]", 
+                studentName, studentNumber, className);
+        
+        try {
+            User newStudent = new User();
+            
+            // 基本信息
+            newStudent.setRealName(studentName);
+            newStudent.setStudentNumber(studentNumber);
+            
+            // 生成唯一用户名（使用学号或姓名）
+            String baseUsername = studentNumber != null ? studentNumber : studentName;
+            log.debug("🔧 生成用户名基础: [{}]", baseUsername);
+            
+            String username = generateUniqueUsername(baseUsername);
+            newStudent.setUsername(username);
+            log.debug("✅ 生成唯一用户名: [{}]", username);
+            
+            // 生成唯一邮箱
+            String email = generateUniqueEmail(baseUsername);
+            newStudent.setEmail(email);
+            log.debug("✅ 生成唯一邮箱: [{}]", email);
+            
+            // 设置默认密码（应该使用加密的默认密码）
+            newStudent.setPassword("$2a$10$defaultPasswordHash");
+            
+            // 设置为未激活状态
+            newStudent.setEnabled(false);
+            
+            // 设置学生角色
+            newStudent.setRoles(Set.of(Role.STUDENT));
+            
+            // 设置扩展信息
+            if (importData.getCollege() != null) {
+                newStudent.setDepartment(importData.getCollege());
+                log.debug("✅ 设置学院: [{}]", importData.getCollege());
+            }
+            if (importData.getMajor() != null) {
+                newStudent.setMajor(importData.getMajor());
+                log.debug("✅ 设置专业: [{}]", importData.getMajor());
+            }
+            if (className != null) {
+                newStudent.setClassName(className);
+                log.debug("✅ 设置班级: [{}]", className);
+            }
+            
+            log.info("💾 准备保存用户到数据库...");
+            
+            // 保存用户 - 移除可能导致Session异常的flush操作
+            User savedUser = userRepository.save(newStudent);
+            
+            // 验证保存结果 - 不使用flush，避免Session异常
+            if (savedUser == null || savedUser.getId() == null) {
+                log.error("❌ 用户保存失败，返回对象为null或ID为null");
+                throw new RuntimeException("用户保存失败，ID为null");
+            }
+            
+            log.info("✅ 成功创建新学生用户: [{}] ({}) - ID: {}, 用户名: [{}], 邮箱: [{}]", 
+                    savedUser.getRealName(), savedUser.getStudentNumber(), savedUser.getId(),
+                    savedUser.getUsername(), savedUser.getEmail());
+            
+            return savedUser;
+            
+        } catch (Exception e) {
+            log.error("❌ 创建学生用户失败 - 姓名: [{}], 学号: [{}], 班级: [{}], 错误: {}", 
+                     studentName, studentNumber, className, e.getMessage(), e);
+            
+            // 检查是否是数据库约束违反
+            if (e.getMessage() != null) {
+                if (e.getMessage().contains("username") || e.getMessage().contains("用户名")) {
+                    log.error("🔍 可能的用户名冲突");
+                }
+                if (e.getMessage().contains("email") || e.getMessage().contains("邮箱")) {
+                    log.error("🔍 可能的邮箱冲突");
+                }
+                if (e.getMessage().contains("student_number") || e.getMessage().contains("学号")) {
+                    log.error("🔍 可能的学号冲突");
+                }
+            }
+            
+            // 在新事务中创建用户失败，直接抛出异常，不尝试回退
+            throw new RuntimeException("无法创建学生用户: " + studentName + 
+                                     ", 原因: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * 生成唯一用户名
+     */
+    private String generateUniqueUsername(String baseUsername) {
+        String username = baseUsername;
+        int counter = 0;
+        
+        try {
+            while (userRepository.existsByUsername(username)) {
+                counter++;
+                username = baseUsername + "_" + counter;
+                
+                // 防止无限循环
+                if (counter > 1000) {
+                    username = baseUsername + "_" + System.currentTimeMillis();
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            // 如果查询失败，使用时间戳确保唯一性
+            log.warn("查询用户名唯一性失败，使用时间戳: {}", e.getMessage());
+            username = baseUsername + "_" + System.currentTimeMillis();
+        }
+        
+        return username;
+    }
+    
+    /**
+     * 生成唯一邮箱
+     */
+    private String generateUniqueEmail(String baseUsername) {
+        String email = baseUsername + "@student.temp";
+        int counter = 0;
+        
+        try {
+            while (userRepository.existsByEmail(email)) {
+                counter++;
+                email = baseUsername + "_" + counter + "@student.temp";
+                
+                // 防止无限循环
+                if (counter > 1000) {
+                    email = baseUsername + "_" + System.currentTimeMillis() + "@student.temp";
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            // 如果查询失败，使用时间戳确保唯一性
+            log.warn("查询邮箱唯一性失败，使用时间戳: {}", e.getMessage());
+            email = baseUsername + "_" + System.currentTimeMillis() + "@student.temp";
+        }
+        
+        return email;
+    }
+    
+    /**
+     * 安全的查找现有用户方法（只读事务）
+     */
+    @Transactional(readOnly = true, propagation = Propagation.REQUIRES_NEW)
+    protected User findExistingUserSafely(StudentAnswerImportData importData) {
+        try {
+            // 1. 尝试通过真实姓名查找
+            if (importData.getStudentName() != null) {
+                List<User> usersByName = userRepository.findByRealNameContaining(importData.getStudentName());
+                if (!usersByName.isEmpty()) {
+                    // 优先选择学生角色的用户
+                    Optional<User> studentUser = usersByName.stream()
+                        .filter(User::isStudent)
+                        .findFirst();
+                    if (studentUser.isPresent()) {
+                        log.info("🔄 安全回退找到学生用户: {} (ID: {})", 
+                                studentUser.get().getRealName(), studentUser.get().getId());
+                        return studentUser.get();
+                    }
+                    log.info("🔄 安全回退找到普通用户: {} (ID: {})", 
+                            usersByName.get(0).getRealName(), usersByName.get(0).getId());
+                    return usersByName.get(0);
+                }
+            }
+            
+            // 2. 尝试通过模糊匹配学号查找
+            if (importData.getStudentNumber() != null) {
+                List<User> usersByStudentNumber = userRepository.findByStudentNumberContaining(importData.getStudentNumber());
+                if (!usersByStudentNumber.isEmpty()) {
+                    log.info("🔄 安全回退通过学号找到用户: {} (ID: {})", 
+                            usersByStudentNumber.get(0).getRealName(), usersByStudentNumber.get(0).getId());
+                    return usersByStudentNumber.get(0);
+                }
+            }
+            
+        } catch (Exception e) {
+            log.debug("安全回退查找用户失败: {}", e.getMessage());
+        }
+        
+        return null;
+    }
+
+    // 导入CSV格式答案
+    private int importCSVAnswers(MultipartFile file) throws IOException {
+        // TODO: 实现CSV导入逻辑
+        log.warn("CSV导入功能尚未实现");
         return 0;
+    }
+
+    // 导入Excel格式答案
+    private int importExcelAnswers(MultipartFile file) throws IOException {
+        // TODO: 实现Excel导入逻辑
+        log.warn("Excel导入功能尚未实现");
+        return 0;
+    }
+
+    // 获取可用科目列表
+    @Transactional(readOnly = true)
+    public List<String> getAvailableSubjects() {
+        return learningAnswerParserService.getAvailableSubjects(uploadDir);
+    }
+
+    // 获取科目下的班级列表
+    @Transactional(readOnly = true)
+    public List<String> getSubjectClasses(String subject) {
+        return learningAnswerParserService.getClassFolders(uploadDir, subject);
     }
 
     /**
@@ -456,6 +1326,7 @@ public class StudentAnswerService {
     /**
      * 导出学生试卷为Excel格式
      */
+    @Transactional(readOnly = true)
     public ByteArrayResource exportStudentPaperAsExcel(StudentExamPaperResponse paper) throws IOException {
         Workbook workbook = new XSSFWorkbook();
         Sheet sheet = workbook.createSheet("学生试卷");
@@ -510,45 +1381,197 @@ public class StudentAnswerService {
             sheet.autoSizeColumn(i);
         }
         
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        workbook.write(outputStream);
-        workbook.close();
-        
-        return new ByteArrayResource(outputStream.toByteArray());
-    }
-    
-    /**
-     * 导出学生试卷为PDF格式（简化版本，使用文本格式）
-     */
-    public ByteArrayResource exportStudentPaperAsPdf(StudentExamPaperResponse paper) throws IOException {
-        // 这里应该使用PDF库如iText，为了简化，暂时返回文本格式
-        StringBuilder content = new StringBuilder();
-        content.append("学生试卷\n");
-        content.append("======================\n\n");
-        content.append("学生姓名: ").append(paper.getStudentName()).append("\n");
-        content.append("学号: ").append(paper.getStudentNumber()).append("\n");
-        content.append("考试名称: ").append(paper.getExamTitle()).append("\n");
-        content.append("总分: ").append(paper.getTotalScore()).append("/").append(paper.getMaxPossibleScore()).append("\n\n");
-        
-        content.append("答题详情:\n");
-        content.append("----------------------\n");
-        
-        for (int i = 0; i < paper.getAnswers().size(); i++) {
-            StudentAnswerResponse answer = paper.getAnswers().get(i);
-            content.append("题目 ").append(i + 1).append(": ").append(answer.getQuestionTitle()).append("\n");
-            content.append("答案: ").append(answer.getAnswerText() != null ? answer.getAnswerText() : "未作答").append("\n");
-            content.append("得分: ").append(answer.getScore() != null ? answer.getScore() : "未评估")
-                   .append("/").append(answer.getMaxScore()).append("\n");
-            if (answer.getFeedback() != null && !answer.getFeedback().trim().isEmpty()) {
-                content.append("反馈: ").append(answer.getFeedback()).append("\n");
-            }
-            content.append("\n");
-        }
-        
-        return new ByteArrayResource(content.toString().getBytes("UTF-8"));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        workbook.write(out);
+        return new ByteArrayResource(out.toByteArray());
     }
 
-    // 获取指定考试的学生答案，按学生分组，分页查询
+    /**
+     * 使用 Apache POI 将学生试卷导出为 Word (.docx) 文件
+     */
+    @Transactional(readOnly = true)
+    public ByteArrayResource exportStudentPaperAsWord(StudentExamPaperResponse paper) throws IOException {
+        try (XWPFDocument document = new XWPFDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            // 1. 设置主标题
+            XWPFParagraph title = document.createParagraph();
+            title.setAlignment(ParagraphAlignment.CENTER);
+            XWPFRun titleRun = title.createRun();
+            titleRun.setText(paper.getExamTitle() + " - 学生试卷");
+            titleRun.setBold(true);
+            titleRun.setFontSize(20);
+            titleRun.addBreak();
+
+            // 2. 写入学生信息
+            XWPFParagraph studentInfo = document.createParagraph();
+            studentInfo.setAlignment(ParagraphAlignment.CENTER);
+            XWPFRun studentInfoRun = studentInfo.createRun();
+            studentInfoRun.setText("学生: " + paper.getStudentName() + " (学号: " + paper.getStudentNumber() + ")");
+            studentInfoRun.setFontSize(12);
+
+            // 添加总分信息
+            XWPFParagraph scoreInfo = document.createParagraph();
+            scoreInfo.setAlignment(ParagraphAlignment.CENTER);
+            XWPFRun scoreInfoRun = scoreInfo.createRun();
+            scoreInfoRun.setText("总分: " + paper.getTotalScore() + " / " + paper.getMaxPossibleScore());
+            scoreInfoRun.setFontSize(12);
+            scoreInfoRun.setBold(true);
+            scoreInfoRun.addBreak();
+            scoreInfoRun.addBreak();
+
+            // 3. 遍历并写入每个题目的详细信息
+            int questionNumber = 1;
+            for (StudentAnswerResponse answer : paper.getAnswers()) {
+                // 题目标题
+                XWPFParagraph qTitle = document.createParagraph();
+                XWPFRun qTitleRun = qTitle.createRun();
+                qTitleRun.setBold(true);
+                qTitleRun.setFontSize(14);
+                qTitleRun.setText(questionNumber + ". " + answer.getQuestionTitle() + " (" + answer.getMaxScore() + "分)");
+
+                // 题目内容
+                XWPFParagraph qContent = document.createParagraph();
+                XWPFRun qContentRun = qContent.createRun();
+                qContentRun.setText(answer.getQuestionContent());
+                qContentRun.addBreak();
+                
+                // 学生答案
+                XWPFParagraph userAnswerH = document.createParagraph();
+                XWPFRun userAnswerHRun = userAnswerH.createRun();
+                userAnswerHRun.setBold(true);
+                userAnswerHRun.setText("学生答案: ");
+                
+                XWPFParagraph userAnswer = document.createParagraph();
+                XWPFRun userAnswerRun = userAnswer.createRun();
+                userAnswerRun.setText(answer.getAnswerText());
+                userAnswerRun.setColor("0000FF"); // 蓝色字体
+                userAnswerRun.addBreak();
+
+                // 得分
+                XWPFParagraph score = document.createParagraph();
+                XWPFRun scoreRun = score.createRun();
+                scoreRun.setBold(true);
+                scoreRun.setText("得分: " + answer.getScore() + " / " + answer.getMaxScore());
+                scoreRun.addBreak();
+
+                // 批阅
+                if (answer.getFeedback() != null && !answer.getFeedback().isEmpty()) {
+                     XWPFParagraph feedbackH = document.createParagraph();
+                     XWPFRun feedbackHRun = feedbackH.createRun();
+                     feedbackHRun.setBold(true);
+                     feedbackHRun.setText("批阅: ");
+
+                     // 处理换行和加粗
+                     String[] lines = answer.getFeedback().split("\n");
+                     for (String line : lines) {
+                         XWPFParagraph feedbackParagraph = document.createParagraph();
+                         String[] parts = line.split("(?=\\【)|(?<=\\】)");
+                         for (String part : parts) {
+                             XWPFRun partRun = feedbackParagraph.createRun();
+                             if (part.startsWith("【") && part.endsWith("】")) {
+                                 partRun.setBold(true);
+                                 partRun.setText(part.substring(1, part.length() - 1));
+                             } else {
+                                 partRun.setText(part);
+                             }
+                         }
+                     }
+                }
+                
+                document.createParagraph().createRun().addBreak(); // 添加间距
+                questionNumber++;
+            }
+
+            document.write(out);
+            return new ByteArrayResource(out.toByteArray());
+        }
+    }
+
+    /**
+     * 使用 iText7 将学生试卷导出为 PDF 文件
+     */
+    @Transactional(readOnly = true)
+    public ByteArrayResource exportStudentPaperAsPdf(StudentExamPaperResponse paper) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        PdfWriter writer = new PdfWriter(out);
+        PdfDocument pdf = new PdfDocument(writer);
+        Document document = new Document(pdf, PageSize.A4);
+        document.setMargins(50, 50, 50, 50);
+
+        // 设置中文字体
+        // 注意: iText默认不支持中文，需要提供中文字体文件或使用iText的亚洲字体支持库
+        // 这里使用一个常见的iText中文解决方案
+        PdfFont font = PdfFontFactory.createFont("STSong-Light", "UniGB-UCS2-H", PdfFontFactory.EmbeddingStrategy.PREFER_EMBEDDED);
+        document.setFont(font).setFontSize(11);
+
+        // 1. 设置主标题
+        Paragraph title = new Paragraph(paper.getExamTitle() + " - 学生试卷")
+                .setFontSize(20)
+                .setBold()
+                .setTextAlignment(TextAlignment.CENTER);
+        document.add(title);
+
+        // 2. 写入学生信息
+        Paragraph studentInfo = new Paragraph("学生: " + paper.getStudentName() + " (学号: " + paper.getStudentNumber() + ")")
+                .setFontSize(12)
+                .setTextAlignment(TextAlignment.CENTER);
+        document.add(studentInfo);
+        document.add(new Paragraph("\n")); // 间距
+
+        // 添加总分信息
+        Paragraph scoreInfo = new Paragraph("总分: " + paper.getTotalScore() + " / " + paper.getMaxPossibleScore())
+                .setFontSize(12)
+                .setBold()
+                .setTextAlignment(TextAlignment.CENTER);
+        document.add(scoreInfo);
+
+        document.add(new Paragraph("\n")); // 间距
+
+        // 3. 遍历并写入每个题目的详细信息
+        int questionNumber = 1;
+        for (StudentAnswerResponse answer : paper.getAnswers()) {
+            // 题目标题
+            Paragraph qTitle = new Paragraph()
+                .add(new Text(questionNumber + ". " + answer.getQuestionTitle() + " (" + answer.getMaxScore() + "分)").setBold().setFontSize(14));
+            document.add(qTitle);
+
+            // 题目内容
+            Paragraph qContent = new Paragraph(answer.getQuestionContent());
+            document.add(qContent);
+
+            // 学生答案
+            Paragraph userAnswer = new Paragraph()
+                .add(new Text("学生答案: ").setBold())
+                .add(new Text(answer.getAnswerText()).setFontColor(DeviceRgb.BLUE));
+            document.add(userAnswer);
+
+            // 得分
+            Paragraph score = new Paragraph()
+                .add(new Text("得分: " + answer.getScore() + " / " + answer.getMaxScore()).setBold());
+            document.add(score);
+
+            // 批阅
+            if (answer.getFeedback() != null && !answer.getFeedback().isEmpty()) {
+                Paragraph feedback = new Paragraph().add(new Text("批阅: ").setBold());
+                
+                String[] parts = answer.getFeedback().split("(?=\\【)|(?<=\\】)");
+                for (String part : parts) {
+                    if (part.startsWith("【") && part.endsWith("】")) {
+                        feedback.add(new Text(part.substring(1, part.length() - 1)).setBold());
+                    } else {
+                        feedback.add(new Text(part));
+                    }
+                }
+                document.add(feedback);
+            }
+            
+            document.add(new Paragraph("\n")); // 间距
+            questionNumber++;
+        }
+
+        document.close();
+        return new ByteArrayResource(out.toByteArray());
+    }
+    
     @Transactional(readOnly = true)
     public Page<StudentExamPaperResponse> getAnswersByExamGroupedByStudentPaged(
             Long examId, int page, int size, String studentKeyword) {
@@ -636,5 +1659,149 @@ public class StudentAnswerService {
     @Transactional(readOnly = true)
     public List<StudentAnswer> getStudentAnswersInExam(Long examId, Long studentId) {
         return studentAnswerRepository.findByQuestionExamIdAndStudentId(examId, studentId);
+    }
+    
+    /**
+     * 删除学生某套试卷的所有答案
+     */
+    @Transactional
+    public void deleteStudentExamAnswers(Long studentId, Long examId) {
+        try {
+            log.info("开始删除学生{}在考试{}中的答案", studentId, examId);
+            
+            // 1. 查找该学生在该考试中的所有答案
+            List<StudentAnswer> answers = studentAnswerRepository.findByQuestionExamIdAndStudentId(examId, studentId);
+            
+            if (answers.isEmpty()) {
+                log.warn("未找到学生{}在考试{}中的答案", studentId, examId);
+                return;
+            }
+            
+            log.info("找到{}条答案记录", answers.size());
+            
+            // 2. 删除相关的评分记录（如果有）
+            for (StudentAnswer answer : answers) {
+                // 删除评分记录
+                if (answer.getScore() != null || answer.getFeedback() != null) {
+                    // 这里可以添加删除评分相关记录的逻辑
+                    log.debug("清理答案{}的评分记录", answer.getId());
+                }
+            }
+            
+            // 3. 批量删除答案记录
+            List<Long> answerIds = answers.stream()
+                .map(StudentAnswer::getId)
+                .collect(Collectors.toList());
+            
+            for (Long answerId : answerIds) {
+                studentAnswerRepository.deleteById(answerId);
+            }
+            
+            // 4. 检查并删除考试提交记录（如果有）
+            try {
+                // 查找并删除考试提交记录
+                var submissionOpt = examSubmissionRepository.findByExamIdAndStudentId(examId, studentId);
+                if (submissionOpt.isPresent()) {
+                    examSubmissionRepository.delete(submissionOpt.get());
+                    log.debug("删除考试提交记录");
+                }
+            } catch (Exception e) {
+                log.warn("删除考试提交记录失败: {}", e.getMessage());
+            }
+            
+            log.info("成功删除学生{}在考试{}中的{}条答案", studentId, examId, answers.size());
+            
+        } catch (Exception e) {
+            log.error("删除学生{}在考试{}中的答案失败: {}", studentId, examId, e.getMessage(), e);
+            throw new RuntimeException("删除学生试卷答案失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 导入学习通答案（支持进度回调）
+     */
+    @Transactional
+    public ImportResult importLearningAnswers(StudentAnswerImportData importData, Long examId, 
+                                              java.util.function.Consumer<Double> progressCallback) {
+        log.info("开始导入学习通答案，学生: {}, 题目数: {}, 考试ID: {}", 
+                 importData.getStudentInfo().getStudentName(), 
+                 importData.getQuestions().size(),
+                 examId);
+        
+        ImportResult result = new ImportResult();
+        result.setSuccessCount(0);
+        result.setFailedCount(0);
+        result.setErrors(new ArrayList<>());
+        
+        try {
+            // 清理分数解析上下文，开始处理新的学生答案文档
+            smartQuestionMatchingService.clearScoreContext();
+            log.debug("开始处理学生{}的答案，已清理分数解析上下文", importData.getStudentInfo().getStudentName());
+            
+            // 查找或创建学生用户
+            User student = findOrCreateStudent(importData);
+            
+            List<StudentAnswerImportData.QuestionAnswer> questions = importData.getQuestions();
+            int totalQuestions = questions.size();
+            
+            for (int i = 0; i < totalQuestions; i++) {
+                StudentAnswerImportData.QuestionAnswer qa = questions.get(i);
+                
+                try {
+                    // 使用智能匹配服务根据题目内容匹配或创建题目
+                    QuestionBank defaultBank = findOrCreateDefaultQuestionBank(importData);
+                    Question question = smartQuestionMatchingService.smartMatchQuestion(qa, examId, defaultBank);
+                    
+                    if (question != null && question.getId() != null) {
+                        // 检查是否已存在该学生对该题目的答案
+                        StudentAnswer existingAnswer = studentAnswerRepository
+                            .findByStudentIdAndQuestionId(student.getId(), question.getId());
+                        
+                        if (existingAnswer != null) {
+                            // 如果已存在，更新答案
+                            existingAnswer.setAnswerText(qa.getAnswerContent());
+                            studentAnswerRepository.save(existingAnswer);
+                            log.debug("更新学生 {} 对题目 {} 的答案", student.getRealName(), question.getTitle());
+                        } else {
+                            // 创建新的答案记录
+                            StudentAnswer answer = new StudentAnswer();
+                            answer.setStudent(student);
+                            answer.setQuestion(question);
+                            answer.setAnswerText(qa.getAnswerContent());
+                            answer.setEvaluated(false);
+                            
+                            studentAnswerRepository.save(answer);
+                            log.debug("创建学生 {} 对题目 {} 的答案", student.getRealName(), question.getTitle());
+                        }
+                        
+                        result.setSuccessCount(result.getSuccessCount() + 1);
+                    } else {
+                        log.warn("无法匹配或创建题目: {}", qa.getQuestionContent());
+                        result.setFailedCount(result.getFailedCount() + 1);
+                        result.getErrors().add("题目 " + qa.getQuestionNumber() + " 无法匹配或创建");
+                    }
+                    
+                    // 更新进度
+                    if (progressCallback != null) {
+                        double progress = (double) (i + 1) / totalQuestions;
+                        progressCallback.accept(progress);
+                    }
+                    
+                } catch (Exception e) {
+                    log.error("处理题目 {} 时出错: {}", qa.getQuestionNumber(), e.getMessage());
+                    result.setFailedCount(result.getFailedCount() + 1);
+                    result.getErrors().add("题目 " + qa.getQuestionNumber() + " 处理失败: " + e.getMessage());
+                }
+            }
+            
+        } catch (Exception e) {
+            log.error("处理学生 {} 的答案时发生异常: {}", importData.getStudentInfo().getStudentName(), e.getMessage(), e);
+            throw e; // 重新抛出异常，让上层处理
+        }
+        
+        log.info("学习通答案导入完成，成功: {}, 失败: {}", 
+                 result.getSuccessCount(), result.getFailedCount());
+        
+        return result;
     }
 }

@@ -1,4 +1,6 @@
 package com.teachhelper.service.metadata;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.teachhelper.dto.request.GradeLevelRequest;
 import com.teachhelper.dto.response.GradeLevelResponse;
@@ -7,8 +9,6 @@ import com.teachhelper.exception.ResourceNotFoundException;
 import com.teachhelper.repository.GradeLevelRepository;
 import com.teachhelper.repository.KnowledgeBaseRepository;
 import com.teachhelper.repository.QuestionBankRepository;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.Authentication;
@@ -24,13 +24,19 @@ import java.util.stream.Collectors;
  */
 @Service
 @Transactional
-@Slf4j
-@RequiredArgsConstructor
 public class GradeLevelService {
+
+    private static final Logger log = LoggerFactory.getLogger(GradeLevelService.class);
     
     private final GradeLevelRepository gradeLevelRepository;
     private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final QuestionBankRepository questionBankRepository;
+    
+    public GradeLevelService(GradeLevelRepository gradeLevelRepository, KnowledgeBaseRepository knowledgeBaseRepository, QuestionBankRepository questionBankRepository) {
+        this.gradeLevelRepository = gradeLevelRepository;
+        this.knowledgeBaseRepository = knowledgeBaseRepository;
+        this.questionBankRepository = questionBankRepository;
+    }
     
     /**
      * 获取当前用户ID

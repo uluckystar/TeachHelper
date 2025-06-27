@@ -77,6 +77,10 @@
           <div class="answer-title">参考答案：</div>
           <div class="answer-content">{{ question.referenceAnswer }}</div>
         </div>
+        <div v-if="(question.type === 'subjective' || question.type === 'calculation') && question.standardAnswer" class="question-answer standard-answer-section">
+          <div class="answer-title">标准答案：</div>
+          <div class="answer-content">{{ question.standardAnswer }}</div>
+        </div>
       </div>
 
       <!-- 题目解析 -->
@@ -727,5 +731,12 @@ const formatDate = (dateStr: string) => {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.standard-answer-section {
+  background-color: #f0f9eb;
+  border-left: 4px solid #67c23a;
+  padding: 10px;
+  border-radius: 4px;
 }
 </style>

@@ -2,6 +2,7 @@ package com.teachhelper.dto.response;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 
@@ -15,7 +16,11 @@ public class ExamResultResponse {
     private String examDescription;
     private Long studentId;
     private String studentName;
+    private String studentNumber; // 学号
+    private String className; // 班级
     private Double totalScore;
+    private Integer rank; // 排名
+    private Map<Long, Double> scores; // 各题得分 <questionId, score>
     private Integer answeredQuestions;
     private String status;
     private Double totalPossibleScore; // 考试满分
@@ -90,6 +95,22 @@ public class ExamResultResponse {
     public void setStudentName(String studentName) {
         this.studentName = studentName;
     }
+
+    public String getStudentNumber() {
+        return studentNumber;
+    }
+
+    public void setStudentNumber(String studentNumber) {
+        this.studentNumber = studentNumber;
+    }
+
+    public String getClassName() {
+        return className;
+    }
+
+    public void setClassName(String className) {
+        this.className = className;
+    }
     
     public Double getTotalScore() {
         return totalScore;
@@ -97,6 +118,22 @@ public class ExamResultResponse {
     
     public void setTotalScore(Double totalScore) {
         this.totalScore = totalScore;
+    }
+
+    public Integer getRank() {
+        return rank;
+    }
+
+    public void setRank(Integer rank) {
+        this.rank = rank;
+    }
+
+    public Map<Long, Double> getScores() {
+        return scores;
+    }
+
+    public void setScores(Map<Long, Double> scores) {
+        this.scores = scores;
     }
     
     public Integer getAnsweredQuestions() {

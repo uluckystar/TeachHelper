@@ -10,6 +10,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -53,8 +54,8 @@ public class TaskController {
             @Parameter(description = "每页大小") @RequestParam(defaultValue = "20") int size,
             @Parameter(description = "任务状态筛选") @RequestParam(required = false) String status,
             @Parameter(description = "任务类型筛选") @RequestParam(required = false) String type,
-            @Parameter(description = "开始日期") @RequestParam(required = false) LocalDateTime startDate,
-            @Parameter(description = "结束日期") @RequestParam(required = false) LocalDateTime endDate,
+            @Parameter(description = "开始日期") @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime startDate,
+            @Parameter(description = "结束日期") @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime endDate,
             @Parameter(description = "排序字段") @RequestParam(defaultValue = "createdAt") String sortBy,
             @Parameter(description = "排序方向") @RequestParam(defaultValue = "desc") String sortDir) {
         

@@ -100,6 +100,13 @@ const router = createRouter({
           meta: { roles: ['ADMIN', 'TEACHER'] }
         },
         {
+          path: 'exams/:examId/reference-answer-management',
+          name: 'ReferenceAnswerManagement',
+          component: () => import('@/views/evaluation/ReferenceAnswerManagementView.vue'),
+          props: true,
+          meta: { roles: ['ADMIN', 'TEACHER'] }
+        },
+        {
           path: 'exams/:examId/answers',
           name: 'ExamAnswers',
           component: () => import('@/views/exam/ExamAnswersView.vue'),
@@ -117,6 +124,19 @@ const router = createRouter({
           path: 'exams/:examId/results',
           name: 'ExamResults',
           component: () => import('@/views/exam/ExamResultsView.vue'),
+          props: true,
+          meta: { roles: ['ADMIN', 'TEACHER'] }
+        },
+        {
+          path: 'exam-templates',
+          name: 'ExamTemplateList',
+          component: () => import('@/views/ExamTemplateView.vue'),
+          meta: { roles: ['ADMIN', 'TEACHER'] }
+        },
+        {
+          path: 'exam-templates/:id',
+          name: 'ExamTemplateDetail',
+          component: () => import('@/views/exam/ExamTemplateDetailView.vue'),
           props: true,
           meta: { roles: ['ADMIN', 'TEACHER'] }
         },
@@ -213,6 +233,13 @@ const router = createRouter({
           path: 'questions/:id/rubric',
           name: 'QuestionRubric',
           component: () => import('@/views/question/QuestionRubricView.vue'),
+          props: true,
+          meta: { roles: ['ADMIN', 'TEACHER'] }
+        },
+        {
+          path: 'questions/:id/reference-answer',
+          name: 'QuestionReferenceAnswer',
+          component: () => import('@/views/question/QuestionReferenceAnswerView.vue'),
           props: true,
           meta: { roles: ['ADMIN', 'TEACHER'] }
         },

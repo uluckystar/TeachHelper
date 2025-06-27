@@ -49,7 +49,7 @@ export const rubricApi = {
   // 生成AI评分标准
   async generateRubric(questionId: number): Promise<RubricGenerateResponse> {
     const response = await api.post<RubricGenerateResponse>(`/questions/${questionId}/generate-rubric`, {}, {
-      timeout: 60000 // 设置60秒超时，因为AI生成需要更多时间
+      timeout: 0 // 不设置超时限制，AI生成需要更多时间
     })
     return response.data
   },

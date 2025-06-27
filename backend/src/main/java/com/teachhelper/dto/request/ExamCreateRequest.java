@@ -3,6 +3,7 @@ package com.teachhelper.dto.request;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.Min;
@@ -24,9 +25,11 @@ public class ExamCreateRequest {
     private Integer duration;
     
     // 考试开始时间
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime startTime;
     
     // 考试结束时间
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime endTime;
     
     public ExamCreateRequest() {}

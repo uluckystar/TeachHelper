@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.HashMap;
 
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -38,12 +39,39 @@ import com.teachhelper.service.exam.ExamSubmissionService;
 import com.teachhelper.service.question.QuestionService;
 import com.teachhelper.service.student.StudentAnswerService;
 
+import java.io.ByteArrayInputStream;
+import com.teachhelper.dto.response.ExamResultResponse;
+import com.teachhelper.entity.Question;
+import java.util.Comparator;
+import java.util.stream.IntStream;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.Font;
+import org.apache.poi.ss.usermodel.HorizontalAlignment;
+import org.apache.poi.ss.usermodel.VerticalAlignment;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Workbook;
+import java.util.Collections;
+import java.util.Objects;
+import com.teachhelper.repository.UserRepository;
+import com.teachhelper.dto.ExamExportData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import java.math.BigDecimal;
+
 @Service
 @Transactional
 public class ExamService {
     
+    private static final Logger log = LoggerFactory.getLogger(ExamService.class);
+    
     @Autowired
     private ExamRepository examRepository;
+    
+    @Autowired
+    private UserRepository userRepository;
     
     @Autowired
     private ClassroomRepository classroomRepository;
@@ -434,9 +462,194 @@ public class ExamService {
         }
     }
 
+    public ExamExportData exportExamResults(Long examId) throws IOException {
+        User currentUser = authService.getCurrentUser();
+        List<ExamResultResponse> results = getAllStudentResultsForExam(examId, currentUser.getId());
+        Exam exam = examRepository.findById(examId).orElseThrow(() -> new ResourceNotFoundException("Exam not found"));
+
+        try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            // 创建成绩详情页
+            Sheet detailSheet = workbook.createSheet(exam.getTitle() + " - 成绩单");
+            CellStyle headerStyle = createHeaderStyle(workbook);
+            CellStyle centeredStyle = createCenteredStyle(workbook);
+            createHeaderRow(detailSheet, exam.getQuestions(), headerStyle);
+
+            int rowNum = 1;
+            for (ExamResultResponse result : results) {
+                Row row = detailSheet.createRow(rowNum++);
+                int cellNum = 0;
+                createCell(row, cellNum++, result.getRank(), centeredStyle);
+                createCell(row, cellNum++, result.getStudentName(), null);
+                createCell(row, cellNum++, result.getStudentNumber(), null);
+                createCell(row, cellNum++, result.getClassName(), null);
+                createCell(row, cellNum++, result.getTotalScore(), centeredStyle);
+
+                for (Question question : exam.getQuestions()) {
+                    Double score = result.getScores().getOrDefault(question.getId(), 0.0);
+                    createCell(row, cellNum++, score, centeredStyle);
+                }
+            }
+            for (int i = 0; i < exam.getQuestions().size() + 5; i++) {
+                detailSheet.autoSizeColumn(i);
+            }
+
+            // 创建成绩分析页
+            Sheet summarySheet = workbook.createSheet("成绩分析");
+            createSummarySheet(summarySheet, exam, results, workbook);
+
+            workbook.write(out);
+            return new ExamExportData(new ByteArrayInputStream(out.toByteArray()), exam.getTitle());
+        }
+    }
+
+    private void createSummarySheet(Sheet sheet, Exam exam, List<ExamResultResponse> results, Workbook workbook) {
+        CellStyle headerStyle = createHeaderStyle(workbook);
+        CellStyle boldStyle = workbook.createCellStyle();
+        Font boldFont = workbook.createFont();
+        boldFont.setBold(true);
+        boldStyle.setFont(boldFont);
+
+        int rowNum = 0;
+
+        // 标题
+        Row titleRow = sheet.createRow(rowNum++);
+        Cell titleCell = titleRow.createCell(0);
+        titleCell.setCellValue(exam.getTitle() + " - 成绩分析报告");
+        titleCell.setCellStyle(headerStyle);
+
+        rowNum++; // 空一行
+
+        // 基础统计
+        List<Double> scores = results.stream()
+                .map(ExamResultResponse::getTotalScore)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        
+        long participantCount = results.size();
+        long submissionCount = results.stream().filter(r -> r.getTotalScore() != null && r.getTotalScore() > 0).count();
+        double average = scores.stream().mapToDouble(d -> d).average().orElse(0.0);
+        double max = scores.stream().mapToDouble(d -> d).max().orElse(0.0);
+        double min = scores.stream().mapToDouble(d -> d).min().orElse(0.0);
+
+        rowNum = createStatRow(sheet, rowNum, "基本统计", "", boldStyle);
+        rowNum = createStatRow(sheet, rowNum, "参考人数", participantCount, null);
+        rowNum = createStatRow(sheet, rowNum, "提交人数", submissionCount, null);
+        rowNum = createStatRow(sheet, rowNum, "平均分", String.format("%.2f", average), null);
+        rowNum = createStatRow(sheet, rowNum, "最高分", max, null);
+        rowNum = createStatRow(sheet, rowNum, "最低分", min, null);
+
+        rowNum++; // 空一行
+        
+        // 高级统计
+        double stdDev = 0;
+        if (scores.size() > 1) {
+            double sumOfSquares = scores.stream().mapToDouble(d -> Math.pow(d - average, 2)).sum();
+            stdDev = Math.sqrt(sumOfSquares / (scores.size() - 1));
+        }
+        
+        Collections.sort(scores);
+        double median = 0;
+        if (!scores.isEmpty()) {
+            if (scores.size() % 2 == 0) {
+                median = (scores.get(scores.size() / 2 - 1) + scores.get(scores.size() / 2)) / 2.0;
+            } else {
+                median = scores.get(scores.size() / 2);
+            }
+        }
+        
+        rowNum = createStatRow(sheet, rowNum, "高级统计", "", boldStyle);
+        rowNum = createStatRow(sheet, rowNum, "中位数", String.format("%.2f", median), null);
+        rowNum = createStatRow(sheet, rowNum, "标准差", String.format("%.2f", stdDev), null);
+        
+        rowNum++; // 空一行
+
+        // 分数段分布
+        double maxPossibleScore = exam.getQuestions().stream().mapToDouble(q -> q.getMaxScore() != null ? q.getMaxScore().doubleValue() : 0).sum();
+        if (maxPossibleScore == 0) maxPossibleScore = 100; // 防止除零
+        final double finalMaxScore = maxPossibleScore;
+        
+        rowNum = createStatRow(sheet, rowNum, "分数段分布 (百分比)", "人数", boldStyle);
+        int[] bins = {90, 80, 70, 60, 0};
+        String[] labels = {"优秀 (90-100%)", "良好 (80-89%)", "中等 (70-79%)", "及格 (60-69%)", "不及格 (<60%)"};
+
+        for (int i = 0; i < bins.length; i++) {
+            final double lowerBound = bins[i];
+            final double upperBound = (i == 0) ? 101 : bins[i-1];
+            long count = scores.stream().filter(s -> {
+                double percentage = (s / finalMaxScore) * 100;
+                return percentage >= lowerBound && percentage < upperBound;
+            }).count();
+            rowNum = createStatRow(sheet, rowNum, labels[i], count, null);
+        }
+
+        sheet.autoSizeColumn(0);
+        sheet.autoSizeColumn(1);
+    }
+    
+    private int createStatRow(Sheet sheet, int rowNum, String label, Object value, CellStyle style) {
+        Row row = sheet.createRow(rowNum);
+        Cell labelCell = row.createCell(0);
+        labelCell.setCellValue(label);
+        if (style != null) {
+            labelCell.setCellStyle(style);
+        }
+
+        Cell valueCell = row.createCell(1);
+        if (value instanceof String) valueCell.setCellValue((String) value);
+        else if (value instanceof Number) valueCell.setCellValue(((Number) value).doubleValue());
+        
+        return rowNum + 1;
+    }
+
+    private void createHeaderRow(Sheet sheet, List<Question> questions, CellStyle style) {
+        Row headerRow = sheet.createRow(0);
+        String[] headers = {"排名", "姓名", "学号", "班级", "总分"};
+        for (int i = 0; i < headers.length; i++) {
+            Cell cell = headerRow.createCell(i);
+            cell.setCellValue(headers[i]);
+            cell.setCellStyle(style);
+        }
+
+        for (int i = 0; i < questions.size(); i++) {
+            Cell cell = headerRow.createCell(headers.length + i);
+            Question q = questions.get(i);
+            cell.setCellValue("题目" + (i + 1) + " (满分:" + q.getMaxScore() + ")");
+            cell.setCellStyle(style);
+        }
+    }
+
+    private CellStyle createHeaderStyle(Workbook workbook) {
+        CellStyle style = workbook.createCellStyle();
+        Font font = workbook.createFont();
+        font.setBold(true);
+        font.setFontHeightInPoints((short) 12);
+        style.setFont(font);
+        style.setAlignment(HorizontalAlignment.CENTER);
+        style.setVerticalAlignment(VerticalAlignment.CENTER);
+        return style;
+    }
+    
+    private CellStyle createCenteredStyle(Workbook workbook) {
+        CellStyle style = workbook.createCellStyle();
+        style.setAlignment(HorizontalAlignment.CENTER);
+        style.setVerticalAlignment(VerticalAlignment.CENTER);
+        return style;
+    }
+
+    private void createCell(Row row, int column, Object value, CellStyle style) {
+        Cell cell = row.createCell(column);
+        if (value instanceof String) {
+            cell.setCellValue((String) value);
+        } else if (value instanceof Number) {
+            cell.setCellValue(((Number) value).doubleValue());
+        }
+        if (style != null) {
+            cell.setCellStyle(style);
+        }
+    }
+
     public boolean isExamCreatedBy(Long examId, Long userId) {
-        Exam exam = getExamById(examId);
-        return exam.getCreatedBy().getId().equals(userId);
+        return examRepository.existsByIdAndCreatedById(examId, userId);
     }
 
     public ExamStatistics getExamStatistics(Long examId) {
@@ -511,81 +724,85 @@ public class ExamService {
         return stats;
     }
 
-    public List<com.teachhelper.dto.response.ExamResultResponse> getAllStudentResultsForExam(Long examId, Long teacherId) {
-        System.out.println("🔍 getAllStudentResultsForExam - examId: " + examId + ", teacherId: " + teacherId);
-        
+    public List<ExamResultResponse> getAllStudentResultsForExam(Long examId, Long teacherId) {
+        log.info("开始为考试ID {} 获取所有学生成绩，操作教师ID: {}", examId, teacherId);
+
+        // 使用 JOIN FETCH 一次性加载所有需要的数据，彻底解决懒加载问题
+        Exam exam = examRepository.findByIdWithClassroomsAndStudents(examId)
+            .orElseThrow(() -> new ResourceNotFoundException("Exam not found with id: " + examId));
+        log.info("成功获取考试: '{}' (ID: {})", exam.getTitle(), examId);
+
         if (teacherId != null && !isExamCreatedBy(examId, teacherId)) {
-            // 对于教师，检查他们是否创建了该考试
-            throw new SecurityException("教师无权访问此考试的结果。");
+            log.warn("权限检查失败: 教师ID {} 无权访问考试ID {}", teacherId, examId);
+            throw new SecurityException("Teacher is not authorized to access results for this exam.");
         }
-        // 对于管理员 (teacherId == null)，他们可以访问任何考试的结果
-        
-        // 获取该考试的所有答案
-        List<StudentAnswer> answers = studentAnswerService.getAnswersByExamId(examId);
-        System.out.println("📝 找到 " + answers.size() + " 个学生答案");
-        
-        if (answers.isEmpty()) {
-            System.out.println("⚠️  该考试没有学生答案数据");
+        log.info("权限检查通过");
+
+        // === 数据获取逻辑重构 ===
+        // 核心思想：不再从 "考试->班级->学生" 的路径获取学生，
+        // 而是直接从 "考试->答案->学生" 的路径反向获取，以兼容导入的数据。
+
+        List<StudentAnswer> allAnswers = studentAnswerService.getAnswersByExamId(examId);
+        log.info("获取到考试ID {} 的学生答案共 {} 条", examId, allAnswers.size());
+
+        if (allAnswers.isEmpty()) {
+            log.warn("考试ID {} 没有任何学生答案，无法生成成绩单", examId);
             return new ArrayList<>();
         }
+
+        // 从答案中反向提取所有不重复的学生
+        Set<User> allStudents = allAnswers.stream()
+                .map(StudentAnswer::getStudent)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        log.info("从答案中反向提取出 {} 个不重复的学生", allStudents.size());
         
-        // 按学生分组
-        Map<Long, List<StudentAnswer>> answersByStudent = answers.stream()
-            .collect(Collectors.groupingBy(answer -> answer.getStudent().getId()));
-        
-        System.out.println("👥 按学生分组后有 " + answersByStudent.size() + " 个学生");
-        
-        List<com.teachhelper.dto.response.ExamResultResponse> results = new ArrayList<>();
-        
-        for (Map.Entry<Long, List<StudentAnswer>> entry : answersByStudent.entrySet()) {
-            Long studentId = entry.getKey();
-            List<StudentAnswer> studentAnswers = entry.getValue();
+        if (allStudents.isEmpty()) {
+            log.warn("从答案中未能提取到任何学生信息，无法生成成绩单", examId);
+            return new ArrayList<>();
+        }
+
+        List<Question> questions = exam.getQuestions();
+        if (questions.isEmpty()) {
+            log.warn("考试ID {} 中没有题目，返回空列表", examId);
+            return new ArrayList<>();
+        }
+        log.info("考试共有 {} 个题目", questions.size());
+
+        Map<Long, List<StudentAnswer>> answersByStudent = allAnswers.stream()
+            .filter(sa -> sa.getStudent() != null) // 增加空指针保护
+            .collect(Collectors.groupingBy(sa -> sa.getStudent().getId()));
+        log.info("将答案按学生分组，得到 {} 组", answersByStudent.size());
+
+        List<ExamResultResponse> results = new ArrayList<>();
+        for (User student : allStudents) {
+            log.debug("正在处理学生: {} (ID: {})", student.getName(), student.getId());
+            List<StudentAnswer> studentAnswers = answersByStudent.getOrDefault(student.getId(), new ArrayList<>());
             
-            // 获取学生信息
-            User student = authService.getUserById(studentId);
-            if (student == null) {
-                System.out.println("⚠️ 找不到学生ID: " + studentId);
-                continue;
+            Map<Long, Double> scores = new HashMap<>();
+            BigDecimal totalScore = BigDecimal.ZERO;
+            for (StudentAnswer answer : studentAnswers) {
+                if (answer.getScore() != null) {
+                    scores.put(answer.getQuestion().getId(), answer.getScore().doubleValue());
+                    totalScore = totalScore.add(answer.getScore());
+                }
             }
+            log.debug("学生 {} 的总分: {}, 答案明细数: {}", student.getName(), totalScore, scores.size());
             
-            System.out.println("👤 处理学生: " + student.getUsername() + " (ID: " + studentId + "), 答案数: " + studentAnswers.size());
-            
-            // 计算总分
-            double totalScore = studentAnswers.stream()
-                .filter(answer -> answer.isEvaluated() && answer.getScore() != null)
-                .mapToDouble(answer -> answer.getScore().doubleValue())
-                .sum();
-            
-            // 计算总可能分数
-            double totalPossibleScore = studentAnswers.stream()
-                .mapToDouble(answer -> answer.getQuestion().getMaxScore() != null ? answer.getQuestion().getMaxScore().doubleValue() : 100.0)
-                .sum();
-            
-            // 检查是否全部批阅完成
-            boolean allEvaluated = studentAnswers.stream().allMatch(answer -> answer.isEvaluated());
-            String status = allEvaluated ? "EVALUATED" : "SUBMITTED";
-            
-            // 获取最早和最晚的时间
-            LocalDateTime submitTime = studentAnswers.stream()
-                .map(answer -> answer.getCreatedAt())
-                .max(LocalDateTime::compareTo)
-                .orElse(null);
-            
-            // 创建结果对象
-            com.teachhelper.dto.response.ExamResultResponse result = new com.teachhelper.dto.response.ExamResultResponse();
-            result.setExamId(examId);
-            result.setStudentId(studentId);
-            result.setStudentName(student.getUsername());
-            result.setTotalScore(allEvaluated ? totalScore : null);
-            result.setTotalPossibleScore(totalPossibleScore);
-            result.setAnsweredQuestions(studentAnswers.size());
-            result.setStatus(status);
-            result.setSubmitTime(submitTime);
+            ExamResultResponse result = new ExamResultResponse();
+            result.setStudentId(student.getId());
+            result.setStudentName(student.getName());
+            result.setStudentNumber(student.getStudentId());
+            result.setScores(scores);
+            result.setTotalScore(totalScore.doubleValue());
             
             results.add(result);
         }
+
+        // 按总分降序排序
+        results.sort(Comparator.comparing(ExamResultResponse::getTotalScore).reversed());
+        log.info("处理完成，共生成 {} 条学生成绩记录。准备返回。", results.size());
         
-        System.out.println("✅ 最终返回 " + results.size() + " 个学生结果");
         return results;
     }
 

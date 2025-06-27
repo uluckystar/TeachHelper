@@ -95,7 +95,7 @@ export const evaluationApi = {
   },
 
   // 获取最近的评估任务
-  async getRecentTasks(): Promise<any> {
+  async getRecentTasks(): Promise<any[]> {
     const response = await api.get('/evaluations/tasks/recent')
     return response.data
   },
@@ -162,7 +162,7 @@ export const evaluationApi = {
   },
 
   // 获取任务统计信息
-  async getTaskStats(): Promise<any> {
+  async getTaskStats(): Promise<EvaluationStatistics> {
     const response = await api.get('/evaluations/tasks/stats')
     return response.data
   },

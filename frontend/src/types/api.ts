@@ -152,7 +152,7 @@ export interface Question {
   id: number
   title: string
   content: string
-  questionType: 'ESSAY' | 'SHORT_ANSWER' | 'SINGLE_CHOICE' | 'MULTIPLE_CHOICE' | 'TRUE_FALSE' | 'CODING' | 'CASE_ANALYSIS'
+  questionType: QuestionType
   maxScore: number
   examId?: number
   examTitle?: string
@@ -173,6 +173,7 @@ export interface QuestionResponse {
   updatedAt: string
   options?: QuestionOption[]
   referenceAnswer?: string
+  standardAnswer?: string
   // 题目来源相关字段 - 新的分类方式
   sourceType?: 'SELF_CREATED' | 'INTERNET' | 'AI_GENERATED' | 'AI_ORGANIZED'
   isConfirmed?: boolean // AI整理题目的确认状态
@@ -192,7 +193,7 @@ export interface QuestionResponse {
 export interface QuestionCreateRequest {
   title: string
   content: string
-  questionType: 'ESSAY' | 'SHORT_ANSWER' | 'SINGLE_CHOICE' | 'MULTIPLE_CHOICE' | 'TRUE_FALSE' | 'CODING' | 'CASE_ANALYSIS'
+  questionType: QuestionType
   maxScore: number
   examId: number
   referenceAnswer?: string
@@ -767,4 +768,77 @@ export interface QuestionBank {
   updatedAt: string
   questions?: Question[]
   questionCount?: number
+}
+
+// 考试模板相关类型
+export interface ExamTemplateRequest {
+  templateName: string
+  subject?: string
+  examTitle?: string
+  description?: string
+  questions?: QuestionTemplateRequest[]
+}
+
+export interface QuestionTemplateRequest {
+  questionNumber: number
+  questionContent: string
+  sectionHeader?: string
+  questionType?: string
+  score?: number
+  correctAnswer?: string
+  options?: string[]
+  explanation?: string
+  isRequired?: boolean
+  questionId?: number
+  isMatched?: boolean
+  matchingStrategy?: string
+}
+
+export interface ExamTemplateResponse {
+  id: number
+  templateName: string
+  subject?: string
+  examTitle?: string
+  description?: string
+  totalQuestions: number
+  matchedQuestions: number
+  status: 'DRAFT' | 'READY' | 'APPLIED' | 'ARCHIVED'
+  createdTime: string
+  updatedTime: string
+  questions?: QuestionTemplateResponse[]
+  parseStatistics?: ParseStatistics
+}
+
+export interface QuestionTemplateResponse {
+  questionNumber: number
+  questionContent: string
+  sectionHeader?: string
+  questionType?: string
+  score?: number
+  correctAnswer?: string
+  options?: string[]
+  explanation?: string
+  isRequired?: boolean
+  
+  // 匹配信息
+  questionId?: number
+  isMatched?: boolean
+  matchingStrategy?: string
+  matchingConfidence?: number
+  matchingReason?: string
+  
+  // 验证信息
+  hasIssues?: boolean
+  issues?: string[]
+  suggestions?: string[]
+}
+
+export interface ParseStatistics {
+  totalDocuments: number
+  successfullyParsed: number
+  failedToParse: number
+  totalQuestions: number
+  questionsByType: number
+  commonIssues: string[]
+  recommendations: string[]
 }

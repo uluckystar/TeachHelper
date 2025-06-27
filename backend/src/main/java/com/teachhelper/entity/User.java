@@ -68,7 +68,7 @@ public class User extends BaseEntity implements UserDetails {
     private Set<Exam> exams;
     
     // 学生扩展字段
-    @Column(name = "student_number", unique = true, length = 20)
+    @Column(name = "student_number", unique = true, length = 50)
     private String studentNumber; // 学号，用于前端显示
     
     @Column(name = "class_name", length = 100)
@@ -96,6 +96,9 @@ public class User extends BaseEntity implements UserDetails {
     
     @Column(name = "avatar_url", length = 500)
     private String avatarUrl; // 头像URL
+    
+    @Column(name = "nickname", length = 100)
+    private String nickname; // 昵称
     
     // Constructors
     public User() {}
@@ -285,6 +288,23 @@ public class User extends BaseEntity implements UserDetails {
     
     public void setAvatarUrl(String avatarUrl) {
         this.avatarUrl = avatarUrl;
+    }
+    
+    public String getNickname() {
+        return nickname;
+    }
+    
+    public void setNickname(String nickname) {
+        this.nickname = nickname;
+    }
+    
+    // 设置单个角色的辅助方法
+    public void setRole(Role role) {
+        if (this.roles == null) {
+            this.roles = new java.util.HashSet<>();
+        }
+        this.roles.clear();
+        this.roles.add(role);
     }
     
     // 便捷方法：判断用户角色

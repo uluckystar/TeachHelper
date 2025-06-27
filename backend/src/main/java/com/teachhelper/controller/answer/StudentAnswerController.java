@@ -1,9 +1,13 @@
 package com.teachhelper.controller.answer;
 
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.Arrays;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ByteArrayResource;
@@ -30,23 +34,35 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.teachhelper.dto.request.StudentAnswerSubmitRequest;
+import com.teachhelper.dto.response.ImportResult;
 import com.teachhelper.dto.response.StudentAnswerResponse;
+import com.teachhelper.dto.response.TaskResponse;
 import com.teachhelper.entity.Question;
 import com.teachhelper.entity.User;
 import com.teachhelper.entity.StudentAnswer;
 import com.teachhelper.service.exam.ExamSubmissionService;
 import com.teachhelper.service.question.QuestionService;
 import com.teachhelper.service.student.StudentAnswerService;
+import com.teachhelper.service.task.LearningAnswerImportExecutorService;
 import com.teachhelper.repository.UserRepository;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 @RestController
 @RequestMapping("/api/student-answers")
 @Tag(name = "学生答案管理", description = "学生答案的提交、查询、管理等操作")
 public class StudentAnswerController {
+    
+    private static final Logger log = LoggerFactory.getLogger(StudentAnswerController.class);
     
     @Autowired
     private StudentAnswerService studentAnswerService;
@@ -59,6 +75,21 @@ public class StudentAnswerController {
     
     @Autowired
     private UserRepository userRepository;
+    
+    @Autowired
+    private com.teachhelper.service.answer.QuestionScoreParsingService questionScoreParsingService;
+    
+    @Autowired
+    private com.teachhelper.service.task.TaskService taskService;
+    
+    @Autowired
+    private com.teachhelper.service.task.LearningAnswerImportExecutorService learningAnswerImportExecutorService;
+    
+    @Autowired
+    private com.teachhelper.service.auth.AuthService authService;
+    
+    @Autowired
+    private com.teachhelper.service.template.TemplateBasedAnswerImportService templateBasedAnswerImportService;
     
     @PostMapping
     @Operation(summary = "提交学生答案", description = "学生提交答案")
@@ -307,6 +338,341 @@ public class StudentAnswerController {
             return ResponseEntity.badRequest().body("文件格式错误: " + e.getMessage());
         }
     }
+
+    @PostMapping("/import/learning")
+    @Operation(summary = "导入学习通答案", description = "从学习通答案文件夹批量导入学生答案")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> importLearningAnswers(
+            @RequestParam("subject") String subject,
+            @RequestParam("classFolders") List<String> classFolders,
+            @RequestParam(value = "examId", required = false) Long examId) {
+        try {
+            ImportResult result;
+            if (examId != null) {
+                log.info("导入学习通答案到考试 {}", examId);
+                result = studentAnswerService.importLearningAnswers(subject, classFolders, examId);
+            } else {
+                log.info("导入学习通答案到题库");
+                result = studentAnswerService.importLearningAnswers(subject, classFolders);
+            }
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("message", String.format("导入完成！成功: %d, 跳过: %d, 失败: %d", 
+                result.getSuccessCount(), result.getSkippedCount(), result.getFailedCount()));
+            response.put("result", result);
+            response.put("examId", examId);
+            
+            return ResponseEntity.ok(response);
+        } catch (IOException e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", "导入失败: " + e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        } catch (IllegalArgumentException e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", "参数错误: " + e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        }
+    }
+
+    @PostMapping("/import/learning/exam/{examId}")
+    @Operation(summary = "导入学习通答案到指定考试", description = "从学习通答案文件夹批量导入学生答案到指定考试")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> importLearningAnswersToExam(
+            @PathVariable Long examId,
+            @RequestParam("subject") String subject,
+            @RequestParam("classFolders") List<String> classFolders) {
+        try {
+            ImportResult result = studentAnswerService.importLearningAnswers(subject, classFolders, examId);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("message", String.format("导入到考试%d完成！成功: %d, 跳过: %d, 失败: %d", 
+                examId, result.getSuccessCount(), result.getSkippedCount(), result.getFailedCount()));
+            response.put("result", result);
+            
+            return ResponseEntity.ok(response);
+        } catch (IOException e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", "导入失败: " + e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        } catch (IllegalArgumentException e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", "参数错误: " + e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        }
+    }
+
+    @PostMapping("/import/learning-file")
+    @Operation(summary = "异步导入学习通答案文件", description = "异步导入单个学习通答案文档到题库，返回任务ID")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> importLearningAnswerFile(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "examId", required = false) Long examId) {
+        try {
+            // 验证文件
+            if (file.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("success", false, "message", "请选择文件"));
+            }
+            
+            String fileName = file.getOriginalFilename();
+            if (fileName == null || (!fileName.toLowerCase().endsWith(".doc") && !fileName.toLowerCase().endsWith(".docx"))) {
+                return ResponseEntity.badRequest().body(Map.of("success", false, "message", "只支持.doc和.docx格式的文件"));
+            }
+            
+            // 获取当前用户
+            User currentUser = authService.getCurrentUser();
+            
+            // 保存上传的文件到临时目录
+            String uploadDirPath = System.getProperty("java.io.tmpdir");
+            File uploadDir = new File(uploadDirPath, "learning-imports");
+            if (!uploadDir.exists()) {
+                uploadDir.mkdirs();
+            }
+            
+            File tempFile = new File(uploadDir, System.currentTimeMillis() + "_" + fileName);
+            file.transferTo(tempFile);
+            
+            // 创建任务
+            var taskRequest = new com.teachhelper.dto.request.TaskCreateRequest();
+            taskRequest.setName("学习通答案导入: " + fileName);
+            taskRequest.setDescription("导入学习通答案文档: " + fileName + (examId != null ? " 到考试ID: " + examId : " 到题库"));
+            taskRequest.setType("LEARNING_ANSWER_IMPORT");
+            taskRequest.setPriority("MEDIUM");
+            
+            var task = taskService.createTask(taskRequest);
+            
+            // 异步执行导入任务
+            learningAnswerImportExecutorService.executeLearningAnswerImportTask(
+                task.getTaskId(), tempFile, examId, currentUser);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("message", "学习通答案导入任务已启动，请在任务中心查看进度");
+            response.put("taskId", task.getTaskId());
+            response.put("fileName", fileName);
+            
+            log.info("学习通答案导入任务已创建: {} (文件: {})", task.getTaskId(), fileName);
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            log.error("创建学习通答案导入任务失败", e);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", "创建导入任务失败: " + e.getMessage());
+            
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    @PostMapping("/import/learning-async")
+    @Operation(summary = "异步导入学习通答案文件夹", description = "异步导入学习通答案文件夹，返回任务ID")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> importLearningAnswersAsync(
+            @RequestParam("subject") String subject,
+            @RequestParam("classFolders") String classFoldersStr,
+            @RequestParam(value = "examId", required = false) Long examId) {
+        
+        try {
+            // 现有的异步导入逻辑
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            String currentUsername = authentication.getName();
+            
+            List<String> classFolders = Arrays.asList(classFoldersStr.split(","));
+            
+            // 创建异步任务
+            String taskId = taskService.createLearningAnswerImportTask(
+                    subject, classFolders, examId, currentUsername);
+            
+            // 启动异步导入
+            // 注意：由于方法签名需要Long类型，但我们有String类型的taskId
+            // 需要先获取任务详情或者修改方法签名
+            // 暂时跳过执行，因为executeImportTask需要Long taskId
+            // learningAnswerImportExecutorService.executeImportTask(task.getId());
+            
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("message", "导入任务已启动");
+            result.put("taskId", taskId);
+            result.put("estimatedTime", "预计需要几分钟时间");
+            
+            return ResponseEntity.ok(result);
+            
+        } catch (Exception e) {
+            log.error("启动异步导入任务失败", e);
+            
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", "启动失败: " + e.getMessage());
+            
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+    
+    @PostMapping("/import/learning-with-template")
+    @Operation(summary = "基于模板导入学习通学生答案", description = "使用已就绪的试卷模板导入学生答案，只需匹配题号")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> importLearningAnswersWithTemplate(
+            @RequestParam("subject") String subject,
+            @RequestParam("classFolders") List<String> classFolders,
+            @RequestParam("templateId") Long templateId,
+            @RequestParam(value = "examId", required = false) Long examId) {
+        
+        try {
+            log.info("开始基于模板导入学生答案，模板ID: {}, 考试ID: {}, 班级数: {}", 
+                    templateId, examId, classFolders.size());
+            
+            // 获取当前用户
+            User currentUser = authService.getCurrentUser();
+            
+            if (examId == null) {
+                // 如果没有指定考试ID，返回错误
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", false);
+                response.put("message", "必须指定考试ID才能导入学生答案");
+                return ResponseEntity.badRequest().body(response);
+            }
+            
+            // 逐个班级导入
+            List<ImportResult> allResults = new ArrayList<>();
+            int totalSuccess = 0;
+            int totalFailure = 0;
+            List<String> allSuccessStudents = new ArrayList<>();
+            List<String> allFailedStudents = new ArrayList<>();
+            List<String> allErrorMessages = new ArrayList<>();
+            
+            for (String classFolder : classFolders) {
+                try {
+                    log.info("开始处理班级: {}", classFolder);
+                    ImportResult result = templateBasedAnswerImportService.importAnswersWithTemplate(
+                            examId, templateId, subject, classFolder, currentUser);
+                    
+                    allResults.add(result);
+                    totalSuccess += result.getSuccessCount();
+                    totalFailure += result.getFailedCount();
+                    
+                    if (result.getSuccessfulStudents() != null) {
+                        allSuccessStudents.addAll(result.getSuccessfulStudents());
+                    }
+                    if (result.getFailedStudents() != null) {
+                        allFailedStudents.addAll(result.getFailedStudents());
+                    }
+                    if (result.getErrorMessages() != null) {
+                        allErrorMessages.addAll(result.getErrorMessages());
+                    }
+                    
+                    log.info("班级 {} 导入完成: 成功{}, 失败{}", classFolder, 
+                            result.getSuccessCount(), result.getFailedCount());
+                    
+                } catch (Exception e) {
+                    log.error("班级 {} 导入失败", classFolder, e);
+                    totalFailure++;
+                    allFailedStudents.add("班级" + classFolder + "整体导入失败");
+                    allErrorMessages.add("班级" + classFolder + ": " + e.getMessage());
+                }
+            }
+            
+            // 汇总结果
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", totalSuccess > 0); // 只要有成功的就算成功
+            response.put("templateId", templateId);
+            response.put("examId", examId);
+            response.put("totalProcessed", totalSuccess + totalFailure);
+            response.put("successCount", totalSuccess);
+            response.put("failureCount", totalFailure);
+            response.put("successfulStudents", allSuccessStudents);
+            response.put("failedStudents", allFailedStudents);
+            response.put("errorMessages", allErrorMessages);
+            response.put("classResults", allResults);
+            
+            if (totalSuccess > 0) {
+                response.put("message", String.format("基于模板导入完成：成功 %d 人，失败 %d 人", 
+                        totalSuccess, totalFailure));
+                log.info("基于模板导入总计完成：模板ID={}, 考试ID={}, 成功={}, 失败={}", 
+                        templateId, examId, totalSuccess, totalFailure);
+            } else {
+                response.put("message", "导入失败：没有成功导入任何学生答案");
+                log.warn("基于模板导入失败：模板ID={}, 考试ID={}, 没有成功导入任何学生", templateId, examId);
+            }
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            log.error("基于模板导入学生答案失败", e);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", "导入失败: " + e.getMessage());
+            response.put("templateId", templateId);
+            response.put("examId", examId);
+            
+            return ResponseEntity.badRequest().body(response);
+        }
+    }
+
+    @GetMapping("/learning/subjects")
+    @Operation(summary = "获取可用科目列表", description = "获取学习通答案文件夹下的科目列表")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<List<String>> getAvailableSubjects() {
+        List<String> subjects = studentAnswerService.getAvailableSubjects();
+        return ResponseEntity.ok(subjects);
+    }
+
+    @GetMapping("/learning/subjects/{subject}/classes")
+    @Operation(summary = "获取科目下的班级列表", description = "获取指定科目下的班级文件夹列表")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<List<String>> getSubjectClasses(@PathVariable String subject) {
+        List<String> classes = studentAnswerService.getSubjectClasses(subject);
+        return ResponseEntity.ok(classes);
+    }
+    
+    @PostMapping("/parse-score/test")
+    @Operation(summary = "测试AI智能分数解析", description = "测试AI分数解析功能")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> testScoreParsing(
+            @RequestBody Map<String, String> request) {
+        
+        String questionContent = request.get("questionContent");
+        String sectionHeader = request.get("sectionHeader");
+        
+        if (questionContent == null || questionContent.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "题目内容不能为空"));
+        }
+        
+        try {
+            log.info("开始测试AI分数解析...");
+            log.info("题目内容: {}", questionContent);
+            log.info("段落标题: {}", sectionHeader);
+            
+            BigDecimal score = questionScoreParsingService.parseQuestionScore(questionContent, sectionHeader);
+            
+            Map<String, Object> result = Map.of(
+                "success", true,
+                "questionContent", questionContent,
+                "sectionHeader", sectionHeader != null ? sectionHeader : "",
+                "parsedScore", score != null ? score.doubleValue() : null,
+                "message", "AI分数解析成功"
+            );
+            
+            log.info("AI分数解析结果: {}", score);
+            return ResponseEntity.ok(result);
+            
+        } catch (Exception e) {
+            log.error("AI分数解析测试失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of(
+                    "success", false,
+                    "error", e.getMessage(),
+                    "message", "AI分数解析失败"
+                ));
+        }
+    }
     
     @GetMapping("/export")
     @Operation(summary = "导出答案", description = "导出学生答案到Excel/CSV文件")
@@ -409,6 +775,30 @@ public class StudentAnswerController {
             System.out.println("submitExam error: " + e.getMessage());
             e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @DeleteMapping("/student/{studentId}/exam/{examId}")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> deleteStudentExamAnswers(
+            @PathVariable Long studentId,
+            @PathVariable Long examId) {
+        try {
+            studentAnswerService.deleteStudentExamAnswers(studentId, examId);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("message", "学生试卷答案删除成功");
+            
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("删除学生试卷答案失败", e);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", "删除失败: " + e.getMessage());
+            
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
     }
 

@@ -15,6 +15,21 @@ import com.teachhelper.entity.Question;
 @Repository
 public interface QuestionRepository extends JpaRepository<Question, Long> {
     
+    /**
+     * 分页查询题目
+     */
+    Page<Question> findByIsActiveOrderByCreatedAtDesc(Boolean isActive, Pageable pageable);
+    
+    /**
+     * 根据题库ID查询题目
+     */
+    List<Question> findByQuestionBankIdAndIsActiveOrderByCreatedAtDesc(Long questionBankId, Boolean isActive);
+    
+    /**
+     * 获取前20个活跃题目，简单查询避免循环引用
+     */
+    List<Question> findTop20ByIsActiveTrueOrderByCreatedAtDesc();
+    
     // 预加载options、exam和questionBank的分页查询
     @EntityGraph(attributePaths = {"options", "exam", "questionBank"})
     Page<Question> findAll(Pageable pageable);
@@ -164,4 +179,34 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
            "LEFT JOIN FETCH q.options " +
            "ORDER BY q.createdAt DESC")
     Page<Question> findAllWithOptions(Pageable pageable);
+
+    /**
+     * 基于关键词搜索题目
+     */
+    @Query(value = "SELECT q.* FROM questions q " +
+           "WHERE q.is_active = true AND " +
+           "(q.title LIKE %:keyword% OR q.content LIKE %:keyword% OR q.keywords LIKE %:keyword%) " +
+           "ORDER BY q.created_at DESC LIMIT :limit", nativeQuery = true)
+    List<Question> searchByKeyword(@Param("keyword") String keyword, @Param("limit") int limit);
+
+    /**
+     * 基于内容相似度搜索题目
+     */
+    @Query(value = "SELECT q.* FROM questions q " +
+           "WHERE q.is_active = true AND " +
+           "(:questionType IS NULL OR q.question_type = :questionType) AND " +
+           "(q.content LIKE %:contentKeyword% OR q.title LIKE %:contentKeyword%) " +
+           "ORDER BY q.created_at DESC LIMIT :limit", nativeQuery = true)
+    List<Question> findSimilarQuestions(
+        @Param("contentKeyword") String contentKeyword, 
+        @Param("questionType") String questionType, 
+        @Param("limit") int limit);
+
+    /**
+     * 获取最新的题目（限制数量）
+     */
+    @Query(value = "SELECT q.* FROM questions q " +
+           "WHERE q.is_active = true " +
+           "ORDER BY q.id DESC LIMIT :limit", nativeQuery = true)
+    List<Question> findAllOrderByIdDesc(@Param("limit") int limit);
 }

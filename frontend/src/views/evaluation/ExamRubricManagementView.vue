@@ -4,201 +4,263 @@
     <div class="page-header">
       <el-page-header @back="handleBack">
         <template #content>
-          <span class="page-title">AI评分标准管理（可手动可AI）</span>
+          <span class="page-title">评分标准管理</span>
         </template>
       </el-page-header>
     </div>
 
-    <!-- 考试信息卡片 -->
-    <el-card class="exam-info-card" v-if="examInfo">
-      <template #header>
-        <div class="card-header">
-          <span>考试信息</span>
-          <el-tag :type="getExamStatusType(examInfo.status || 'active') as any">
+    <!-- 考试信息栏 -->
+    <el-card class="exam-info" v-if="examInfo">
+      <div class="exam-basic-info">
+        <h3>{{ examInfo.title }}</h3>
+        <div class="exam-meta">
+          <el-tag :type="getExamStatusType(examInfo.status || 'active') as any" size="small">
             {{ getExamStatusText(examInfo.status || 'active') }}
           </el-tag>
-        </div>
-      </template>
-      <div class="exam-info">
-        <h3>{{ examInfo.title }}</h3>
-        <p class="exam-description">{{ examInfo.description }}</p>
-        <div class="exam-meta">
-          <el-row :gutter="16">
-            <el-col :span="8">
-              <div class="meta-item">
-                <el-icon><Document /></el-icon>
-                <span>题目数量：{{ questions.length }}</span>
-              </div>
-            </el-col>
-            <el-col :span="8">
-              <div class="meta-item">
-                <el-icon><User /></el-icon>
-                <span>创建者：{{ examInfo.createdBy }}</span>
-              </div>
-            </el-col>
-            <el-col :span="8">
-              <div class="meta-item">
-                <el-icon><Calendar /></el-icon>
-                <span>创建时间：{{ formatDate(examInfo.createdAt) }}</span>
-              </div>
-            </el-col>
-          </el-row>
+          <span class="meta-text">创建者：{{ examInfo.createdBy }}</span>
+          <span class="meta-text">{{ formatDate(examInfo.createdAt) }}</span>
         </div>
       </div>
     </el-card>
 
-    <!-- 题目选择和操作工具栏 -->
-    <el-card class="operations-card">
+    <!-- AI生成进度和结果 -->
+    <el-card v-if="aiGenerating || aiResults.length > 0" class="ai-progress-card" style="margin-bottom: 20px;">
       <template #header>
         <div class="card-header">
-          <span>评分标准管理</span>
-          <div class="header-actions">
-            <el-button 
-              type="primary" 
-              icon="Plus"
-              @click="showCreateRubricDialog = true"
-              :disabled="selectedQuestions.length === 0"
-            >
-              手动创建评分标准
-            </el-button>
-            <el-button 
-              type="success" 
-              icon="MagicStick"
-              @click="generateAIRubrics"
-              :disabled="selectedQuestions.length === 0"
-              :loading="aiGenerating"
-            >
-              AI生成评分标准
-            </el-button>
-          </div>
-        </div>
-      </template>
-
-      <!-- 题目选择 -->
-      <div class="question-selection">
-        <div class="selection-header">
-          <h4>选择要管理评分标准的题目：</h4>
-          <div class="selection-controls">
-            <el-button 
-              size="small" 
-              @click="selectAllQuestions"
-              :disabled="questions.length === 0"
-            >
-              全选
-            </el-button>
-            <el-button 
-              size="small" 
-              @click="clearSelection"
-              :disabled="selectedQuestions.length === 0"
-            >
-              清空
-            </el-button>
-            <span class="selection-info">
-              已选择 {{ selectedQuestions.length }} / {{ questions.length }} 个题目
-            </span>
-          </div>
-        </div>
-
-        <div v-if="questions.length === 0" class="empty-state">
-          <el-empty description="该考试暂无题目">
-            <el-button type="primary" @click="navigateToAddQuestion">添加题目</el-button>
-          </el-empty>
-        </div>
-
-        <div v-else class="questions-list">
-          <el-checkbox-group v-model="selectedQuestions" class="questions-grid">
-            <div 
-              v-for="(question, index) in questions" 
-              :key="question.id"
-              class="question-item"
-              :class="{ 'selected': selectedQuestions.includes(question.id) }"
-            >
-              <el-checkbox :label="question.id" class="question-checkbox">
-                <div class="question-content">
-                  <div class="question-header">
-                    <el-tag 
-                      :type="getQuestionTypeTag(question.questionType)"
-                      size="small"
-                    >
-                      {{ getQuestionTypeText(question.questionType) }}
-                    </el-tag>
-                    <span class="question-title">题目 {{ index + 1 }}: {{ question.title }}</span>
-                  </div>
-                  <div class="question-meta">
-                    <span>满分: {{ question.maxScore }} 分</span>
-                    <span>评分标准: {{ getRubricCount(question.id) }} 个</span>
-                  </div>
-                  <div class="question-actions">
-                    <el-button 
-                      size="small" 
-                      type="primary" 
-                      icon="Setting"
-                      @click.stop="manageQuestionRubric(question)"
-                    >
-                      管理评分标准
-                    </el-button>
-                  </div>
-                </div>
-              </el-checkbox>
-            </div>
-          </el-checkbox-group>
-        </div>
-      </div>
-    </el-card>
-
-    <!-- AI生成进度 -->
-    <el-card v-if="aiGenerating" class="ai-progress-card">
-      <template #header>
-        <div class="card-header">
-          <span>AI生成进度</span>
+          <span v-if="aiGenerating">
+            <el-icon><MagicStick /></el-icon>
+            AI生成进度
+          </span>
+          <span v-else>
+            <el-icon><Check /></el-icon>
+            AI生成结果
+          </span>
           <el-button 
+            v-if="aiGenerating"
             type="danger" 
             size="small"
             @click="cancelAIGeneration"
           >
             取消生成
           </el-button>
+          <el-button 
+            v-if="!aiGenerating && aiResults.length > 0"
+            size="small"
+            @click="clearAIResults"
+            icon="Close"
+          >
+            关闭
+          </el-button>
         </div>
       </template>
       
       <div class="ai-progress">
-        <el-progress 
-          :percentage="aiProgress" 
-          :status="aiProgress === 100 ? 'success' : undefined"
-        />
-        <p class="progress-text">{{ aiProgressText }}</p>
+        <!-- 进度条（生成中显示） -->
+        <div v-if="aiGenerating">
+          <el-progress 
+            :percentage="aiProgress" 
+            :status="aiProgress === 100 ? 'success' : undefined"
+          />
+          <p class="progress-text">{{ aiProgressText }}</p>
+        </div>
         
+        <!-- 完成的进度条 -->
+        <div v-if="!aiGenerating && aiResults.length > 0" class="completed-progress">
+          <el-progress 
+            :percentage="100" 
+            status="success"
+          />
+          <p class="progress-text">{{ aiProgressText || `评分标准生成完成！成功生成 ${aiResults.length} 个题目的评分标准` }}</p>
+        </div>
+        
+        <!-- 成功完成提示 -->
+        <div v-if="!aiGenerating && aiResults.length > 0" class="success-message">
+          <el-alert
+            :title="`AI评分标准生成完成！成功生成 ${aiResults.length} 个题目的评分标准`"
+            type="success"
+            show-icon
+            :closable="false"
+          />
+        </div>
+        
+        <!-- 生成结果 -->
         <div v-if="aiResults.length > 0" class="ai-results">
           <h4>生成结果预览：</h4>
           <div class="results-list">
             <div v-for="result in aiResults" :key="result.questionId" class="result-item">
-              <h5>{{ getQuestionTitle(result.questionId) }}</h5>
+              <div class="result-header">
+                <h5>{{ getQuestionTitle(result.questionId) }}</h5>
+                <el-tag size="small" type="info">{{ result.rubrics.length }}个评分标准</el-tag>
+              </div>
               <div class="rubrics">
                 <el-tag 
                   v-for="rubric in result.rubrics" 
-                  :key="rubric.criterion"
+                  :key="rubric.name"
                   class="rubric-tag"
+                  type="success"
                 >
-                  {{ rubric.criterion }} ({{ rubric.points }}分)
+                  {{ rubric.name }} ({{ rubric.points }}分)
                 </el-tag>
               </div>
             </div>
           </div>
           
-          <div class="ai-actions">
-            <el-button 
-              type="primary" 
-              @click="applyAIResults"
-              :loading="applying"
-            >
-              应用所有生成的评分标准
-            </el-button>
-            <el-button @click="clearAIResults">
-              重新生成
-            </el-button>
+          <div class="ai-actions" style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+            <el-alert
+              title="请确认生成的评分标准是否符合要求，然后点击应用按钮保存到数据库"
+              type="info"
+              show-icon
+              :closable="false"
+              style="margin-bottom: 15px;"
+            />
+            <div class="action-buttons">
+              <el-button 
+                type="primary" 
+                size="large"
+                @click="applyAIResults"
+                :loading="applying"
+                icon="Check"
+              >
+                {{ applying ? '应用中...' : '应用所有评分标准' }}
+              </el-button>
+              <el-button 
+                size="large"
+                @click="generateAIRubrics"
+                :disabled="selectedQuestions.length === 0"
+                icon="Refresh"
+              >
+                重新生成
+              </el-button>
+            </div>
           </div>
         </div>
       </div>
+    </el-card>
+
+    <!-- 批量操作工具栏 -->
+    <el-card class="operations-card" v-if="questions.length > 0">
+      <div class="operations">
+        <div class="selection-info">
+          <el-checkbox 
+            v-model="selectAll" 
+            @change="handleSelectAll"
+            :indeterminate="isIndeterminate"
+          >
+            已选择 {{ selectedQuestions.length }} / {{ questions.length }} 个题目
+          </el-checkbox>
+        </div>
+        
+        <div class="batch-actions">
+          <el-button 
+            type="primary" 
+            icon="Plus"
+            @click="showCreateRubricDialog = true"
+            :disabled="selectedQuestions.length === 0"
+          >
+            手动创建评分标准
+          </el-button>
+          <el-button 
+            type="success" 
+            icon="MagicStick"
+            @click="generateAIRubrics"
+            :disabled="selectedQuestions.length === 0"
+            :loading="aiGenerating"
+          >
+            AI生成评分标准
+          </el-button>
+        </div>
+      </div>
+    </el-card>
+
+    <!-- 题目列表 -->
+    <el-card class="questions-card" v-if="questions.length > 0">
+      <template #header>
+        <div class="card-header">
+          <span>题目列表</span>
+          <el-input
+            v-model="searchKeyword"
+            placeholder="搜索题目..."
+            prefix-icon="Search"
+            size="small"
+            style="width: 200px"
+            clearable
+          />
+        </div>
+      </template>
+      
+      <div class="questions-table">
+        <el-table 
+          :data="paginatedQuestions" 
+          @selection-change="handleSelectionChange"
+          row-key="id"
+        >
+          <el-table-column type="selection" width="55" />
+          <el-table-column label="题目" min-width="300">
+            <template #default="{ row, $index }">
+              <div class="question-cell">
+                <div class="question-header">
+                  <el-tag 
+                    :type="getQuestionTypeTag(row.questionType)"
+                    size="small"
+                  >
+                    {{ getQuestionTypeText(row.questionType) }}
+                  </el-tag>
+                  <span class="question-number">第 {{ $index + 1 }} 题</span>
+                </div>
+                <div class="question-title">{{ row.title }}</div>
+                <div class="question-content" v-if="row.content">
+                  {{ row.content.substring(0, 100) }}{{ row.content.length > 100 ? '...' : '' }}
+                </div>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="满分" width="80" align="center">
+            <template #default="{ row }">
+              <span class="score-text">{{ row.maxScore }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="评分标准" width="120" align="center">
+            <template #default="{ row }">
+              <el-tag 
+                :type="getRubricCount(row.id) > 0 ? 'success' : 'info'"
+                size="small"
+              >
+                {{ getRubricCount(row.id) }} 个
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="150" align="center" fixed="right">
+            <template #default="{ row }">
+              <el-button 
+                type="primary" 
+                size="small"
+                @click="manageQuestionRubric(row)"
+              >
+                管理评分标准
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        
+        <!-- 分页 -->
+        <div class="pagination-wrapper">
+          <el-pagination
+            v-model:current-page="currentPage"
+            v-model:page-size="pageSize"
+            :page-sizes="[5, 10, 20, 50]"
+            :total="total"
+            layout="total, sizes, prev, pager, next, jumper"
+            class="pagination"
+          />
+        </div>
+      </div>
+    </el-card>
+
+    <!-- 空状态 -->
+    <el-card v-else class="empty-card">
+      <el-empty description="该考试暂无题目">
+        <el-button type="primary" @click="navigateToAddQuestion">添加题目</el-button>
+      </el-empty>
     </el-card>
 
     <!-- 评分标准总览 -->
@@ -312,47 +374,149 @@
     <el-dialog
       v-model="showCreateRubricDialog"
       title="创建评分标准"
-      width="600px"
+      width="700px"
       destroy-on-close
     >
-      <div class="create-rubric-form">
-        <el-form :model="newRubric" :rules="rubricRules" ref="rubricFormRef" label-width="100px">
-          <el-form-item label="选择题目" prop="questionId">
-            <el-select v-model="newRubric.questionId" placeholder="请选择题目" style="width: 100%">
-              <el-option
-                v-for="question in selectedQuestionsData"
-                :key="question.id"
-                :label="`题目${getQuestionIndex(question.id)}: ${question.title}`"
-                :value="question.id"
+      <div v-if="selectedQuestions.length === 0" class="no-selection-warning">
+        <el-alert
+          title="请先选择题目"
+          description="您需要先在题目列表中选择要创建评分标准的题目"
+          type="warning"
+          show-icon
+          :closable="false"
+        />
+      </div>
+      
+      <div v-else class="create-rubric-form">
+        <el-tabs v-model="activeRubricTab" type="border-card">
+          <!-- 单个题目创建 -->
+          <el-tab-pane label="单个创建" name="single">
+            <el-form :model="newRubric" :rules="rubricRules" ref="rubricFormRef" label-width="120px">
+              <el-form-item label="选择题目" prop="questionId">
+                <el-select 
+                  v-model="newRubric.questionId" 
+                  placeholder="请选择题目" 
+                  style="width: 100%"
+                  @change="onQuestionSelected"
+                >
+                  <el-option
+                    v-for="question in selectedQuestionsData"
+                    :key="question.id"
+                    :label="`题目${getQuestionIndex(question.id)}: ${question.title}`"
+                    :value="question.id"
+                  />
+                </el-select>
+              </el-form-item>
+              
+              <!-- 显示题目信息 -->
+              <div v-if="selectedQuestionInfo" class="question-info">
+                <h4>题目信息</h4>
+                <p><strong>类型：</strong>{{ getQuestionTypeText(selectedQuestionInfo.questionType) }}</p>
+                <p><strong>满分：</strong>{{ selectedQuestionInfo.maxScore }} 分</p>
+                <p><strong>已有评分标准：</strong>{{ getRubricCount(selectedQuestionInfo.id) }} 个</p>
+                <el-divider />
+              </div>
+              
+              <el-form-item label="评分标准名称" prop="criterionText">
+                <el-input 
+                  v-model="newRubric.criterionText" 
+                  placeholder="例如：论点明确、逻辑清晰、计算过程"
+                />
+              </el-form-item>
+              
+              <el-form-item label="分数" prop="points">
+                <el-input-number 
+                  v-model="newRubric.points" 
+                  :min="0.5" 
+                  :max="getMaxScoreForQuestion(newRubric.questionId)"
+                  :step="0.5"
+                  placeholder="分数"
+                  style="width: 120px"
+                />
+                <span class="form-hint">
+                  建议分数不超过 {{ getMaxScoreForQuestion(newRubric.questionId) }} 分
+                </span>
+              </el-form-item>
+              
+              <el-form-item label="详细描述">
+                <el-input 
+                  v-model="newRubric.description" 
+                  type="textarea" 
+                  :rows="3"
+                  placeholder="详细描述该评分标准的评判要求和标准（可选）"
+                />
+              </el-form-item>
+            </el-form>
+          </el-tab-pane>
+          
+          <!-- 批量创建 -->
+          <el-tab-pane label="批量创建" name="batch" v-if="selectedQuestions.length > 1">
+            <div class="batch-create-form">
+              <el-alert
+                title="批量创建提示"
+                description="将为所有选中的题目创建相同的评分标准"
+                type="info"
+                show-icon
+                :closable="false"
               />
-            </el-select>
-          </el-form-item>
-          
-          <el-form-item label="评分标准" prop="criterionText">
-            <el-input 
-              v-model="newRubric.criterionText" 
-              placeholder="请输入评分标准名称"
-            />
-          </el-form-item>
-          
-          <el-form-item label="分数" prop="points">
-            <el-input-number 
-              v-model="newRubric.points" 
-              :min="1" 
-              :max="getMaxScoreForQuestion(newRubric.questionId)"
-              placeholder="分数"
-            />
-          </el-form-item>
-          
-          <el-form-item label="详细描述" prop="description">
-            <el-input 
-              v-model="newRubric.description" 
-              type="textarea" 
-              :rows="3"
-              placeholder="请输入评分标准的详细描述"
-            />
-          </el-form-item>
-        </el-form>
+              
+              <el-form :model="batchRubric" :rules="batchRubricRules" ref="batchRubricFormRef" label-width="120px" style="margin-top: 20px;">
+                <el-form-item label="评分标准名称" prop="criterionText">
+                  <el-input 
+                    v-model="batchRubric.criterionText" 
+                    placeholder="例如：基础分、答题完整性"
+                  />
+                </el-form-item>
+                
+                <el-form-item label="分数分配方式" prop="scoreMode">
+                  <el-radio-group v-model="batchRubric.scoreMode">
+                    <el-radio value="fixed">固定分数</el-radio>
+                    <el-radio value="percentage">按比例分配</el-radio>
+                  </el-radio-group>
+                </el-form-item>
+                
+                <el-form-item v-if="batchRubric.scoreMode === 'fixed'" label="固定分数" prop="fixedScore">
+                  <el-input-number 
+                    v-model="batchRubric.fixedScore" 
+                    :min="0.5" 
+                    :step="0.5"
+                    style="width: 120px"
+                  />
+                  <span class="form-hint">为每个题目设置相同的分数</span>
+                </el-form-item>
+                
+                <el-form-item v-if="batchRubric.scoreMode === 'percentage'" label="分数比例" prop="percentage">
+                  <el-input-number 
+                    v-model="batchRubric.percentage" 
+                    :min="10" 
+                    :max="100"
+                    style="width: 120px"
+                  />
+                  <span class="form-hint">占题目总分的百分比</span>
+                </el-form-item>
+                
+                <el-form-item label="详细描述">
+                  <el-input 
+                    v-model="batchRubric.description" 
+                    type="textarea" 
+                    :rows="3"
+                    placeholder="详细描述该评分标准的评判要求和标准（可选）"
+                  />
+                </el-form-item>
+              </el-form>
+              
+              <!-- 预览 -->
+              <div class="batch-preview">
+                <h4>创建预览</h4>
+                <el-table :data="batchPreviewData" size="small" border>
+                  <el-table-column label="题目" prop="title" min-width="200" />
+                  <el-table-column label="题目总分" prop="maxScore" width="80" align="center" />
+                  <el-table-column label="标准分数" prop="calculatedScore" width="80" align="center" />
+                </el-table>
+              </div>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
       </div>
       
       <template #footer>
@@ -360,10 +524,11 @@
           <el-button @click="showCreateRubricDialog = false">取消</el-button>
           <el-button 
             type="primary" 
-            @click="createRubric"
+            @click="activeRubricTab === 'single' ? createRubric() : createBatchRubrics()"
             :loading="creating"
+            :disabled="selectedQuestions.length === 0"
           >
-            创建
+            {{ activeRubricTab === 'single' ? '创建' : `批量创建 (${selectedQuestions.length}个)` }}
           </el-button>
         </div>
       </template>
@@ -372,7 +537,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -386,7 +551,9 @@ import {
   Delete,
   Refresh,
   InfoFilled,
-  ArrowLeft
+  ArrowLeft,
+  Check,
+  Warning
 } from '@element-plus/icons-vue'
 
 import { examApi } from '@/api/exam'
@@ -413,6 +580,15 @@ const questions = ref<QuestionResponse[]>([])
 const selectedQuestions = ref<number[]>([])
 const rubricOverview = ref<any[]>([])
 
+// 新增的响应式变量
+const searchKeyword = ref('')
+const selectAll = ref(false)
+const isIndeterminate = ref(false)
+
+// 分页相关
+const currentPage = ref(1)
+const pageSize = ref(10)
+
 // AI生成相关
 const aiProgress = ref(0)
 const aiProgressText = ref('')
@@ -420,6 +596,7 @@ const aiResults = ref<any[]>([])
 
 // 对话框状态
 const showCreateRubricDialog = ref(false)
+const activeRubricTab = ref('single')
 
 // 表单数据
 const newRubric = reactive({
@@ -429,7 +606,17 @@ const newRubric = reactive({
   description: ''
 })
 
+// 批量创建表单数据
+const batchRubric = reactive({
+  criterionText: '',
+  scoreMode: 'fixed' as 'fixed' | 'percentage',
+  fixedScore: 1,
+  percentage: 20,
+  description: ''
+})
+
 const rubricFormRef = ref()
+const batchRubricFormRef = ref()
 
 // 表单验证规则
 const rubricRules = {
@@ -441,6 +628,21 @@ const rubricRules = {
   ],
   points: [
     { required: true, message: '请输入分数', trigger: 'blur' }
+  ]
+}
+
+const batchRubricRules = {
+  criterionText: [
+    { required: true, message: '请输入评分标准名称', trigger: 'blur' }
+  ],
+  scoreMode: [
+    { required: true, message: '请选择分数分配方式', trigger: 'change' }
+  ],
+  fixedScore: [
+    { required: true, message: '请输入固定分数', trigger: 'blur' }
+  ],
+  percentage: [
+    { required: true, message: '请输入分数比例', trigger: 'blur' }
   ]
 }
 
@@ -458,6 +660,53 @@ const examId = computed(() => {
 
 const selectedQuestionsData = computed(() => {
   return questions.value.filter(q => selectedQuestions.value.includes(q.id))
+})
+
+// 过滤后的题目列表
+const filteredQuestions = computed(() => {
+  if (!searchKeyword.value) {
+    return questions.value
+  }
+  return questions.value.filter(q => 
+    q.title.toLowerCase().includes(searchKeyword.value.toLowerCase()) ||
+    q.content?.toLowerCase().includes(searchKeyword.value.toLowerCase())
+  )
+})
+
+// 分页后的题目列表
+const paginatedQuestions = computed(() => {
+  const filtered = filteredQuestions.value
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return filtered.slice(start, end)
+})
+
+// 总页数
+const total = computed(() => filteredQuestions.value.length)
+
+// 选中的题目信息
+const selectedQuestionInfo = computed(() => {
+  if (!newRubric.questionId) return null
+  return questions.value.find(q => q.id === newRubric.questionId)
+})
+
+// 批量创建预览数据
+const batchPreviewData = computed(() => {
+  return selectedQuestionsData.value.map(question => {
+    let calculatedScore = 0
+    if (batchRubric.scoreMode === 'fixed') {
+      calculatedScore = batchRubric.fixedScore
+    } else {
+      calculatedScore = Math.round((question.maxScore * batchRubric.percentage / 100) * 10) / 10
+    }
+    
+    return {
+      id: question.id,
+      title: question.title,
+      maxScore: question.maxScore,
+      calculatedScore
+    }
+  })
 })
 
 // 生命周期
@@ -641,31 +890,58 @@ const generateAIRubrics = async () => {
     const total = selectedQuestions.value.length
     let completed = 0
     
-    for (const questionId of selectedQuestions.value) {
+    aiProgressText.value = `正在并发生成 ${total} 个题目的评分标准...`
+    
+    // 并发生成所有题目的评分标准
+    const promises = selectedQuestions.value.map(async (questionId) => {
       try {
-        aiProgressText.value = `正在为题目 ${getQuestionIndex(questionId)} 生成评分标准...`
-        
         const suggestions = await questionApi.generateRubric(questionId)
         
-        aiResults.value.push({
+        // 更新进度
+        completed++
+        aiProgress.value = Math.round((completed / total) * 100)
+        aiProgressText.value = `已完成 ${completed}/${total} 个题目的评分标准生成`
+        
+        return {
           questionId,
           rubrics: suggestions.map((s: any) => ({
-            criterion: s.criterionText,
+            name: s.criterionText,  // 使用 name 字段保持一致性
             points: s.points
-          }))
-        })
+          })),
+          success: true
+        }
+      } catch (error) {
+        console.error(`Failed to generate rubric for question ${questionId}:`, error)
+        ElMessage.warning(`题目 ${getQuestionIndex(questionId)} 评分标准生成失败`)
         
         completed++
         aiProgress.value = Math.round((completed / total) * 100)
         
-      } catch (error) {
-        console.error(`Failed to generate rubric for question ${questionId}:`, error)
-        ElMessage.warning(`题目 ${getQuestionIndex(questionId)} 评分标准生成失败`)
+        return {
+          questionId,
+          rubrics: [],
+          success: false,
+          error: error
+        }
       }
-    }
+    })
     
-    aiProgressText.value = '所有评分标准生成完成！'
-    ElMessage.success('AI评分标准生成完成')
+    // 等待所有并发请求完成
+    const results = await Promise.all(promises)
+    
+    // 只保存成功的结果
+    aiResults.value = results.filter(result => result.success && result.rubrics.length > 0)
+    
+    const successCount = aiResults.value.length
+    const failedCount = total - successCount
+    
+    if (successCount > 0) {
+      aiProgressText.value = `评分标准生成完成！成功 ${successCount} 个，失败 ${failedCount} 个`
+      ElMessage.success(`AI评分标准生成完成，成功生成 ${successCount} 个题目的评分标准`)
+    } else {
+      aiProgressText.value = '所有题目的评分标准生成都失败了'
+      ElMessage.error('所有题目的评分标准生成都失败了')
+    }
     
   } catch (error) {
     console.error('Failed to generate AI rubrics:', error)
@@ -679,16 +955,42 @@ const applyAIResults = async () => {
   try {
     applying.value = true
     
-    for (const result of aiResults.value) {
-      const suggestions = result.rubrics.map((r: any) => ({
-        criterionText: r.criterion,
-        points: r.points
-      }))
-      
-      await questionApi.applyRubricSuggestions(result.questionId, suggestions)
+    let successCount = 0
+    let failedCount = 0
+    
+    console.log('开始应用AI评分标准...', aiResults.value)
+    
+    // 并发应用所有评分标准
+    const promises = aiResults.value.map(async (result) => {
+      try {
+        console.log(`应用题目 ${result.questionId} 的评分标准:`, result.rubrics)
+        
+        // 修正数据结构：AI返回的是 {name, points}，需要转换为 {criterionText, points}
+        const suggestions = result.rubrics.map((r: any) => ({
+          criterionText: r.name,  // AI返回的字段名是 'name'，不是 'criterion'
+          points: r.points
+        }))
+        
+        console.log(`转换后的建议:`, suggestions)
+        
+        await questionApi.applyRubricSuggestions(result.questionId, suggestions)
+        successCount++
+        return { questionId: result.questionId, success: true }
+      } catch (error) {
+        console.error(`Failed to apply rubric for question ${result.questionId}:`, error)
+        failedCount++
+        return { questionId: result.questionId, success: false, error }
+      }
+    })
+    
+    await Promise.all(promises)
+    
+    if (successCount > 0) {
+      ElMessage.success(`评分标准应用完成！成功 ${successCount} 个，失败 ${failedCount} 个`)
+    } else {
+      ElMessage.error('所有评分标准应用都失败了')
     }
     
-    ElMessage.success('所有评分标准应用成功')
     clearAIResults()
     await loadRubricOverview()
     
@@ -743,6 +1045,58 @@ const resetRubricForm = () => {
   newRubric.criterionText = ''
   newRubric.points = 1
   newRubric.description = ''
+}
+
+// 题目选择变化处理
+const onQuestionSelected = (questionId: number) => {
+  // 题目选择变化时的处理逻辑
+  console.log('Selected question:', questionId)
+}
+
+// 批量创建评分标准
+const createBatchRubrics = async () => {
+  try {
+    await batchRubricFormRef.value?.validate()
+    
+    creating.value = true
+    
+    const promises = selectedQuestionsData.value.map(async (question) => {
+      let score = 0
+      if (batchRubric.scoreMode === 'fixed') {
+        score = batchRubric.fixedScore
+      } else {
+        score = Math.round((question.maxScore * batchRubric.percentage / 100) * 10) / 10
+      }
+      
+      return rubricApi.createCriterion({
+        questionId: question.id,
+        criterionText: batchRubric.criterionText,
+        points: score,
+        description: batchRubric.description || `批量创建的评分标准 - ${batchRubric.criterionText}`
+      })
+    })
+    
+    await Promise.all(promises)
+    
+    ElMessage.success(`批量创建评分标准成功，共创建 ${selectedQuestionsData.value.length} 个`)
+    showCreateRubricDialog.value = false
+    resetBatchRubricForm()
+    await loadRubricOverview()
+    
+  } catch (error) {
+    console.error('Failed to create batch rubrics:', error)
+    ElMessage.error('批量创建评分标准失败')
+  } finally {
+    creating.value = false
+  }
+}
+
+const resetBatchRubricForm = () => {
+  batchRubric.criterionText = ''
+  batchRubric.scoreMode = 'fixed'
+  batchRubric.fixedScore = 1
+  batchRubric.percentage = 20
+  batchRubric.description = ''
 }
 
 const manageQuestionRubric = (question: QuestionResponse) => {
@@ -814,6 +1168,43 @@ const getExamStatusText = (status: string) => {
   return statusMap[status as keyof typeof statusMap] || status
 }
 
+// 选择相关方法
+const handleSelectAll = (checked: any) => {
+  if (checked) {
+    selectedQuestions.value = questions.value.map(q => q.id)
+    selectAll.value = true
+    isIndeterminate.value = false
+  } else {
+    selectedQuestions.value = []
+    selectAll.value = false
+    isIndeterminate.value = false
+  }
+}
+
+const handleSelectionChange = (selection: any[]) => {
+  selectedQuestions.value = selection.map(item => item.id)
+  updateSelectAllState()
+}
+
+const updateSelectAllState = () => {
+  const totalCount = questions.value.length
+  const selectedCount = selectedQuestions.value.length
+  
+  if (selectedCount === 0) {
+    selectAll.value = false
+    isIndeterminate.value = false
+  } else if (selectedCount === totalCount) {
+    selectAll.value = true
+    isIndeterminate.value = false
+  } else {
+    selectAll.value = false
+    isIndeterminate.value = true
+  }
+}
+
+// 监听选择变化
+watch(selectedQuestions, updateSelectAllState)
+
 const getQuestionTypeText = (type: string) => {
   const typeMap = {
     'ESSAY': '论述题',
@@ -822,7 +1213,8 @@ const getQuestionTypeText = (type: string) => {
     'MULTIPLE_CHOICE': '多选题',
     'TRUE_FALSE': '判断题',
     'CODING': '编程题',
-    'CASE_ANALYSIS': '案例分析题'
+    'CASE_ANALYSIS': '案例分析题',
+    'CALCULATION': '计算题'
   }
   return typeMap[type as keyof typeof typeMap] || type
 }
@@ -835,7 +1227,8 @@ const getQuestionTypeTag = (type: string): 'primary' | 'success' | 'warning' | '
     'MULTIPLE_CHOICE': 'warning',
     'TRUE_FALSE': 'info',
     'CODING': 'danger',
-    'CASE_ANALYSIS': 'primary'
+    'CASE_ANALYSIS': 'primary',
+    'CALCULATION': 'primary'
   }
   return tagMap[type] || 'primary'
 }
@@ -860,6 +1253,25 @@ const getMaxScoreForQuestion = (questionId: number | undefined) => {
   const question = questions.value.find(q => q.id === questionId)
   return question ? question.maxScore : 100
 }
+
+// 获取评分标准覆盖率百分比
+const getRubricCoveragePercentage = () => {
+  if (questions.value.length === 0) return 0
+  const questionsWithRubrics = getQuestionsWithRubrics()
+  return Math.round((questionsWithRubrics / questions.value.length) * 100)
+}
+
+// 获取已设置评分标准的题目数量
+const getQuestionsWithRubrics = () => {
+  return rubricOverview.value.filter(overview => overview.rubrics && overview.rubrics.length > 0).length
+}
+
+// 获取评分标准总数
+const getTotalRubrics = () => {
+  return rubricOverview.value.reduce((total, overview) => {
+    return total + (overview.rubrics ? overview.rubrics.length : 0)
+  }, 0)
+}
 </script>
 
 <style scoped>
@@ -879,11 +1291,139 @@ const getMaxScoreForQuestion = (questionId: number | undefined) => {
   color: #303133;
 }
 
-.exam-info-card,
-.operations-card,
-.ai-progress-card,
-.rubrics-overview-card {
+/* 考试信息样式 */
+.exam-info {
   margin-bottom: 20px;
+}
+
+.overview-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.exam-basic-info {
+  flex: 1;
+}
+
+.exam-basic-info h3 {
+  margin: 0 0 8px 0;
+  color: #303133;
+  font-size: 18px;
+}
+
+.exam-desc {
+  color: #606266;
+  margin: 8px 0 12px 0;
+  line-height: 1.5;
+}
+
+.exam-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.meta-text {
+  color: #909399;
+  font-size: 14px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  min-width: 200px;
+}
+
+.stat-item {
+  text-align: center;
+  padding: 12px;
+  background: #f8f9fa;
+  border-radius: 8px;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: #409eff;
+  margin-bottom: 4px;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #909399;
+}
+
+/* 操作工具栏样式 */
+.operations-card,
+.questions-card,
+.empty-card,
+.ai-progress-card {
+  margin-bottom: 20px;
+}
+
+.operations {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.selection-info {
+  font-size: 14px;
+  color: #606266;
+}
+
+.batch-actions {
+  display: flex;
+  gap: 12px;
+}
+
+/* 题目表格样式 */
+.questions-table {
+  margin-top: 16px;
+}
+
+/* 分页样式 */
+.pagination-wrapper {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.question-cell {
+  padding: 8px 0;
+}
+
+.question-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.question-number {
+  font-size: 12px;
+  color: #909399;
+}
+
+.question-title {
+  font-weight: 500;
+  color: #303133;
+  margin-bottom: 4px;
+}
+
+.question-content {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
+}
+
+.score-text {
+  font-weight: 500;
+  color: #67c23a;
 }
 
 .card-header {
@@ -898,18 +1438,43 @@ const getMaxScoreForQuestion = (questionId: number | undefined) => {
   gap: 12px;
 }
 
+.header-badges {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .exam-info {
-  text-align: center;
+  text-align: left;
+}
+
+.exam-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
 }
 
 .exam-info h3 {
-  margin: 0 0 8px 0;
+  margin: 0;
   color: #303133;
+  flex: 1;
+}
+
+.quick-stats {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+}
+
+.stat-item {
+  text-align: center;
 }
 
 .exam-description {
   color: #606266;
   margin-bottom: 16px;
+  text-align: left;
 }
 
 .exam-meta {
@@ -1054,6 +1619,28 @@ const getMaxScoreForQuestion = (questionId: number | undefined) => {
   display: flex;
   justify-content: center;
   gap: 12px;
+}
+
+.ai-actions .action-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.result-header h5 {
+  margin: 0;
+  flex: 1;
+}
+
+.success-message {
+  margin-bottom: 20px;
 }
 
 .rubrics-overview {

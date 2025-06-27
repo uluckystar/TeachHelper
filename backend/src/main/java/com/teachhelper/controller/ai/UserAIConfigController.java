@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -106,8 +107,8 @@ public class UserAIConfigController {
     @GetMapping("/{id}/stats")
     @Operation(summary = "获取AI配置使用统计", description = "获取指定AI配置的使用统计信息")
     public ResponseEntity<AIUsageStatsDTO> getUsageStats(@PathVariable Long id,
-                                                        @RequestParam(required = false) LocalDateTime startTime,
-                                                        @RequestParam(required = false) LocalDateTime endTime) {
+                                                        @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime startTime,
+                                                        @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime endTime) {
         Long userId = authService.getCurrentUser().getId();
         AIUsageStatsDTO stats = userAIConfigService.getConfigUsageStats(userId, id, startTime, endTime);
         return ResponseEntity.ok(stats);
@@ -154,8 +155,8 @@ public class UserAIConfigController {
     
     @GetMapping("/stats/summary")
     @Operation(summary = "获取用户总体统计", description = "获取当前用户的AI使用总体统计")
-    public ResponseEntity<Map<String, Object>> getUserStats(@RequestParam(required = false) LocalDateTime startTime,
-                                                           @RequestParam(required = false) LocalDateTime endTime) {
+    public ResponseEntity<Map<String, Object>> getUserStats(@RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime startTime,
+                                                           @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime endTime) {
         Long userId = authService.getCurrentUser().getId();
         Map<String, Object> stats = userAIConfigService.getUserTotalStats(userId);
         return ResponseEntity.ok(stats);

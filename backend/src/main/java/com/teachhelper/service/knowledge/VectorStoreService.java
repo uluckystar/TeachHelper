@@ -2,11 +2,12 @@ package com.teachhelper.service.knowledge;
 
 import com.teachhelper.entity.KnowledgeDocument;
 import com.teachhelper.service.knowledge.DocumentChunkingService.DocumentChunk;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,12 +23,18 @@ import java.util.stream.Collectors;
  * 采用最佳实践进行向量搜索和存储管理
  */
 @Service
-@Slf4j
-@RequiredArgsConstructor
 public class VectorStoreService {
+    
+    private static final Logger log = LoggerFactory.getLogger(VectorStoreService.class);
     
     private final VectorStore vectorStore;
     private final DocumentChunkingService chunkingService;
+    
+    @Autowired
+    public VectorStoreService(VectorStore vectorStore, DocumentChunkingService chunkingService) {
+        this.vectorStore = vectorStore;
+        this.chunkingService = chunkingService;
+    }
     
     @Value("${spring.ai.vectorstore.pgvector.enable-chunking:true}")
     private boolean enableChunking;

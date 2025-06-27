@@ -108,6 +108,15 @@ public class Exam extends BaseEntity {
     @OneToMany(mappedBy = "exam", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Question> questions = new ArrayList<>();
     
+    /**
+     * 来源模板
+     * 多对一关系，指向创建此考试所使用的模板
+     * 可选字段，如果为空则表示手动创建的考试
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "source_template_id")
+    private ExamTemplate sourceTemplate;
+    
     // 构造方法
     
     /**
@@ -324,5 +333,21 @@ public class Exam extends BaseEntity {
      */
     public void setQuestions(List<Question> questions) {
         this.questions = questions;
+    }
+    
+    /**
+     * 获取来源模板
+     * @return 来源模板
+     */
+    public ExamTemplate getSourceTemplate() {
+        return sourceTemplate;
+    }
+    
+    /**
+     * 设置来源模板
+     * @param sourceTemplate 来源模板
+     */
+    public void setSourceTemplate(ExamTemplate sourceTemplate) {
+        this.sourceTemplate = sourceTemplate;
     }
 }

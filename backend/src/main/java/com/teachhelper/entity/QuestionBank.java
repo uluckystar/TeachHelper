@@ -42,6 +42,7 @@ public class QuestionBank extends BaseEntity {
     @Column(name = "is_active")
     private Boolean isActive = true;
     
+    @com.fasterxml.jackson.annotation.JsonIgnore
     @OneToMany(mappedBy = "questionBank", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Question> questions = new ArrayList<>();
     

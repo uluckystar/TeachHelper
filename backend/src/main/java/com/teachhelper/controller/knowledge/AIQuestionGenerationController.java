@@ -1,4 +1,6 @@
 package com.teachhelper.controller.knowledge;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.teachhelper.dto.request.AIQuestionGenerationRequest;
 import com.teachhelper.dto.response.AIQuestionGenerationResponse;
@@ -8,8 +10,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -23,13 +23,18 @@ import java.util.HashMap;
 @RestController
 @RequestMapping("/api/knowledge/ai-generation")
 @Tag(name = "AI题目生成", description = "基于知识库的AI智能题目生成")
-@RequiredArgsConstructor
-@Slf4j
 @PreAuthorize("hasRole('ADMIN') or hasRole('TEACHER')")
 public class AIQuestionGenerationController {
 
+    private static final Logger log = LoggerFactory.getLogger(AIQuestionGenerationController.class);
+
     private final AIQuestionGenerationService aiQuestionGenerationService;
     private final AuthService authService;
+    
+    public AIQuestionGenerationController(AIQuestionGenerationService aiQuestionGenerationService, AuthService authService) {
+        this.aiQuestionGenerationService = aiQuestionGenerationService;
+        this.authService = authService;
+    }
 
     /**
      * 基于知识库生成题目

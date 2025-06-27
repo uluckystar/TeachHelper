@@ -14,6 +14,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -437,6 +438,26 @@ public class QuestionController {
             .collect(Collectors.toList());
             
         return ResponseEntity.status(HttpStatus.CREATED).body(appliedCriteria);
+    }
+    
+    @PostMapping("/{questionId}/generate-reference-answer")
+    @Operation(summary = "AI生成参考答案", description = "使用AI为题目生成建议的参考答案")
+    public ResponseEntity<Map<String, String>> generateReferenceAnswer(@PathVariable Long questionId) {
+        Question question = questionService.getQuestionById(questionId);
+        try {
+            String referenceAnswer = aiEvaluationService.generateReferenceAnswer(question);
+            // 更新题目实体的参考答案
+            question.setReferenceAnswer(referenceAnswer);
+            questionService.save(question);
+            
+            Map<String, String> response = new HashMap<>();
+            response.put("referenceAnswer", referenceAnswer);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", "AI生成参考答案失败: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
     }
     
     // 流式AI生成相关接口
