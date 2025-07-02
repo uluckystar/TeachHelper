@@ -89,7 +89,19 @@ public class StudentAnswerController {
     private com.teachhelper.service.auth.AuthService authService;
     
     @Autowired
-    private com.teachhelper.service.template.TemplateBasedAnswerImportService templateBasedAnswerImportService;
+    private com.teachhelper.service.answer.LearningAnswerParserService learningAnswerParserService;
+    
+    @Autowired
+    private com.teachhelper.service.answer.NestedZipAnswerImportService nestedZipAnswerImportService;
+    
+    @Autowired
+    private com.teachhelper.service.answer.MajorAssignmentAnswerImportService majorAssignmentAnswerImportService;
+    
+    @Autowired
+    private com.teachhelper.service.answer.FolderUploadAnswerService folderUploadAnswerService;
+    
+    @Autowired
+    private com.teachhelper.service.answer.FileNameParserService fileNameParserService;
     
     @PostMapping
     @Operation(summary = "提交学生答案", description = "学生提交答案")
@@ -497,27 +509,25 @@ public class StudentAnswerController {
             @RequestParam(value = "examId", required = false) Long examId) {
         
         try {
-            // 现有的异步导入逻辑
-            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-            String currentUsername = authentication.getName();
-            
+            // 获取当前用户信息
+            User currentUser = authService.getCurrentUser();
             List<String> classFolders = Arrays.asList(classFoldersStr.split(","));
             
             // 创建异步任务
             String taskId = taskService.createLearningAnswerImportTask(
-                    subject, classFolders, examId, currentUsername);
+                    subject, classFolders, examId, currentUser.getUsername());
             
-            // 启动异步导入
-            // 注意：由于方法签名需要Long类型，但我们有String类型的taskId
-            // 需要先获取任务详情或者修改方法签名
-            // 暂时跳过执行，因为executeImportTask需要Long taskId
-            // learningAnswerImportExecutorService.executeImportTask(task.getId());
+            // 启动异步导入执行
+            learningAnswerImportExecutorService.executeLearningAnswersBatchImportTask(
+                    taskId, subject, classFolders, examId, currentUser);
             
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
             result.put("message", "导入任务已启动");
             result.put("taskId", taskId);
             result.put("estimatedTime", "预计需要几分钟时间");
+            
+            log.info("学习通答案批量导入任务已启动: {} (科目: {}, 班级数: {})", taskId, subject, classFolders.size());
             
             return ResponseEntity.ok(result);
             
@@ -567,8 +577,11 @@ public class StudentAnswerController {
             for (String classFolder : classFolders) {
                 try {
                     log.info("开始处理班级: {}", classFolder);
-                    ImportResult result = templateBasedAnswerImportService.importAnswersWithTemplate(
-                            examId, templateId, subject, classFolder, currentUser);
+                    
+                    // 实现基于模板的导入逻辑
+                    ImportResult result = studentAnswerService.importLearningAnswersWithTemplate(
+                        subject, classFolder, templateId, examId
+                    );
                     
                     allResults.add(result);
                     totalSuccess += result.getSuccessCount();
@@ -649,6 +662,104 @@ public class StudentAnswerController {
         return ResponseEntity.ok(classes);
     }
     
+    @PostMapping("/parse-template/test")
+    @Operation(summary = "测试学习通模板解析", description = "从学习通文档中提取考试模板信息")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> testTemplateExtraction(
+            @RequestParam("file") MultipartFile file) {
+        
+        log.info("📚 开始测试学习通模板解析功能");
+        
+        Map<String, Object> response = new HashMap<>();
+        
+        try {
+            // 1. 保存上传的文件到临时目录
+            String uploadsDir = System.getProperty("java.io.tmpdir");
+            Path tempDir = Paths.get(uploadsDir);
+            if (!Files.exists(tempDir)) {
+                Files.createDirectories(tempDir);
+            }
+            
+            String fileName = file.getOriginalFilename();
+            Path tempFile = tempDir.resolve(fileName);
+            Files.write(tempFile, file.getBytes());
+            
+            log.info("📁 临时文件保存成功: {}", tempFile.toString());
+            
+            // 2. 使用新的模板解析方法
+            com.teachhelper.service.answer.LearningAnswerParserService.ExamTemplateData templateData = 
+                learningAnswerParserService.parseExamTemplate(tempFile.toFile());
+            
+            if (templateData == null) {
+                response.put("success", false);
+                response.put("message", "无法解析该文档，请检查文档格式");
+                return ResponseEntity.badRequest().body(response);
+            }
+            
+            // 3. 构建返回结果
+            response.put("success", true);
+            response.put("message", "模板解析成功");
+            response.put("data", buildTemplateResponse(templateData));
+            
+            // 4. 清理临时文件
+            Files.deleteIfExists(tempFile);
+            
+            log.info("✅ 模板解析测试完成: {}", templateData.getExamTitle());
+            
+        } catch (Exception e) {
+            log.error("❌ 模板解析测试失败: {}", e.getMessage(), e);
+            response.put("success", false);
+            response.put("message", "解析失败: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+        
+        return ResponseEntity.ok(response);
+    }
+    
+    /**
+     * 构建模板响应数据
+     */
+    private Map<String, Object> buildTemplateResponse(com.teachhelper.service.answer.LearningAnswerParserService.ExamTemplateData templateData) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("examTitle", templateData.getExamTitle());
+        data.put("subject", templateData.getSubject());
+        data.put("studentName", templateData.getStudentName());
+        data.put("className", templateData.getClassName());
+        data.put("totalQuestions", templateData.getTotalQuestions());
+        data.put("totalScore", templateData.getTotalScore());
+        
+        List<Map<String, Object>> sections = new ArrayList<>();
+        if (templateData.getSections() != null) {
+            for (var section : templateData.getSections()) {
+                Map<String, Object> sectionMap = new HashMap<>();
+                sectionMap.put("sectionNumber", section.getSectionNumber());
+                sectionMap.put("sectionTitle", section.getSectionTitle());
+                sectionMap.put("questionType", section.getQuestionType());
+                sectionMap.put("questionCount", section.getQuestionCount());
+                sectionMap.put("totalScore", section.getTotalScore());
+                sectionMap.put("scorePerQuestion", section.getScorePerQuestion());
+                
+                List<Map<String, Object>> questions = new ArrayList<>();
+                if (section.getQuestions() != null) {
+                    for (var question : section.getQuestions()) {
+                        Map<String, Object> questionMap = new HashMap<>();
+                        questionMap.put("questionNumber", question.getQuestionNumber());
+                        questionMap.put("questionContent", question.getQuestionContent());
+                        questionMap.put("correctAnswer", question.getCorrectAnswer());
+                        questionMap.put("options", question.getOptions());
+                        questionMap.put("score", question.getScore());
+                        questions.add(questionMap);
+                    }
+                }
+                sectionMap.put("questions", questions);
+                sections.add(sectionMap);
+            }
+        }
+        data.put("sections", sections);
+        
+        return data;
+    }
+
     @PostMapping("/parse-score/test")
     @Operation(summary = "测试AI智能分数解析", description = "测试AI分数解析功能")
     @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
@@ -819,6 +930,197 @@ public class StudentAnswerController {
         }
     }
 
+    /**
+     * 嵌套压缩包答案导入
+     * 支持班级压缩包中包含学生压缩包的结构
+     */
+    @PostMapping("/import-nested-zip")
+    @Operation(summary = "导入嵌套压缩包答案", description = "从指定路径导入单个题目的嵌套压缩包答案")
+    public ResponseEntity<ImportResult> importNestedZipAnswers(
+            @RequestParam String answerPath,
+            @RequestParam Long questionId) {
+        try {
+            ImportResult result = nestedZipAnswerImportService.importNestedZipAnswersForQuestion(answerPath, questionId);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("嵌套压缩包导入失败", e);
+            ImportResult result = new ImportResult();
+            result.setSuccessCount(0);
+            result.setFailureCount(1);
+            result.setErrorMessages(Arrays.asList("导入失败"));
+            result.setErrors(Arrays.asList(e.getMessage()));
+            return ResponseEntity.ok(result);
+        }
+    }
+
+    /**
+     * 获取嵌套压缩包答案的科目列表
+     */
+    @GetMapping("/nested-zip-subjects")
+    public ResponseEntity<List<String>> getNestedZipSubjects() {
+        try {
+            List<String> subjects = nestedZipAnswerImportService.getAvailableSubjects();
+            return ResponseEntity.ok(subjects);
+        } catch (Exception e) {
+            log.error("获取科目列表失败", e);
+            return ResponseEntity.ok(Arrays.asList());
+        }
+    }
+    
+    /**
+     * 获取指定科目下的作业/实验列表
+     */
+    @GetMapping("/nested-zip-assignments")
+    public ResponseEntity<List<String>> getNestedZipAssignments(@RequestParam String subject) {
+        try {
+            List<String> assignments = nestedZipAnswerImportService.getAvailableAssignments(subject);
+            return ResponseEntity.ok(assignments);
+        } catch (Exception e) {
+            log.error("获取作业列表失败: subject=" + subject, e);
+            return ResponseEntity.ok(Arrays.asList());
+        }
+    }
+    
+    /**
+     * 基于科目和作业的嵌套压缩包导入
+     */
+    @PostMapping("/import-nested-zip-by-subject")
+    public ResponseEntity<ImportResult> importNestedZipAnswersBySubject(
+            @RequestParam String subject,
+            @RequestParam String assignment,
+            @RequestParam Long questionId) {
+        try {
+            ImportResult result = nestedZipAnswerImportService.importNestedZipAnswersBySubjectAndAssignment(
+                    subject, assignment, questionId);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("基于科目的嵌套压缩包导入失败", e);
+            ImportResult result = new ImportResult();
+            result.setSuccessCount(0);
+            result.setFailureCount(1);
+            result.setErrorMessages(Arrays.asList("导入失败"));
+            result.setErrors(Arrays.asList(e.getMessage()));
+            return ResponseEntity.ok(result);
+        }
+    }
+
+    /**
+     * 大作业答案导入（班级压缩包内直接是学生答案文档，LLM解析文件名）
+     */
+    @PostMapping("/import-major-assignment")
+    @Operation(summary = "导入大作业答案", description = "从班级压缩包导入大作业答案，LLM解析文件名，无学号用No_student_number")
+    public ResponseEntity<ImportResult> importMajorAssignmentAnswers(
+            @RequestParam String subject,
+            @RequestParam String assignment,
+            @RequestParam Long questionId) {
+        try {
+            // 获取当前用户ID（假设有authService）
+            Long userId = authService.getCurrentUser().getId();
+            ImportResult result = majorAssignmentAnswerImportService.importMajorAssignmentAnswers(subject, assignment, questionId, userId);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("大作业导入失败", e);
+            ImportResult result = new ImportResult();
+            result.setSuccessCount(0);
+            result.setFailedCount(1);
+            result.setErrorMessages(Arrays.asList("导入失败: " + e.getMessage()));
+            return ResponseEntity.ok(result);
+        }
+    }
+
+    /**
+     * 获取大作业导入的作业/实验列表
+     */
+    @GetMapping("/major-assignment-assignments")
+    public ResponseEntity<List<String>> getMajorAssignmentAssignments(@RequestParam String subject) {
+        try {
+            List<String> assignments = majorAssignmentAnswerImportService.getAvailableAssignments(subject);
+            return ResponseEntity.ok(assignments);
+        } catch (Exception e) {
+            log.error("获取大作业作业列表失败: subject=" + subject, e);
+            return ResponseEntity.ok(Arrays.asList());
+        }
+    }
+
+    @PostMapping("/import-folder-upload")
+    @Operation(summary = "文件夹批量上传答案", description = "上传文件夹中的多个文档，自动解析文件名提取学生信息，将整个文档内容作为答案")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<ImportResult> importFolderUploadAnswers(
+            @RequestParam("files") MultipartFile[] files,
+            @RequestParam("questionId") Long questionId) {
+        
+        try {
+            log.info("接收到文件夹批量上传请求，文件数量: {}, 题目ID: {}", files.length, questionId);
+            
+            // 过滤支持的文件类型
+            List<MultipartFile> supportedFiles = folderUploadAnswerService.filterSupportedFiles(files);
+            
+            if (supportedFiles.isEmpty()) {
+                ImportResult result = new ImportResult();
+                result.setSuccess(false);
+                result.setErrorMessage("没有找到支持的文件类型，支持：doc, docx, pdf, txt, jpg, png 等");
+                return ResponseEntity.badRequest().body(result);
+            }
+            
+            // 处理文件
+            com.teachhelper.service.answer.FolderUploadAnswerService.ProcessResult processResult = 
+                folderUploadAnswerService.processUploadedFiles(supportedFiles.toArray(new MultipartFile[0]), questionId);
+            
+            // 转换为ImportResult
+            ImportResult importResult = folderUploadAnswerService.convertToImportResult(processResult);
+            
+            log.info("文件夹批量上传完成: 成功{}, 失败{}", importResult.getSuccessCount(), importResult.getFailedCount());
+            return ResponseEntity.ok(importResult);
+            
+        } catch (Exception e) {
+            log.error("文件夹批量上传失败", e);
+            ImportResult result = new ImportResult();
+            result.setSuccess(false);
+            result.setErrorMessage("上传处理失败: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(result);
+        }
+    }
+    
+    @PostMapping("/test-filename-parse")
+    @Operation(summary = "测试文件名解析", description = "测试LLM文件名解析功能，返回解析结果")
+    @PreAuthorize("hasRole('TEACHER') or hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> testFileNameParse(@RequestBody Map<String, String> request) {
+        try {
+            String fileName = request.get("fileName");
+            if (fileName == null || fileName.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "文件名不能为空"
+                ));
+            }
+            
+            var parseResult = fileNameParserService.parseFileName(fileName);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", parseResult.isSuccess());
+            response.put("fileName", fileName);
+            
+            if (parseResult.isSuccess()) {
+                response.put("studentName", parseResult.getStudentName());
+                response.put("studentNumber", parseResult.getStudentNumber());
+                response.put("parseMethod", parseResult.getParseMethod());
+                response.put("message", "解析成功");
+            } else {
+                response.put("errorMessage", parseResult.getErrorMessage());
+                response.put("message", "解析失败");
+            }
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            log.error("测试文件名解析失败", e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                "success", false,
+                "message", "解析失败: " + e.getMessage()
+            ));
+        }
+    }
+
     private StudentAnswerResponse convertToResponse(StudentAnswer answer) {
         StudentAnswerResponse response = new StudentAnswerResponse();
         response.setId(answer.getId());
@@ -833,7 +1135,7 @@ public class StudentAnswerController {
             // 使用真正的学号而不是 student_id (用户ID)
             String displayStudentId = answer.getStudent().getStudentNumber() != null 
                 ? answer.getStudent().getStudentNumber() 
-                : answer.getStudent().getStudentId(); // 向后兼容
+                : String.valueOf(answer.getStudent().getId()); // 向后兼容
                 
             StudentAnswerResponse.StudentInfo studentInfo = new StudentAnswerResponse.StudentInfo(
                 answer.getStudent().getId(),

@@ -135,7 +135,7 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
     List<Question> findByTagsContaining(@Param("tag") String tag);
     
     /**
-     * 多条件搜索题目 - 第一步：获取基本信息和选项
+     * 多条件搜索题目 - 支持关键词、题目类型、来源类型、考试ID和时间范围筛选
      */
     @Query("SELECT DISTINCT q FROM Question q " +
            "LEFT JOIN FETCH q.options " +
@@ -143,15 +143,19 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
            "WHERE (:keyword IS NULL OR :keyword = '' OR " +
            "       q.title LIKE %:keyword% OR q.content LIKE %:keyword% OR q.keywords LIKE %:keyword%) " +
            "AND (:questionType IS NULL OR :questionType = '' OR q.questionType = :questionType) " +
-           "AND (:sourceType IS NULL OR :sourceType = '' OR q.sourceType = :sourceType) " +
+           "AND (:sourceType IS NULL OR q.sourceType = :sourceType) " +
            "AND (:examId IS NULL OR e.id = :examId) " +
+           "AND (:startDate IS NULL OR CAST(q.createdAt AS date) >= :startDate) " +
+           "AND (:endDate IS NULL OR CAST(q.createdAt AS date) <= :endDate) " +
            "AND q.isActive = true " +
            "ORDER BY q.createdAt DESC")
     Page<Question> searchQuestionsWithFilters(
         @Param("keyword") String keyword,
         @Param("questionType") String questionType,
-        @Param("sourceType") String sourceType,
+        @Param("sourceType") com.teachhelper.entity.SourceType sourceType,
         @Param("examId") Long examId,
+        @Param("startDate") java.time.LocalDate startDate,
+        @Param("endDate") java.time.LocalDate endDate,
         Pageable pageable
     );
     

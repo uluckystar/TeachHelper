@@ -83,7 +83,8 @@
               <el-form size="small" inline>
                 <el-form-item label="知识库">
                   <el-select
-                    v-model="fileConfigs[file.uid]?.knowledgeBaseId"
+                    :model-value="fileConfigs[file.uid]?.knowledgeBaseId"
+                    @update:model-value="(value) => updateFileConfig(file.uid, 'knowledgeBaseId', value)"
                     placeholder="选择知识库"
                     size="small"
                     style="width: 120px"
@@ -98,7 +99,8 @@
                 </el-form-item>
                 <el-form-item label="学科">
                   <el-select
-                    v-model="fileConfigs[file.uid]?.subject"
+                    :model-value="fileConfigs[file.uid]?.subject"
+                    @update:model-value="(value) => updateFileConfig(file.uid, 'subject', value)"
                     placeholder="学科"
                     size="small"
                     style="width: 80px"
@@ -113,7 +115,8 @@
                 </el-form-item>
                 <el-form-item label="年级">
                   <el-select
-                    v-model="fileConfigs[file.uid]?.gradeLevel"
+                    :model-value="fileConfigs[file.uid]?.gradeLevel"
+                    @update:model-value="(value) => updateFileConfig(file.uid, 'gradeLevel', value)"
                     placeholder="年级"
                     size="small"
                     style="width: 100px"
@@ -393,6 +396,18 @@ const handleFileSelect = (checked: boolean, fileUid: number) => {
   } else {
     selectedFiles.value = selectedFiles.value.filter(uid => uid !== fileUid)
   }
+}
+
+// 更新文件配置
+const updateFileConfig = (fileUid: number, field: string, value: any) => {
+  if (!fileConfigs.value[fileUid]) {
+    fileConfigs.value[fileUid] = {
+      knowledgeBaseId: '',
+      subject: '',
+      gradeLevel: ''
+    }
+  }
+  fileConfigs.value[fileUid][field] = value
 }
 
 // 文件处理方法

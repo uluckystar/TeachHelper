@@ -680,18 +680,17 @@ public class ExamController {
         try {
             // 获取考试信息
             Exam exam = examService.getExamById(examId);
-            
+            // 获取所有题目
+            List<com.teachhelper.entity.Question> allQuestions = examService.getQuestionService().getQuestionsByExamId(examId);
             // 获取学生信息
             User student = userRepository.findById(studentId)
                 .orElseThrow(() -> new RuntimeException("学生不存在: " + studentId));
-            
             // 获取学生的所有答案
             List<StudentAnswer> answers = studentAnswerService.getStudentAnswersInExam(examId, studentId);
-            
+            // 构造补全后的试卷
             StudentExamPaperResponse paperResponse = new StudentExamPaperResponse(
-                student, examId, exam.getTitle(), answers
+                student, examId, exam.getTitle(), allQuestions, answers
             );
-            
             return ResponseEntity.ok(paperResponse);
         } catch (Exception e) {
             System.err.println("获取学生试卷详情失败: " + e.getMessage());

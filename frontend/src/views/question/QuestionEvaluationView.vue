@@ -144,30 +144,26 @@
               </el-col>
             </el-row>
             
-            <!-- 第二行：批量批阅操作 -->
+            <!-- 第二行：智能批量批阅 -->
             <el-row :gutter="12" class="batch-actions-row">
-              <el-col :span="12">
+              <el-col :span="24">
                 <el-button 
                   type="primary" 
                   icon="MagicStick"
-                  @click="handleBatchEvaluation"
-                  :disabled="!statistics || statistics.unevaluatedAnswers === 0"
+                  @click="handleSmartBatchEvaluation"
+                  :disabled="!statistics || statistics.totalAnswers === 0"
                   block
-                  size="default"
+                  size="large"
+                  class="smart-batch-btn"
                 >
-                  AI并发批阅 ({{ statistics?.unevaluatedAnswers || 0 }}个)
-                </el-button>
-              </el-col>
-              <el-col :span="12">
-                <el-button 
-                  type="success" 
-                  icon="Check"
-                  @click="markAllAsEvaluated"
-                  :disabled="!statistics || statistics.unevaluatedAnswers === 0"
-                  block
-                  size="default"
-                >
-                  标记全部已批阅
+                  <div class="btn-content">
+                    <div class="btn-title">AI智能批量批阅</div>
+                    <div class="btn-subtitle">
+                      未批阅 {{ statistics?.unevaluatedAnswers || 0 }}个 · 
+                      已批阅 {{ statistics?.evaluatedAnswers || 0 }}个 · 
+                      共 {{ statistics?.totalAnswers || 0 }}个答案
+                    </div>
+                  </div>
                 </el-button>
               </el-col>
             </el-row>
@@ -585,6 +581,241 @@
         </span>
       </template>
     </el-dialog>
+
+    <!-- 新增：单个AI批阅风格弹窗 -->
+    <el-dialog
+      v-model="singleEvalDialogVisible"
+      :title="'AI批阅风格选择'"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <div class="single-eval-dialog">
+        <el-alert
+          title="选择AI批阅风格"
+          description="请选择要应用的AI批阅风格"
+          type="info"
+          :closable="false"
+          style="margin-bottom: 20px"
+        />
+        <el-radio-group v-model="singleEvalStyle">
+          <el-radio v-for="opt in [{label: '普通', value: 'NORMAL'}, {label: '宽松', value: 'LENIENT'}, {label: '严格', value: 'STRICT'}]" :key="opt.value" :label="opt.value">{{ opt.label }}</el-radio>
+        </el-radio-group>
+      </div>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="singleEvalDialogVisible = false">取消</el-button>
+          <el-button 
+            type="primary" 
+            @click="confirmSingleEval"
+            :loading="aiEvaluating === (singleEvalTarget && singleEvalTarget.id)"
+          >
+            确认
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
+
+    <!-- AI智能批量批阅对话框 -->
+    <el-dialog
+      v-model="batchRevaluationDialogVisible"
+      title="🤖 AI智能批量批阅"
+      width="800px"
+      :close-on-click-modal="false"
+      class="smart-batch-dialog-container"
+    >
+      <div class="smart-batch-content">
+        <!-- 步骤指示器 -->
+        <div class="steps-indicator">
+          <div class="step active">
+            <div class="step-number">1</div>
+            <div class="step-label">选择范围</div>
+          </div>
+          <div class="step-divider"></div>
+          <div class="step active">
+            <div class="step-number">2</div>
+            <div class="step-label">选择模式</div>
+          </div>
+          <div class="step-divider"></div>
+          <div class="step">
+            <div class="step-number">3</div>
+            <div class="step-label">开始批阅</div>
+          </div>
+        </div>
+
+        <!-- 答案统计概览 -->
+        <div class="stats-overview">
+          <div class="stats-grid">
+            <div class="stat-item unevaluated" :class="{ 'selected': batchRevaluationScope === 'unevaluated' }">
+              <div class="stat-icon">📝</div>
+              <div class="stat-info">
+                <div class="stat-number">{{ statistics?.unevaluatedAnswers || 0 }}</div>
+                <div class="stat-label">未批阅</div>
+              </div>
+            </div>
+            <div class="stat-item evaluated" :class="{ 'selected': batchRevaluationScope === 'evaluated' }">
+              <div class="stat-icon">✅</div>
+              <div class="stat-info">
+                <div class="stat-number">{{ statistics?.evaluatedAnswers || 0 }}</div>
+                <div class="stat-label">已批阅</div>
+              </div>
+            </div>
+            <div class="stat-item total" :class="{ 'selected': batchRevaluationScope === 'all' }">
+              <div class="stat-icon">📚</div>
+              <div class="stat-info">
+                <div class="stat-number">{{ statistics?.totalAnswers || 0 }}</div>
+                <div class="stat-label">总计</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 批阅范围选择 -->
+        <div class="scope-selection-section">
+          <h3 class="section-title">
+            <span class="section-icon">🎯</span>
+            选择批阅范围
+          </h3>
+          <div class="scope-cards">
+            <div 
+              class="scope-card" 
+              :class="{ 
+                'active': batchRevaluationScope === 'unevaluated',
+                'disabled': (statistics?.unevaluatedAnswers || 0) === 0 
+              }"
+              @click="(statistics?.unevaluatedAnswers || 0) > 0 && (batchRevaluationScope = 'unevaluated')"
+            >
+              <div class="card-header">
+                <div class="card-icon">🆕</div>
+                <div class="card-title">批阅新答案</div>
+                <div class="card-badge">{{ statistics?.unevaluatedAnswers || 0 }}个</div>
+              </div>
+              <div class="card-desc">
+                对尚未批阅的答案进行AI智能批阅，快速完成初次评分
+              </div>
+            </div>
+
+            <div 
+              class="scope-card" 
+              :class="{ 
+                'active': batchRevaluationScope === 'evaluated',
+                'disabled': (statistics?.evaluatedAnswers || 0) === 0 
+              }"
+              @click="(statistics?.evaluatedAnswers || 0) > 0 && (batchRevaluationScope = 'evaluated')"
+            >
+              <div class="card-header">
+                <div class="card-icon">🔄</div>
+                <div class="card-title">重新批阅</div>
+                <div class="card-badge">{{ statistics?.evaluatedAnswers || 0 }}个</div>
+              </div>
+              <div class="card-desc">
+                对已批阅答案重新评分，适用于调整评分标准或提高评分质量
+              </div>
+            </div>
+
+            <div 
+              class="scope-card" 
+              :class="{ 'active': batchRevaluationScope === 'all' }"
+              @click="batchRevaluationScope = 'all'"
+            >
+              <div class="card-header">
+                <div class="card-icon">🎯</div>
+                <div class="card-title">全部批阅</div>
+                <div class="card-badge">{{ statistics?.totalAnswers || 0 }}个</div>
+              </div>
+              <div class="card-desc">
+                对所有答案统一进行批阅，确保评分标准一致性
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 评分模式选择 -->
+        <div class="evaluation-style-section">
+          <h3 class="section-title">
+            <span class="section-icon">⚖️</span>
+            选择评分模式
+          </h3>
+          <div class="style-cards">
+            <div 
+              class="style-card normal" 
+              :class="{ 'active': batchRevaluationStyle === 'NORMAL' }"
+              @click="batchRevaluationStyle = 'NORMAL'"
+            >
+              <div class="style-header">
+                <div class="style-icon">⚖️</div>
+                <div class="style-name">标准模式</div>
+              </div>
+              <div class="style-features">
+                <div class="feature">• 平衡的评分标准</div>
+                <div class="feature">• 综合准确性与完整性</div>
+                <div class="feature">• 适合大多数场景</div>
+              </div>
+            </div>
+
+            <div 
+              class="style-card lenient" 
+              :class="{ 'active': batchRevaluationStyle === 'LENIENT' }"
+              @click="batchRevaluationStyle = 'LENIENT'"
+            >
+              <div class="style-header">
+                <div class="style-icon">😊</div>
+                <div class="style-name">宽松模式</div>
+              </div>
+              <div class="style-features">
+                <div class="feature">• 鼓励性评分</div>
+                <div class="feature">• 部分正确酌情给分</div>
+                <div class="feature">• 激发学习积极性</div>
+              </div>
+            </div>
+
+            <div 
+              class="style-card strict" 
+              :class="{ 'active': batchRevaluationStyle === 'STRICT' }"
+              @click="batchRevaluationStyle = 'STRICT'"
+            >
+              <div class="style-header">
+                <div class="style-icon">🎯</div>
+                <div class="style-name">严格模式</div>
+              </div>
+              <div class="style-features">
+                <div class="feature">• 高标准要求</div>
+                <div class="feature">• 严格细节检查</div>
+                <div class="feature">• 提升答题质量</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 操作预览 -->
+        <div class="operation-preview">
+          <div class="preview-card">
+            <div class="preview-icon">🚀</div>
+            <div class="preview-content">
+              <div class="preview-title">即将执行的操作</div>
+              <div class="preview-desc">{{ getBatchPreviewText() }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button size="large" @click="batchRevaluationDialogVisible = false">
+            取消
+          </el-button>
+          <el-button 
+            type="primary" 
+            size="large"
+            @click="confirmBatchRevaluation"
+            :loading="batchRevaluating"
+            :disabled="!canStartBatch"
+          >
+            <span v-if="!batchRevaluating">🚀 开始批量批阅</span>
+            <span v-else>正在批阅中...</span>
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -600,6 +831,7 @@ import {
   DocumentChecked,
   Setting
 } from '@element-plus/icons-vue'
+import type { Ref } from 'vue'
 
 import { questionApi } from '@/api/question'
 import { answerApi } from '@/api/answer'
@@ -640,6 +872,18 @@ const hasRubric = ref(false)
 const rubricLoading = ref(false)
 const editingIndex = ref(-1) // -1表示新增，>=0表示编辑现有项
 const aiGenerating = ref(false)
+
+// 新增：单个AI批阅风格弹窗状态
+const singleEvalDialogVisible = ref(false)
+const singleEvalTarget = ref<StudentAnswerResponse | null>(null)
+const singleEvalType = ref<'ai' | 're'>('ai')
+const singleEvalStyle: Ref<string> = ref('NORMAL')
+
+// 批量重新评阅状态
+const batchRevaluationDialogVisible = ref(false)
+const batchRevaluating = ref(false)
+const batchRevaluationScope = ref('unevaluated') // 'unevaluated' | 'evaluated' | 'all'
+const batchRevaluationStyle = ref('NORMAL') // 'NORMAL' | 'LENIENT' | 'STRICT'
 
 // 表单数据
 const evaluationForm = reactive({
@@ -695,6 +939,21 @@ const filteredAnswers = computed(() => {
 // 表单验证
 const isRubricFormValid = computed(() => {
   return !!(rubricForm.criterion && rubricForm.description && rubricForm.score > 0)
+})
+
+// 智能批量批阅相关计算属性
+const canStartBatch = computed(() => {
+  if (!statistics.value) return false
+  
+  if (batchRevaluationScope.value === 'unevaluated') {
+    return statistics.value.unevaluatedAnswers > 0
+  } else if (batchRevaluationScope.value === 'evaluated') {
+    return statistics.value.evaluatedAnswers > 0
+  } else if (batchRevaluationScope.value === 'all') {
+    return statistics.value.totalAnswers > 0
+  }
+  
+  return false
 })
 
 // 生命周期
@@ -843,31 +1102,9 @@ const aiEvaluateAnswer = async (answer: StudentAnswerResponse) => {
 
 // 重新批阅答案
 const handleReEvaluation = async (answer: StudentAnswerResponse) => {
-  try {
-    await ElMessageBox.confirm(
-      '确定要重新批阅这个答案吗？这将覆盖当前的批阅结果。',
-      '确认重新批阅',
-      {
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
-        type: 'warning'
-      }
-    )
-
-    aiEvaluating.value = answer.id
-    await evaluationApi.revaluateAnswer(answer.id)
-    ElMessage.success('重新批阅完成')
-    
-    // 重新加载数据
-    await loadAnswers()
-    await loadStatistics()
-  } catch (error) {
-    if (error !== 'cancel') {
-      console.error('重新批阅失败:', error)
-      ElMessage.error('重新批阅失败')
-    }
-  } finally {
-    aiEvaluating.value = null
+  const canProceed = await checkRubricBeforeEvaluation()
+  if (canProceed) {
+    openSingleEvalDialog(answer, 're')
   }
 }
 
@@ -1029,7 +1266,7 @@ const handleManualEvaluation = async (answer: StudentAnswerResponse) => {
 const handleAiEvaluation = async (answer: StudentAnswerResponse) => {
   const canProceed = await checkRubricBeforeEvaluation()
   if (canProceed) {
-    aiEvaluateAnswer(answer)
+    openSingleEvalDialog(answer, 'ai')
   }
 }
 
@@ -1158,7 +1395,8 @@ const generateAIRubric = async () => {
 }
 
 // 辅助方法
-const formatDate = (dateString: string) => {
+const formatDate = (dateString: string | undefined) => {
+  if (!dateString) return '无时间'
   return new Date(dateString).toLocaleString('zh-CN')
 }
 
@@ -1223,6 +1461,144 @@ const getRubricStatusType = () => {
     return 'warning'
   }
   return 'info'
+}
+
+// 打开单个AI批阅风格选择弹窗
+const openSingleEvalDialog = (answer: StudentAnswerResponse, type: 'ai' | 're') => {
+  singleEvalTarget.value = answer
+  singleEvalType.value = type
+  singleEvalStyle.value = 'NORMAL'
+  singleEvalDialogVisible.value = true
+}
+
+const confirmSingleEval = async () => {
+  if (!singleEvalTarget.value) return
+  try {
+    aiEvaluating.value = singleEvalTarget.value.id
+    if (singleEvalType.value === 'ai') {
+      await evaluationApi.aiEvaluateAnswer(singleEvalTarget.value.id, { evaluationStyle: singleEvalStyle.value })
+      ElMessage.success('AI批阅完成')
+    } else {
+      await evaluationApi.revaluateAnswer(singleEvalTarget.value.id, { evaluationStyle: singleEvalStyle.value })
+      ElMessage.success('重新批阅完成')
+    }
+    await loadAnswers()
+    await loadStatistics()
+  } catch (error) {
+    ElMessage.error('批阅失败')
+  } finally {
+    aiEvaluating.value = null
+    singleEvalDialogVisible.value = false
+  }
+}
+
+// 智能批量批阅相关方法
+const handleSmartBatchEvaluation = async () => {
+  const canProceed = await checkRubricBeforeEvaluation()
+  if (canProceed) {
+    // 根据当前状态智能选择默认范围
+    if (statistics.value?.unevaluatedAnswers && statistics.value.unevaluatedAnswers > 0) {
+      batchRevaluationScope.value = 'unevaluated'
+    } else if (statistics.value?.evaluatedAnswers && statistics.value.evaluatedAnswers > 0) {
+      batchRevaluationScope.value = 'evaluated'
+    } else {
+      batchRevaluationScope.value = 'all'
+    }
+    batchRevaluationDialogVisible.value = true
+  }
+}
+
+const getBatchPreviewText = () => {
+  if (!statistics.value) return '加载中...'
+  
+  const scopeMap = {
+    'unevaluated': `批阅 ${statistics.value.unevaluatedAnswers} 个未批阅答案`,
+    'evaluated': `重新批阅 ${statistics.value.evaluatedAnswers} 个已批阅答案`,
+    'all': `批阅全部 ${statistics.value.totalAnswers} 个答案`
+  }
+  
+  const modeMap = {
+    'NORMAL': '普通模式',
+    'LENIENT': '宽松模式',
+    'STRICT': '严格模式'
+  }
+  
+  const scopeText = scopeMap[batchRevaluationScope.value as keyof typeof scopeMap] || '未知范围'
+  const modeText = modeMap[batchRevaluationStyle.value as keyof typeof modeMap] || '普通模式'
+  
+  return `即将使用 ${modeText} ${scopeText}`
+}
+
+// 批量重新评阅相关方法
+const handleBatchRevaluation = async () => {
+  const canProceed = await checkRubricBeforeEvaluation()
+  if (canProceed) {
+    batchRevaluationScope.value = 'evaluated'
+    batchRevaluationDialogVisible.value = true
+  }
+}
+
+const handleBatchEvaluateAll = async () => {
+  const canProceed = await checkRubricBeforeEvaluation()
+  if (canProceed) {
+    batchRevaluationScope.value = 'all'
+    batchRevaluationDialogVisible.value = true
+  }
+}
+
+const confirmBatchRevaluation = async () => {
+  if (!questionId.value) return
+  
+  try {
+    batchRevaluating.value = true
+    
+    let taskResponse: string
+    let actionText = ''
+    
+    if (batchRevaluationScope.value === 'unevaluated') {
+      // 批阅未批阅的答案
+      taskResponse = await evaluationApi.batchEvaluateAnswersByQuestion(questionId.value)
+      actionText = '批阅未批阅'
+    } else if (batchRevaluationScope.value === 'evaluated') {
+      // 重新批阅已批阅的答案
+      taskResponse = await evaluationApi.batchRevaluateAnswersByQuestion(questionId.value, batchRevaluationStyle.value)
+      actionText = '重新批阅已批阅'
+    } else {
+      // 批阅全部答案（包括已批阅和未批阅）
+      taskResponse = await evaluationApi.batchEvaluateAllAnswersByQuestion(questionId.value, batchRevaluationStyle.value)
+      actionText = '批阅全部'
+    }
+    
+    const styleText = getEvaluationStyleText(batchRevaluationStyle.value)
+    
+    ElNotification.success({
+      title: 'AI智能批量批阅已启动',
+      message: `正在使用${styleText}模式${actionText}答案，请稍后刷新查看结果`
+    })
+    
+    batchRevaluationDialogVisible.value = false
+    
+    // 等待几秒后自动刷新
+    setTimeout(async () => {
+      await loadAnswers()
+      await loadStatistics()
+    }, 3000)
+    
+  } catch (error) {
+    console.error('批量批阅失败:', error)
+    ElMessage.error('批量批阅启动失败')
+  } finally {
+    batchRevaluating.value = false
+  }
+}
+
+const getEvaluationStyleText = (style: string) => {
+  switch (style) {
+    case 'STRICT': return '严格'
+    case 'LENIENT': return '宽松'
+    case 'NORMAL': 
+    default: return '普通'
+  }
 }
 </script>
 
@@ -1467,7 +1843,6 @@ const getRubricStatusType = () => {
   background-color: #f8f9fa;
   border-radius: 4px;
 }
-
 .rubric-check .summary-label {
   font-size: 12px;
   color: #909399;
@@ -1494,6 +1869,464 @@ const getRubricStatusType = () => {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* 智能批量批阅按钮样式 */
+.smart-batch-btn {
+  padding: 16px 0;
+  height: auto;
+  min-height: 60px;
+}
+
+.btn-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.btn-subtitle {
+  font-size: 12px;
+  opacity: 0.8;
+  font-weight: normal;
+}
+
+/* 智能批量批阅对话框容器样式 */
+.smart-batch-dialog-container :deep(.el-dialog__header) {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 20px 24px;
+  border-radius: 8px 8px 0 0;
+}
+
+.smart-batch-dialog-container :deep(.el-dialog__title) {
+  color: white;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.smart-batch-dialog-container :deep(.el-dialog__headerbtn .el-dialog__close) {
+  color: white;
+  font-size: 20px;
+}
+
+.smart-batch-dialog-container :deep(.el-dialog__body) {
+  padding: 0;
+}
+
+/* 智能批量批阅对话框内容样式 */
+.smart-batch-content {
+  padding: 24px;
+  background: #fafbfc;
+}
+
+/* 步骤指示器样式 */
+.steps-indicator {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 32px;
+  padding: 20px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+}
+
+.step-number {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #e4e7ed;
+  color: #909399;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  margin-bottom: 8px;
+  transition: all 0.3s ease;
+}
+
+.step.active .step-number {
+  background: #409eff;
+  color: white;
+}
+
+.step-label {
+  font-size: 12px;
+  color: #909399;
+  font-weight: 500;
+}
+
+.step.active .step-label {
+  color: #409eff;
+  font-weight: 600;
+}
+
+.step-divider {
+  width: 60px;
+  height: 2px;
+  background: #e4e7ed;
+  margin: 0 20px;
+  margin-top: -10px;
+}
+
+/* 统计概览样式 */
+.stats-overview {
+  margin-bottom: 32px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.stat-item {
+  background: white;
+  border: 2px solid #e4e7ed;
+  border-radius: 12px;
+  padding: 20px;
+  text-align: center;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: #e4e7ed;
+  transition: all 0.3s ease;
+}
+
+.stat-item.unevaluated::before {
+  background: #f56c6c;
+}
+
+.stat-item.evaluated::before {
+  background: #67c23a;
+}
+
+.stat-item.total::before {
+  background: #409eff;
+}
+
+.stat-item:hover,
+.stat-item.selected {
+  border-color: #409eff;
+  box-shadow: 0 4px 16px rgba(64, 158, 255, 0.1);
+  transform: translateY(-2px);
+}
+
+.stat-item.selected::before {
+  background: #409eff;
+}
+
+.stat-icon {
+  font-size: 24px;
+  margin-bottom: 12px;
+}
+
+.stat-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.stat-number {
+  font-size: 28px;
+  font-weight: bold;
+  color: #303133;
+  margin-bottom: 4px;
+}
+
+.stat-label {
+  font-size: 14px;
+  color: #606266;
+  font-weight: 500;
+}
+
+/* 区段标题样式 */
+.section-title {
+  display: flex;
+  align-items: center;
+  margin: 0 0 20px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.section-icon {
+  margin-right: 8px;
+  font-size: 18px;
+}
+
+/* 范围选择卡片样式 */
+.scope-selection-section {
+  margin-bottom: 32px;
+}
+
+.scope-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.scope-card {
+  background: white;
+  border: 2px solid #e4e7ed;
+  border-radius: 12px;
+  padding: 20px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.scope-card:hover:not(.disabled) {
+  border-color: #409eff;
+  box-shadow: 0 4px 16px rgba(64, 158, 255, 0.1);
+  transform: translateY(-2px);
+}
+
+.scope-card.active {
+  border-color: #409eff;
+  background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%);
+  box-shadow: 0 4px 16px rgba(64, 158, 255, 0.15);
+}
+
+.scope-card.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #f5f7fa;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.card-icon {
+  font-size: 20px;
+  margin-right: 8px;
+}
+
+.card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+  flex: 1;
+}
+
+.card-badge {
+  background: #409eff;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.scope-card.disabled .card-badge {
+  background: #c0c4cc;
+}
+
+.card-desc {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.5;
+}
+
+/* 评分模式卡片样式 */
+.evaluation-style-section {
+  margin-bottom: 32px;
+}
+
+.style-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.style-card {
+  background: white;
+  border: 2px solid #e4e7ed;
+  border-radius: 12px;
+  padding: 20px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.style-card:hover {
+  border-color: #409eff;
+  box-shadow: 0 4px 16px rgba(64, 158, 255, 0.1);
+  transform: translateY(-2px);
+}
+
+.style-card.active {
+  border-color: #409eff;
+  background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%);
+  box-shadow: 0 4px 16px rgba(64, 158, 255, 0.15);
+}
+
+.style-card.normal.active {
+  background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%);
+}
+
+.style-card.lenient.active {
+  background: linear-gradient(135deg, #f0f9ff 0%, #e6fffa 100%);
+}
+
+.style-card.strict.active {
+  background: linear-gradient(135deg, #fff7ed 0%, #fef3e2 100%);
+}
+
+.style-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.style-icon {
+  font-size: 20px;
+  margin-right: 8px;
+}
+
+.style-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.style-features {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.feature {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.4;
+}
+
+/* 操作预览样式 */
+.operation-preview {
+  margin-bottom: 0;
+}
+
+.preview-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 12px;
+  padding: 20px;
+  color: white;
+  display: flex;
+  align-items: center;
+}
+
+.preview-icon {
+  font-size: 24px;
+  margin-right: 16px;
+}
+
+.preview-content {
+  flex: 1;
+}
+
+.preview-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.preview-desc {
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+/* 对话框底部样式 */
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 20px 24px;
+  background: #fafbfc;
+  border-top: 1px solid #e4e7ed;
+}
+
+/* 批量重新评阅对话框样式 */
+.batch-revaluation-dialog {
+  padding: 10px 0;
+}
+
+.operation-info, .evaluation-style-section {
+  margin-bottom: 30px;
+}
+
+.operation-info h4, .evaluation-style-section h4 {
+  margin: 0 0 15px 0;
+  color: #303133;
+  font-weight: 600;
+}
+
+.scope-options, .style-options {
+  width: 100%;
+}
+
+.scope-option, .style-option {
+  display: block;
+  width: 100%;
+  margin-bottom: 16px;
+  margin-right: 0;
+  padding: 16px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.scope-option:hover, .style-option:hover {
+  border-color: #409eff;
+  background-color: #f5f9ff;
+}
+
+:deep(.scope-option.is-checked), :deep(.style-option.is-checked) {
+  border-color: #409eff;
+  background-color: #f0f8ff;
+}
+
+.option-content {
+  margin-left: 8px;
+}
+
+.option-title {
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 4px;
+}
+
+.option-desc {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
 }
 
 /* 响应式调整，如果需要的话 */

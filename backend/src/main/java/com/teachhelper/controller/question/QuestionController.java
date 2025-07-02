@@ -39,6 +39,7 @@ import com.teachhelper.entity.QuestionOption;
 import com.teachhelper.entity.QuestionBank;
 import com.teachhelper.entity.QuestionType;
 import com.teachhelper.entity.RubricCriterion;
+import com.teachhelper.entity.SourceType;
 import com.teachhelper.service.ai.StreamingAIGenerationService;
 import com.teachhelper.service.exam.ExamService;
 import com.teachhelper.service.question.QuestionService;
@@ -198,8 +199,11 @@ public class QuestionController {
             @RequestParam(required = false) String gradeLevel,
             @RequestParam(required = false) Long examId,
             @RequestParam(required = false) String source,
+            @RequestParam(required = false) String sourceType,
             @RequestParam(required = false) Long questionBankId,
-            @RequestParam(required = false) Long sourceKnowledgeBaseId) {
+            @RequestParam(required = false) Long sourceKnowledgeBaseId,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
         
         Pageable pageable = PageRequest.of(page, size);
         
@@ -223,11 +227,20 @@ public class QuestionController {
         if (source != null && !source.trim().isEmpty()) {
             filters.put("source", source.trim());
         }
+        if (sourceType != null && !sourceType.trim().isEmpty()) {
+            filters.put("sourceType", sourceType.trim());
+        }
         if (questionBankId != null) {
             filters.put("questionBankId", questionBankId);
         }
         if (sourceKnowledgeBaseId != null) {
             filters.put("sourceKnowledgeBaseId", sourceKnowledgeBaseId);
+        }
+        if (startDate != null && !startDate.trim().isEmpty()) {
+            filters.put("startDate", startDate.trim());
+        }
+        if (endDate != null && !endDate.trim().isEmpty()) {
+            filters.put("endDate", endDate.trim());
         }
         
         Page<Question> questionPage = questionService.searchQuestionsWithFilters(pageable, filters);
@@ -743,17 +756,21 @@ public class QuestionController {
             response.setExamTitle(question.getExam().getTitle());
         }
         
-        // 设置题目来源信息 - 使用新的分类方式
+        // 设置来源类型
         if (question.getSourceType() != null) {
             response.setSourceType(question.getSourceType());
+            response.setSourceTypeDisplayName(question.getSourceType().getDisplayName());
         } else {
             // 根据其他字段推断来源类型
             if (question.getAiGenerationPrompt() != null && !question.getAiGenerationPrompt().trim().isEmpty()) {
-                response.setSourceType("AI_GENERATED");
+                response.setSourceType(SourceType.AI_GENERATED);
+                response.setSourceTypeDisplayName(SourceType.AI_GENERATED.getDisplayName());
             } else if (question.getKeywords() != null && question.getKeywords().contains("互联网")) {
-                response.setSourceType("INTERNET");
+                response.setSourceType(SourceType.INTERNET);
+                response.setSourceTypeDisplayName(SourceType.INTERNET.getDisplayName());
             } else {
-                response.setSourceType("SELF_CREATED"); // 默认为自创
+                response.setSourceType(SourceType.SELF_CREATED);
+                response.setSourceTypeDisplayName(SourceType.SELF_CREATED.getDisplayName());
             }
         }
         

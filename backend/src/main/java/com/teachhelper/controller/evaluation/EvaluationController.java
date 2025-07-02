@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.teachhelper.dto.request.ManualEvaluationRequest;
@@ -29,6 +30,7 @@ import com.teachhelper.service.student.StudentAnswerService;
 import com.teachhelper.service.task.TaskService;
 import com.teachhelper.service.evaluation.BatchEvaluationPreChecker;
 import com.teachhelper.service.exam.ExamService;
+import com.teachhelper.enums.PromptName;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -242,17 +244,20 @@ public class EvaluationController {
      */
     @PostMapping("/batch/revaluate/question/{questionId}")
     @Operation(summary = "批量重新批阅题目答案", description = "批量重新批阅指定题目的所有已批阅答案")
-    public ResponseEntity<String> batchRevaluateQuestionAnswers(@PathVariable Long questionId) {
+    public ResponseEntity<String> batchRevaluateQuestionAnswers(
+            @PathVariable Long questionId,
+            @RequestParam(value = "evaluationStyle", required = false, defaultValue = "NORMAL") String evaluationStyle) {
         try {
             // 构建任务创建请求
             TaskCreateRequest taskRequest = new TaskCreateRequest();
             taskRequest.setType("BATCH_REVALUATION_QUESTION");
             taskRequest.setName("批量重新评估题目答案");
-            taskRequest.setDescription("批量重新评估指定题目的所有已评估答案");
+            taskRequest.setDescription("批量重新评估指定题目的所有已评估答案（" + evaluationStyle + "模式）");
             
             Map<String, Object> config = new HashMap<>();
             config.put("questionId", questionId);
             config.put("revaluateOnly", true); // 只重新评估已评估的答案
+            config.put("evaluationStyle", evaluationStyle); // 添加评分模式
             taskRequest.setConfig(config);
 
             TaskResponse task = taskService.createTask(taskRequest);
@@ -268,17 +273,20 @@ public class EvaluationController {
      */
     @PostMapping("/batch/all/question/{questionId}")
     @Operation(summary = "批量批阅题目所有答案", description = "批量批阅指定题目的所有答案，包括重新批阅已批阅的答案")
-    public ResponseEntity<String> batchEvaluateAllQuestionAnswers(@PathVariable Long questionId) {
+    public ResponseEntity<String> batchEvaluateAllQuestionAnswers(
+            @PathVariable Long questionId,
+            @RequestParam(value = "evaluationStyle", required = false, defaultValue = "NORMAL") String evaluationStyle) {
         try {
             // 构建任务创建请求
             TaskCreateRequest taskRequest = new TaskCreateRequest();
             taskRequest.setType("BATCH_EVALUATION_ALL_QUESTION");
             taskRequest.setName("批量评估题目所有答案");
-            taskRequest.setDescription("批量评估指定题目的所有答案，包括重新评估");
+            taskRequest.setDescription("批量评估指定题目的所有答案，包括重新评估（" + evaluationStyle + "模式）");
             
             Map<String, Object> config = new HashMap<>();
             config.put("questionId", questionId);
             config.put("evaluateAll", true); // 评估所有答案
+            config.put("evaluationStyle", evaluationStyle); // 添加评分模式
             taskRequest.setConfig(config);
 
             TaskResponse task = taskService.createTask(taskRequest);
@@ -450,25 +458,24 @@ public class EvaluationController {
      */
     @PostMapping("/answer/{answerId}")
     @Operation(summary = "批阅单个答案", description = "使用AI批阅单个学生答案")
-    public ResponseEntity<Map<String, Object>> evaluateAnswer(@PathVariable Long answerId) {
+    public ResponseEntity<Map<String, Object>> evaluateAnswer(@PathVariable Long answerId, @RequestParam(value = "evaluationStyle", required = false) String evaluationStyle) {
         try {
             // 构建任务创建请求
             TaskCreateRequest taskRequest = new TaskCreateRequest();
             taskRequest.setType("SINGLE_EVALUATION");
             taskRequest.setName("评估答案 " + answerId);
             taskRequest.setDescription("使用AI评估单个答案，ID: " + answerId);
-            
             Map<String, Object> config = new HashMap<>();
             config.put("answerId", answerId);
+            if (evaluationStyle != null) {
+                config.put("evaluationStyle", evaluationStyle);
+            }
             taskRequest.setConfig(config);
-
             TaskResponse task = taskService.createTask(taskRequest);
-            
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
             response.put("taskId", task.getTaskId());
             response.put("message", "单答案评估任务已创建");
-
             return ResponseEntity.accepted().body(response);
         } catch (Exception e) {
             Map<String, Object> errorResponse = new HashMap<>();
@@ -516,27 +523,24 @@ public class EvaluationController {
      */
     @PostMapping("/revaluate/{answerId}")
     @Operation(summary = "重新批阅答案", description = "重新批阅已批阅的答案")
-    public ResponseEntity<Map<String, Object>> revaluateAnswer(@PathVariable Long answerId) {
+    public ResponseEntity<Map<String, Object>> revaluateAnswer(@PathVariable Long answerId, @RequestParam(value = "evaluationStyle", required = false) String evaluationStyle) {
         try {
-            // 构建任务创建请求
             TaskCreateRequest taskRequest = new TaskCreateRequest();
             taskRequest.setType("SINGLE_REVALUATION");
             taskRequest.setName("重新评估答案 " + answerId);
             taskRequest.setDescription("使用AI重新评估单个答案，ID: " + answerId);
-            
             Map<String, Object> config = new HashMap<>();
             config.put("answerId", answerId);
-            // 重新评估时，应该强制评估
-            config.put("evaluateAll", true); 
+            config.put("evaluateAll", true);
+            if (evaluationStyle != null) {
+                config.put("evaluationStyle", evaluationStyle);
+            }
             taskRequest.setConfig(config);
-
             TaskResponse task = taskService.createTask(taskRequest);
-            
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
             response.put("taskId", task.getTaskId());
             response.put("message", "单答案重新评估任务已创建");
-
             return ResponseEntity.accepted().body(response);
         } catch (Exception e) {
             Map<String, Object> errorResponse = new HashMap<>();

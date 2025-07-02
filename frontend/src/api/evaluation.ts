@@ -39,20 +39,32 @@ export const evaluationApi = {
   },
 
   // 重新评估答案
-  async revaluateAnswer(answerId: number): Promise<StudentAnswerResponse> {
-    const response = await api.post<StudentAnswerResponse>(`/evaluations/revaluate/${answerId}`)
+  async revaluateAnswer(answerId: number, options?: { evaluationStyle?: string }): Promise<StudentAnswerResponse> {
+    let url = `/evaluations/revaluate/${answerId}`
+    if (options?.evaluationStyle) {
+      url += `?evaluationStyle=${options.evaluationStyle}`
+    }
+    const response = await api.post<StudentAnswerResponse>(url)
     return response.data
   },
 
   // 批量重新评估题目的所有已评估答案
-  async batchRevaluateAnswersByQuestion(questionId: number): Promise<string> {
-    const response = await api.post<string>(`/evaluations/batch/revaluate/question/${questionId}`)
+  async batchRevaluateAnswersByQuestion(questionId: number, evaluationStyle?: string): Promise<string> {
+    let url = `/evaluations/batch/revaluate/question/${questionId}`
+    if (evaluationStyle) {
+      url += `?evaluationStyle=${evaluationStyle}`
+    }
+    const response = await api.post<string>(url)
     return response.data
   },
 
   // 批量重新评估所有答案（包括未评估和已评估的）
-  async batchEvaluateAllAnswersByQuestion(questionId: number): Promise<string> {
-    const response = await api.post<string>(`/evaluations/batch/all/question/${questionId}`)
+  async batchEvaluateAllAnswersByQuestion(questionId: number, evaluationStyle?: string): Promise<string> {
+    let url = `/evaluations/batch/all/question/${questionId}`
+    if (evaluationStyle) {
+      url += `?evaluationStyle=${evaluationStyle}`
+    }
+    const response = await api.post<string>(url)
     return response.data
   },
 
@@ -85,9 +97,14 @@ export const evaluationApi = {
     return this.evaluateAnswersByQuestion(questionId)
   },
 
-  // AI评估单个答案（别名方法）
-  async aiEvaluateAnswer(answerId: number): Promise<StudentAnswerResponse> {
-    return this.evaluateAnswer(answerId)
+  // AI评估单个答案
+  async aiEvaluateAnswer(answerId: number, options?: { evaluationStyle?: string }): Promise<StudentAnswerResponse> {
+    let url = `/evaluations/answer/${answerId}`
+    if (options?.evaluationStyle) {
+      url += `?evaluationStyle=${options.evaluationStyle}`
+    }
+    const response = await api.post<StudentAnswerResponse>(url)
+    return response.data
   },
 
   // 获取题目评估统计（别名方法）

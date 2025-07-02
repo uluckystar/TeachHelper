@@ -176,7 +176,7 @@ public interface StudentAnswerRepository extends JpaRepository<StudentAnswer, Lo
     // 分页查询学生试卷信息
     @Query(value = "SELECT DISTINCT " +
            "s.id as studentId, " +
-           "s.real_name as studentName, " +
+           "COALESCE(s.real_name, s.username) as studentName, " +
            "s.student_number as studentNumber, " +
            "s.email as studentEmail, " +
            "(SELECT COUNT(DISTINCT q.id) FROM questions q WHERE q.exam_id = :examId) as totalQuestions, " +
@@ -187,7 +187,7 @@ public interface StudentAnswerRepository extends JpaRepository<StudentAnswer, Lo
            "JOIN questions q ON sa.question_id = q.id " +
            "WHERE q.exam_id = :examId " +
            "AND (:keyword IS NULL OR :keyword = '' OR " +
-           "     LOWER(s.real_name) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "     LOWER(COALESCE(s.real_name, s.username)) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
            "     LOWER(s.student_number) LIKE LOWER(CONCAT('%', :keyword, '%'))) " +
            "ORDER BY s.id",
            countQuery = "SELECT COUNT(DISTINCT s.id) " +

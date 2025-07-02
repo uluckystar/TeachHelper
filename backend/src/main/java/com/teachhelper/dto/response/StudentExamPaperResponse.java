@@ -31,55 +31,67 @@ public class StudentExamPaperResponse {
 
     public StudentExamPaperResponse() {}
 
-    public StudentExamPaperResponse(User student, Long examId, String examTitle, List<StudentAnswer> answers) {
+    public StudentExamPaperResponse(User student, Long examId, String examTitle, List<com.teachhelper.entity.Question> allQuestions, List<StudentAnswer> studentAnswers) {
         this.studentId = student.getId();
         this.studentName = student.getRealName() != null ? student.getRealName() : student.getUsername();
         this.studentNumber = student.getStudentNumber();
         this.studentEmail = student.getEmail();
         this.examId = examId;
         this.examTitle = examTitle;
-        
-        // 转换答案
-        this.answers = answers.stream()
-            .map(StudentAnswerResponse::fromEntity)
-            .toList();
-            
-        // 计算统计信息
-        this.totalQuestions = answers.size();
-        this.answeredQuestions = (int) answers.stream()
-            .filter(answer -> answer.getAnswerText() != null && !answer.getAnswerText().trim().isEmpty())
-            .count();
-        this.evaluatedAnswers = (int) answers.stream()
-            .filter(StudentAnswer::isEvaluated)
-            .count();
-            
-        // 计算分数
-        this.totalScore = answers.stream()
-            .filter(answer -> answer.getScore() != null)
-            .mapToDouble(answer -> answer.getScore().doubleValue())
-            .sum();
-            
-        this.maxPossibleScore = answers.stream()
-            .filter(answer -> answer.getQuestion() != null && answer.getQuestion().getMaxScore() != null)
-            .mapToDouble(answer -> answer.getQuestion().getMaxScore().doubleValue())
-            .sum();
-            
+
+        // 构建题目ID到答案的映射
+        java.util.Map<Long, StudentAnswer> answerMap = new java.util.HashMap<>();
+        for (StudentAnswer ans : studentAnswers) {
+            if (ans.getQuestion() != null) {
+                answerMap.put(ans.getQuestion().getId(), ans);
+            }
+        }
+        java.util.List<StudentAnswerResponse> answerResponses = new java.util.ArrayList<>();
+        int answeredCount = 0;
+        int evaluatedCount = 0;
+        double totalScore = 0.0;
+        double maxPossibleScore = 0.0;
+        java.time.LocalDateTime minSubmit = null;
+        java.time.LocalDateTime maxUpdate = null;
+        for (com.teachhelper.entity.Question q : allQuestions) {
+            StudentAnswer ans = answerMap.get(q.getId());
+            if (ans != null) {
+                StudentAnswerResponse resp = StudentAnswerResponse.fromEntity(ans);
+                answerResponses.add(resp);
+                if (ans.getAnswerText() != null && !ans.getAnswerText().trim().isEmpty()) answeredCount++;
+                if (ans.isEvaluated()) evaluatedCount++;
+                if (ans.getScore() != null) totalScore += ans.getScore().doubleValue();
+                if (ans.getQuestion() != null && ans.getQuestion().getMaxScore() != null) maxPossibleScore += ans.getQuestion().getMaxScore().doubleValue();
+                if (ans.getCreatedAt() != null) {
+                    if (minSubmit == null || ans.getCreatedAt().isBefore(minSubmit)) minSubmit = ans.getCreatedAt();
+                }
+                if (ans.getUpdatedAt() != null) {
+                    if (maxUpdate == null || ans.getUpdatedAt().isAfter(maxUpdate)) maxUpdate = ans.getUpdatedAt();
+                }
+            } else {
+                // 构造未作答的空答案
+                StudentAnswerResponse resp = new StudentAnswerResponse();
+                resp.setQuestionId(q.getId());
+                resp.setQuestionTitle(q.getTitle());
+                resp.setQuestionContent(q.getContent());
+                resp.setAnswerText("学生未作答");
+                resp.setScore(null);
+                resp.setEvaluated(false);
+                resp.setMaxScore(q.getMaxScore() != null ? q.getMaxScore().doubleValue() : 0.0);
+                answerResponses.add(resp);
+                if (q.getMaxScore() != null) maxPossibleScore += q.getMaxScore().doubleValue();
+            }
+        }
+        this.answers = answerResponses;
+        this.totalQuestions = allQuestions.size();
+        this.answeredQuestions = answeredCount;
+        this.evaluatedAnswers = evaluatedCount;
+        this.totalScore = totalScore;
+        this.maxPossibleScore = maxPossibleScore;
         this.scorePercentage = maxPossibleScore > 0 ? (totalScore / maxPossibleScore) * 100 : 0.0;
-        // 修复逻辑：当所有学生提交的答案都已评估时，才算完全评估
-        this.isFullyEvaluated = answers.size() > 0 && evaluatedAnswers == answers.size();
-        
-        // 时间信息
-        this.submittedAt = answers.stream()
-            .filter(answer -> answer.getCreatedAt() != null)
-            .map(StudentAnswer::getCreatedAt)
-            .min(LocalDateTime::compareTo)
-            .orElse(null);
-            
-        this.lastUpdated = answers.stream()
-            .filter(answer -> answer.getUpdatedAt() != null)
-            .map(StudentAnswer::getUpdatedAt)
-            .max(LocalDateTime::compareTo)
-            .orElse(null);
+        this.isFullyEvaluated = allQuestions.size() > 0 && evaluatedCount == allQuestions.size();
+        this.submittedAt = minSubmit;
+        this.lastUpdated = maxUpdate;
     }
 
     // Getters and Setters

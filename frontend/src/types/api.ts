@@ -1,6 +1,8 @@
 // 基础类型定义
 export type QuestionType = 'SINGLE_CHOICE' | 'MULTIPLE_CHOICE' | 'TRUE_FALSE' | 'FILL_BLANK' | 'SHORT_ANSWER' | 'ESSAY' | 'CODING' | 'CASE_ANALYSIS' | 'CALCULATION'
 
+export type SourceType = 'SELF_CREATED' | 'INTERNET' | 'AI_GENERATED' | 'AI_ORGANIZED' | 'TEMPLATE_CONFIRM' | 'LEARNING_IMPORT' | 'QUESTION_BANK'
+
 export interface QuestionOption {
   id?: number
   content: string
@@ -175,7 +177,8 @@ export interface QuestionResponse {
   referenceAnswer?: string
   standardAnswer?: string
   // 题目来源相关字段 - 新的分类方式
-  sourceType?: 'SELF_CREATED' | 'INTERNET' | 'AI_GENERATED' | 'AI_ORGANIZED'
+  sourceType?: SourceType
+  sourceTypeDisplayName?: string
   isConfirmed?: boolean // AI整理题目的确认状态
   questionBankId?: number
   questionBankName?: string
@@ -845,4 +848,13 @@ export interface ParseStatistics {
   questionsByType: number
   commonIssues: string[]
   recommendations: string[]
+}
+
+// 嵌套压缩包导入结果类型
+export interface ImportResult {
+  successCount: number
+  failureCount: number
+  messages: string[]
+  errors: string[]
+  details: string[]
 }

@@ -1,4 +1,4 @@
- package com.teachhelper.service.impl;
+package com.teachhelper.service.impl;
 
 import com.teachhelper.entity.*;
 import com.teachhelper.enums.PromptName;
@@ -53,7 +53,16 @@ public class PromptServiceImpl implements PromptService {
         // 添加标准分数变量
         addStandardScoreVariables(variables, question.getMaxScore(), rubricCriteria);
         
-        return replaceVariables(prompt.getUserPromptTemplate(), variables);
+        String result = replaceVariables(prompt.getUserPromptTemplate(), variables);
+        
+        // 增强风格差异化
+        if (promptName == PromptName.EVALUATE_ANSWER_LENIENT) {
+            result += "\n\n【风格要求】请适当宽容，鼓励学生，遇到模糊或部分正确的答案时酌情给分，反馈以正面为主。";
+        } else if (promptName == PromptName.EVALUATE_ANSWER_STRICT) {
+            result += "\n\n【风格要求】请严格按照评分标准，细致扣分，反馈要指出所有不足，分数略偏低。";
+        }
+        
+        return result;
     }
 
     @Override

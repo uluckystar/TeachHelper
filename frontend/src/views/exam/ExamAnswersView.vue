@@ -274,11 +274,17 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="completionStatus" label="完成状态" width="120">
+        <el-table-column prop="evaluationProgress" label="批阅进度" width="120">
           <template #default="{ row }">
-            <el-tag :type="getCompletionTagType(row.completionStatus)" size="small">
-              {{ getCompletionStatusText(row.completionStatus) }}
-            </el-tag>
+            <div class="evaluation-progress">
+              <el-progress 
+                :percentage="getEvaluationProgress(row)" 
+                :status="getEvaluationProgressStatus(row)"
+                :show-text="false"
+                :stroke-width="8"
+              />
+              <span class="progress-text">{{ row.evaluatedAnswers || 0 }}/{{ row.totalQuestions || 0 }}</span>
+            </div>
           </template>
         </el-table-column>
 
@@ -442,13 +448,17 @@
     >
       <div class="import-section">
         <!-- 导入类型选择 -->
-        <el-form-item label="导入类型" style="margin-bottom: 20px">
-          <el-radio-group v-model="importType" @change="handleImportTypeChange">
-            <el-radio-button label="file">文件导入</el-radio-button>
-            <el-radio-button label="learning">学习通答案</el-radio-button>
-            <el-radio-button label="template">基于模板</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
+        <el-form label-width="80px">
+          <el-form-item label="导入类型" style="margin-bottom: 20px">
+            <el-radio-group v-model="importType" @change="handleImportTypeChange" class="mode-radio-group">
+              <el-radio-button label="file">文件导入</el-radio-button>
+              <el-radio-button label="folder_upload">本地文件夹上传</el-radio-button>
+              <el-radio-button label="learning">学习通答案</el-radio-button>
+              <el-radio-button label="template">基于模板</el-radio-button>
+              <el-radio-button label="nested_zip">嵌套压缩包</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+        </el-form>
 
         <!-- 文件导入模式 -->
         <div v-if="importType === 'file'">
@@ -485,6 +495,227 @@
               </div>
             </template>
           </el-upload>
+        </div>
+
+        <!-- 本地文件夹上传模式 -->
+        <div v-else-if="importType === 'folder_upload'">
+          <el-alert
+            title="本地文件夹上传说明"
+            type="info"
+            :closable="false"
+            style="margin-bottom: 20px"
+          >
+            <p>📁 从本地选择文件夹，批量上传学生答案文档：</p>
+            <ul>
+              <li><strong>选择方式：</strong>点击选择本地文件夹或拖拽文件到上传区域</li>
+              <li><strong>支持格式：</strong>Word(.doc/.docx)、PDF、图片(jpg/png)、TXT等</li>
+              <li><strong>智能解析：</strong>使用AI自动解析文件名中的学生姓名和学号</li>
+              <li><strong>内容处理：</strong>整个文档内容作为学生答案，保留原始格式</li>
+              <li><strong>学生匹配：</strong>自动查找现有学生或创建新学生账户</li>
+            </ul>
+            <p><strong>💡 文件名示例：</strong>张三_20231234.docx、李四-202312345.pdf、王五_学号202309876_期末作业.doc</p>
+          </el-alert>
+
+          <el-form label-width="80px">
+            <el-form-item label="目标题目" required>
+              <el-select
+                v-model="folderUploadQuestionId"
+                placeholder="请选择要导入答案的题目"
+                style="width: 100%"
+                :loading="questionsLoading"
+              >
+                <el-option
+                  v-for="question in questions"
+                  :key="question.id"
+                  :label="`${question.title} (${question.questionType})`"
+                  :value="question.id"
+                />
+              </el-select>
+              <div class="el-form-item__tip" style="margin-top: 5px; font-size: 12px; color: #909399;">
+                所有文档内容将导入到选中的题目下
+              </div>
+            </el-form-item>
+          </el-form>
+
+          <!-- 文件夹上传组件直接嵌入 -->
+          <div style="border: 1px solid #e4e7ed; border-radius: 8px; padding: 20px; margin: 20px 0;">
+            <div class="folder-upload-section">
+              <!-- 文件上传区域 -->
+              <div 
+                class="upload-area"
+                :class="{ 'drag-over': isDragOver, 'has-files': selectedFolderFiles.length > 0 }"
+                @drop="handleDrop"
+                @dragover.prevent="handleDragOver"
+                @dragleave="handleDragLeave"
+                @click="triggerFileInput"
+              >
+                <input 
+                  ref="fileInput"
+                  type="file"
+                  multiple
+                  webkitdirectory
+                  directory
+                  @change="handleFileSelect"
+                  style="display: none"
+                />
+                
+                <div v-if="selectedFolderFiles.length === 0" class="upload-prompt">
+                  <div class="upload-icon">📂</div>
+                  <p>点击选择文件夹或拖拽文件到此处</p>
+                  <p class="upload-hint">支持：Word(.doc/.docx)、PDF、图片(jpg/png)、TXT等格式</p>
+                </div>
+                
+                <div v-else class="file-list">
+                  <h4>已选择 {{ selectedFolderFiles.length }} 个文件</h4>
+                  <div class="file-items" v-if="!isFolderUploading">
+                    <div 
+                      v-for="(file, index) in selectedFolderFiles.slice(0, 10)" 
+                      :key="index" 
+                      class="file-item"
+                    >
+                      <div class="file-info">
+                        <span class="file-name">{{ file.name }}</span>
+                        <span class="file-size">{{ formatFileSize(file.size) }}</span>
+                      </div>
+                      <button class="remove-file" @click="removeFolderFile(index)">✕</button>
+                    </div>
+                    <div v-if="selectedFolderFiles.length > 10" class="more-files">
+                      ... 还有 {{ selectedFolderFiles.length - 10 }} 个文件
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- 上传进度 -->
+              <div v-if="isFolderUploading" class="upload-progress">
+                <div class="progress-bar">
+                  <div class="progress-fill" :style="{ width: folderUploadProgress + '%' }"></div>
+                </div>
+                <p>正在处理文件... {{ folderUploadProgress.toFixed(1) }}%</p>
+              </div>
+              
+              <!-- 上传结果 -->
+              <div v-if="folderUploadResult" class="upload-result">
+                <div class="result-summary" :class="folderUploadResult.success ? 'success' : 'error'">
+                  <h4>{{ folderUploadResult.success ? '✅ 上传完成' : '❌ 上传失败' }}</h4>
+                  <p>{{ folderUploadResult.message }}</p>
+                </div>
+                
+                <div v-if="folderUploadResult.details && folderUploadResult.details.length > 0" class="result-details">
+                  <h5>处理详情：</h5>
+                  <div class="details-list">
+                    <div 
+                      v-for="(detail, index) in folderUploadResult.details.slice(0, showAllFolderDetails ? folderUploadResult.details.length : 5)" 
+                      :key="index"
+                      class="detail-item"
+                      :class="detail.includes('成功') ? 'success' : 'error'"
+                    >
+                      {{ detail }}
+                    </div>
+                    <button 
+                      v-if="folderUploadResult.details.length > 5 && !showAllFolderDetails"
+                      @click="showAllFolderDetails = true"
+                      class="show-more-btn"
+                    >
+                      显示全部 {{ folderUploadResult.details.length }} 条结果
+                    </button>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- 操作按钮 -->
+              <div class="folder-upload-actions" style="margin-top: 20px; text-align: center;">
+                <el-button @click="clearFolderFiles" :disabled="isFolderUploading">
+                  清空文件
+                </el-button>
+                <el-button 
+                  type="primary" 
+                  @click="startFolderUpload" 
+                  :loading="isFolderUploading"
+                  :disabled="!folderUploadQuestionId || selectedFolderFiles.length === 0"
+                >
+                  {{ isFolderUploading ? '上传中...' : `开始上传 (${selectedFolderFiles.length} 个文件)` }}
+                </el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 嵌套压缩包导入模式 -->
+        <div v-else-if="importType === 'nested_zip'">
+          <el-alert
+            title="嵌套压缩包导入说明"
+            type="warning"
+            :closable="false"
+            style="margin-bottom: 20px"
+          >
+            <p>从嵌套压缩包中批量导入单个题目的学生答案，适用于以下文件结构：</p>
+            <ul>
+              <li><strong>科目选择：</strong>选择对应的科目</li>
+              <li><strong>作业选择：</strong>选择具体的作业或实验</li>
+              <li><strong>班级压缩包：</strong>如"2022计科1班-实验一.zip"</li>
+              <li><strong>学生压缩包：</strong>如"201902011312-刘亚欣.zip"（学号-姓名格式）</li>
+              <li><strong>答案文档：</strong>DOC、DOCX、PDF、TXT等格式的作业文件</li>
+            </ul>
+            <p><strong>注意：</strong>系统将自动创建不存在的学生账户（学生角色，未激活状态）</p>
+          </el-alert>
+
+          <el-form label-width="80px">
+            <el-form-item label="选择科目" required>
+              <el-select
+                v-model="nestedZipSubject"
+                placeholder="请选择科目"
+                style="width: 100%"
+                @change="handleNestedZipSubjectChange"
+                :loading="nestedZipSubjectLoading"
+              >
+                <el-option
+                  v-for="subject in nestedZipSubjects"
+                  :key="subject"
+                  :label="subject"
+                  :value="subject"
+                />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="选择作业" required v-if="nestedZipSubject">
+              <el-select
+                v-model="nestedZipAssignment"
+                placeholder="请选择作业或实验"
+                style="width: 100%"
+                :loading="nestedZipAssignmentLoading"
+              >
+                <el-option
+                  v-for="assignment in nestedZipAssignments"
+                  :key="assignment"
+                  :label="assignment"
+                  :value="assignment"
+                />
+              </el-select>
+              <div class="el-form-item__tip" style="margin-top: 5px; font-size: 12px; color: #909399;">
+                系统将从选中科目的作业目录中导入答案文件
+              </div>
+            </el-form-item>
+
+            <el-form-item label="目标题目" required>
+              <el-select
+                v-model="nestedZipQuestionId"
+                placeholder="请选择要导入答案的题目"
+                style="width: 100%"
+                :loading="questionsLoading"
+              >
+                <el-option
+                  v-for="question in questions"
+                  :key="question.id"
+                  :label="`${question.title} (${question.questionType})`"
+                  :value="question.id"
+                />
+              </el-select>
+              <div class="el-form-item__tip" style="margin-top: 5px; font-size: 12px; color: #909399;">
+                所有学生答案将导入到选中的题目下
+              </div>
+            </el-form-item>
+          </el-form>
         </div>
 
         <!-- 学习通答案导入模式 -->
@@ -574,7 +805,7 @@
             :closable="false"
             style="margin-bottom: 20px"
           >
-            <p><strong>第二阶段：</strong>使用已验证的试卷模板精确导入学生答案</p>
+            <p><strong>高精度导入：</strong>使用已验证的试卷模板精确导入学生答案</p>
             <ul>
               <li>基于事先整理好的试卷模板，按题号精确匹配</li>
               <li>避免题目解析错误，提高导入成功率</li>
@@ -583,90 +814,228 @@
             </ul>
           </el-alert>
 
-          <el-form label-width="100px">
-            <el-form-item label="选择模板">
-
-              
-              <el-select 
-                v-model="selectedTemplateId" 
-                placeholder="请选择试卷模板"
-                style="width: 100%"
-                @change="handleTemplateChange"
+          <!-- 模板选择区域 -->
+          <div class="template-selection-section" style="margin-bottom: 30px;">
+            <div class="section-header" style="display: flex; align-items: center; margin-bottom: 15px;">
+              <h4 style="margin: 0; color: #409eff;">
+                <el-icon><Document /></el-icon>
+                选择试卷模板
+              </h4>
+              <el-button 
+                size="small" 
+                type="primary" 
+                link 
+                @click="loadAvailableTemplates"
                 :loading="templateLoading"
-                filterable
+                style="margin-left: auto;"
               >
-                <el-option
-                  v-for="template in availableTemplates"
-                  :key="template.id"
-                  :label="template.templateName"
-                  :value="template.id"
+                <el-icon><Refresh /></el-icon>
+                刷新模板列表
+              </el-button>
+            </div>
+
+            <!-- 模板加载状态 -->
+            <div v-if="templateLoading" class="loading-templates" style="text-align: center; padding: 40px;">
+              <el-icon class="is-loading" size="20"><Refresh /></el-icon>
+              <span style="margin-left: 8px;">正在加载可用模板...</span>
+            </div>
+
+            <!-- 无模板提示 -->
+            <div v-else-if="availableTemplates.length === 0" class="no-templates" style="text-align: center; padding: 40px; background: #f5f7fa; border: 1px dashed #d9ecff; border-radius: 6px;">
+              <el-icon size="48" color="#c0c4cc"><Document /></el-icon>
+              <p style="margin: 16px 0 8px; color: #909399;">暂无可用的试卷模板</p>
+              <p style="margin: 0; color: #c0c4cc; font-size: 14px;">请先创建并配置试卷模板，然后将其标记为"就绪"状态</p>
+              <el-button type="primary" style="margin-top: 16px;" @click="$router.push('/templates')">
+                前往模板管理
+              </el-button>
+            </div>
+
+            <!-- 模板选择卡片 - 优化版 -->
+            <div v-else class="template-cards-container">
+              <el-row :gutter="12">
+                <el-col 
+                  v-for="template in availableTemplates" 
+                  :key="template.id" 
+                  :span="8"
+                  style="margin-bottom: 12px;"
                 >
-                  <div style="display: flex; justify-content: space-between;">
-                    <span>{{ template.templateName }}</span>
-                    <span style="color: #8492a6; font-size: 12px;">
-                      {{ template.subject }} | {{ template.totalQuestions }}题
-                    </span>
-                  </div>
-                </el-option>
-              </el-select>
-              
+                  <el-card 
+                    :class="{ 'selected-template-card': selectedTemplateId === template.id }"
+                    class="template-card template-card-compact"
+                    shadow="hover"
+                    style="cursor: pointer; transition: all 0.3s; height: 100%;"
+                    @click="selectTemplate(template)"
+                  >
+                    <!-- 卡片内容区域 -->
+                    <div style="padding: 0;">
+                      <!-- 模板标题和状态 -->
+                      <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 8px;">
+                        <div style="flex: 1; min-width: 0;">
+                          <div style="display: flex; align-items: center; margin-bottom: 2px;">
+                            <el-radio 
+                              :value="selectedTemplateId" 
+                              :label="template.id"
+                              style="margin-right: 6px; flex-shrink: 0;"
+                              @change="selectedTemplateId = template.id"
+                            />
+                            <span style="color: #303133; font-size: 14px; font-weight: 600; line-height: 1.3; word-break: break-all;">
+                              {{ template.templateName }}
+                            </span>
+                          </div>
+                          <div style="margin-left: 20px; color: #909399; font-size: 12px; line-height: 1.3;">
+                            {{ template.examTitle || template.templateName }}
+                          </div>
+                        </div>
+                        <el-tag 
+                          :type="getTemplateStatusTagType(template.status)"
+                          size="small"
+                          style="margin-left: 8px; flex-shrink: 0;"
+                        >
+                          {{ getTemplateStatusText(template.status) }}
+                        </el-tag>
+                      </div>
 
-            </el-form-item>
+                      <!-- 基本信息 -->
+                      <div style="margin-left: 20px; margin-bottom: 8px;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 6px;">
+                          <div style="font-size: 11px;">
+                            <span style="color: #c0c4cc;">科目：</span>
+                            <span style="color: #606266;">{{ template.subject || '未指定' }}</span>
+                          </div>
+                          <div style="font-size: 11px;">
+                            <span style="color: #c0c4cc;">年级：</span>
+                            <span style="color: #606266;">{{ template.gradeLevel || '未指定' }}</span>
+                          </div>
+                        </div>
+                        
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+                          <div style="font-size: 11px;">
+                            <span style="color: #c0c4cc;">题目数：</span>
+                            <span style="color: #409eff; font-weight: 500;">{{ template.totalQuestions || 0 }} 题</span>
+                          </div>
+                          <div style="font-size: 11px;">
+                            <span style="color: #c0c4cc;">总分：</span>
+                            <span style="color: #409eff; font-weight: 500;">{{ template.totalScore || 0 }} 分</span>
+                          </div>
+                        </div>
 
-            <!-- 模板信息展示 -->
-            <div v-if="selectedTemplate" class="template-info" style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 6px;">
-              <el-row :gutter="20">
-                <el-col :span="12">
-                  <div class="info-item">
-                    <span class="label">模板名称：</span>
-                    <span>{{ selectedTemplate.templateName }}</span>
-                  </div>
-                  <div class="info-item">
-                    <span class="label">考试标题：</span>
-                    <span>{{ selectedTemplate.examTitle || '未设置' }}</span>
-                  </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                          <el-tag size="small" type="info" style="font-size: 10px; height: 20px;">
+                            {{ getTemplateTypeText(template.templateType) }}
+                          </el-tag>
+                          <el-button 
+                            size="small" 
+                            type="primary" 
+                            link
+                            style="font-size: 11px; padding: 0;"
+                            @click.stop="viewTemplateDetails(template)"
+                          >
+                            查看详情
+                          </el-button>
+                        </div>
+                      </div>
+
+                      <!-- 状态警告 -->
+                      <div v-if="template.status !== 'READY'" style="margin-top: 8px; margin-left: 20px;">
+                        <div style="background: #fdf6ec; border: 1px solid #faecd8; border-radius: 4px; padding: 6px 8px;">
+                          <div style="font-size: 10px; color: #e6a23c;">
+                            <el-icon style="margin-right: 4px;"><Warning /></el-icon>
+                            模板未就绪，建议先确认配置
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </el-card>
                 </el-col>
-                <el-col :span="12">
-                  <div class="info-item">
-                    <span class="label">总题数：</span>
-                    <span>{{ selectedTemplate.totalQuestions }}</span>
-                  </div>
-                  <div class="info-item">
-                    <span class="label">模板状态：</span>
-                    <el-tag 
-                      :type="selectedTemplate.status === 'READY' ? 'success' : 'warning'"
-                      size="small"
+              </el-row>
+            </div>
+          </div>
+
+          <!-- 选中模板的详细信息 -->
+          <div v-if="selectedTemplate" class="selected-template-details" style="margin-bottom: 20px;">
+            <el-card>
+              <template #header>
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                  <span style="font-weight: 600; color: #409eff;">
+                    <el-icon><List /></el-icon>
+                    已选模板：{{ selectedTemplate.templateName }}
+                  </span>
+                  <div class="template-actions">
+                    <el-button 
+                      size="small" 
+                      @click="viewTemplateDetails(selectedTemplate)"
                     >
-                      {{ getTemplateStatusText(selectedTemplate.status) }}
-                    </el-tag>
+                      <el-icon><View /></el-icon>
+                      查看完整题目列表
+                    </el-button>
                     <el-button 
                       v-if="selectedTemplate.status !== 'READY'"
-                      type="primary" 
+                      type="warning" 
                       size="small" 
                       @click="markTemplateReady"
-                      style="margin-left: 10px;"
                     >
+                      <el-icon><MagicStick /></el-icon>
                       标记为就绪
                     </el-button>
                   </div>
+                </div>
+              </template>
+
+              <el-row :gutter="20">
+                <el-col :span="8">
+                  <div class="detail-item">
+                    <div class="detail-label">考试标题</div>
+                    <div class="detail-value">{{ selectedTemplate.examTitle || '未设置' }}</div>
+                  </div>
+                </el-col>
+                <el-col :span="8">
+                  <div class="detail-item">
+                    <div class="detail-label">科目年级</div>
+                    <div class="detail-value">{{ selectedTemplate.subject }} · {{ selectedTemplate.gradeLevel }}</div>
+                  </div>
+                </el-col>
+                <el-col :span="8">
+                  <div class="detail-item">
+                    <div class="detail-label">题目配置</div>
+                    <div class="detail-value">{{ selectedTemplate.totalQuestions }} 题 · {{ selectedTemplate.totalScore }} 分</div>
+                  </div>
                 </el-col>
               </el-row>
-              
+
               <!-- 状态警告 -->
               <el-alert
                 v-if="selectedTemplate.status !== 'READY'"
                 type="warning"
                 :closable="false"
-                style="margin-top: 15px;"
+                style="margin-top: 16px;"
               >
                 <template #title>
-                  模板状态说明
+                  <el-icon><MagicStick /></el-icon>
+                  模板状态提醒
                 </template>
-                当前模板状态为"{{ getTemplateStatusText(selectedTemplate.status) }}"。建议先前往模板详情页面确认题目内容无误，然后标记为就绪状态后再使用。
+                当前模板状态为"{{ getTemplateStatusText(selectedTemplate.status) }}"。为确保导入质量，建议先查看题目列表确认配置无误，然后标记为就绪状态。
               </el-alert>
-            </div>
 
-            <el-form-item label="选择科目" v-if="selectedTemplate">
+              <!-- 题目类型统计预览 -->
+              <div v-if="selectedTemplate.questions && selectedTemplate.questions.length > 0" class="question-stats" style="margin-top: 16px;">
+                <div style="margin-bottom: 8px; font-weight: 500; color: #606266;">题目分布预览：</div>
+                <div class="question-type-tags">
+                  <el-tag 
+                    v-for="(count, type) in getQuestionTypeStats(selectedTemplate.questions)" 
+                    :key="type"
+                    style="margin-right: 8px; margin-bottom: 4px;"
+                    size="small"
+                  >
+                    {{ getQuestionTypeText(type) }}：{{ count }}题
+                  </el-tag>
+                </div>
+              </div>
+                         </el-card>
+           </div>
+
+          <!-- 导入配置表单 -->
+          <el-form label-width="100px" v-if="selectedTemplate">
+            <el-form-item label="选择科目">
               <el-select 
                 v-model="templateSubject" 
                 placeholder="请选择科目"
@@ -717,6 +1086,8 @@
             </el-form-item>
           </el-form>
         </div>
+
+
       </div>
       
       <template #footer>
@@ -733,11 +1104,269 @@
         </div>
       </template>
     </el-dialog>
+
+
   </div>
 </template>
 
+<style scoped>
+/* 模板选择相关样式 */
+.template-card {
+  transition: all 0.3s ease;
+  border: 2px solid transparent;
+}
+
+.template-card:hover {
+  border-color: #409eff;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(64, 158, 255, 0.15);
+}
+
+.selected-template-card {
+  border-color: #409eff;
+  background-color: #f0f8ff;
+}
+
+/* 紧凑模板卡片样式 */
+.template-card-compact {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.template-card-compact .el-card__body {
+  padding: 12px;
+}
+
+.template-card-compact:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 12px rgba(64, 158, 255, 0.1);
+}
+
+.template-card-compact.selected-template-card {
+  border-color: #409eff;
+  background: linear-gradient(135deg, #f0f8ff 0%, #e6f4ff 100%);
+  box-shadow: 0 2px 12px rgba(64, 158, 255, 0.2);
+}
+
+.detail-item {
+  margin-bottom: 16px;
+}
+
+.detail-label {
+  color: #909399;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.detail-value {
+  color: #303133;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.question-type-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.class-selection-wrapper {
+  width: 100%;
+}
+
+.select-all-controls {
+  margin-bottom: 8px;
+}
+
+/* 文件夹上传内联样式 */
+.folder-upload-section .upload-area {
+  border: 2px dashed #d1d5db;
+  border-radius: 8px;
+  padding: 40px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin-bottom: 20px;
+}
+
+.folder-upload-section .upload-area:hover {
+  border-color: #3b82f6;
+  background-color: #f8fafc;
+}
+
+.folder-upload-section .upload-area.drag-over {
+  border-color: #3b82f6;
+  background-color: #eff6ff;
+}
+
+.folder-upload-section .upload-area.has-files {
+  border-style: solid;
+  border-color: #10b981;
+  background-color: #f0fdf4;
+}
+
+.folder-upload-section .upload-prompt .upload-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.folder-upload-section .upload-prompt p {
+  margin: 8px 0;
+  color: #6b7280;
+}
+
+.folder-upload-section .upload-hint {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.folder-upload-section .file-list h4 {
+  margin: 0 0 16px 0;
+  color: #374151;
+}
+
+.folder-upload-section .file-items {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.folder-upload-section .file-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  background-color: white;
+}
+
+.folder-upload-section .file-info {
+  flex: 1;
+  text-align: left;
+}
+
+.folder-upload-section .file-name {
+  display: block;
+  font-weight: 500;
+  color: #374151;
+  word-break: break-all;
+}
+
+.folder-upload-section .file-size {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.folder-upload-section .remove-file {
+  background: none;
+  border: none;
+  color: #ef4444;
+  cursor: pointer;
+  padding: 4px;
+  font-size: 14px;
+}
+
+.folder-upload-section .remove-file:hover {
+  background-color: #fee2e2;
+  border-radius: 4px;
+}
+
+.folder-upload-section .more-files {
+  text-align: center;
+  padding: 8px;
+  color: #6b7280;
+  font-style: italic;
+}
+
+.folder-upload-section .upload-progress {
+  margin: 20px 0;
+}
+
+.folder-upload-section .progress-bar {
+  width: 100%;
+  height: 8px;
+  background-color: #e5e7eb;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.folder-upload-section .progress-fill {
+  height: 100%;
+  background-color: #3b82f6;
+  transition: width 0.3s ease;
+}
+
+.folder-upload-section .upload-result {
+  margin-top: 20px;
+  padding: 16px;
+  border-radius: 8px;
+}
+
+.folder-upload-section .result-summary.success {
+  background-color: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+.folder-upload-section .result-summary.error {
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.folder-upload-section .result-summary h4 {
+  margin: 0 0 8px 0;
+}
+
+.folder-upload-section .result-summary p {
+  margin: 0;
+  color: #6b7280;
+}
+
+.folder-upload-section .result-details {
+  margin-top: 16px;
+}
+
+.folder-upload-section .result-details h5 {
+  margin: 0 0 12px 0;
+  color: #374151;
+}
+
+.folder-upload-section .details-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.folder-upload-section .detail-item {
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.folder-upload-section .detail-item.success {
+  background-color: #f0fdf4;
+  color: #166534;
+}
+
+.folder-upload-section .detail-item.error {
+  background-color: #fef2f2;
+  color: #dc2626;
+}
+
+.folder-upload-section .show-more-btn {
+  background: none;
+  border: none;
+  color: #3b82f6;
+  cursor: pointer;
+  padding: 4px 0;
+  font-size: 13px;
+  text-decoration: underline;
+}
+</style>
+
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
@@ -752,13 +1381,15 @@ import {
   Document,
   ArrowDown,
   UploadFilled,
-  List
+  List,
+  FolderOpened
 } from '@element-plus/icons-vue'
 import { examApi } from '@/api/exam'
 import { answerApi } from '@/api/answer'
 import { questionApi } from '@/api/question'
 import { evaluationApi } from '@/api/evaluation'
-import { examTemplateApi } from '@/api/examTemplate'
+import { examPaperTemplateApi } from '@/api/examPaperTemplate'
+
 import type { 
   ExamResponse, 
   StudentAnswerResponse, 
@@ -792,7 +1423,7 @@ const editedAnswerText = ref('')
 const isSavingAnswer = ref(false)
 
 // 学习通导入相关变量
-const importType = ref<'file' | 'learning' | 'template'>('file')
+const importType = ref<'file' | 'folder_upload' | 'learning' | 'template' | 'nested_zip'>('file')
 const availableSubjects = ref<string[]>([])
 const availableClasses = ref<string[]>([])
 const selectedSubject = ref('')
@@ -801,6 +1432,16 @@ const subjectLoading = ref(false)
 const classLoading = ref(false)
 const isImporting = ref(false)
 const importingMessage = ref('')
+
+// 嵌套压缩包导入相关变量
+const nestedZipSubject = ref('')
+const nestedZipAssignment = ref('')
+const nestedZipQuestionId = ref<number | string>('')
+const nestedZipSubjects = ref<string[]>([])
+const nestedZipAssignments = ref<string[]>([])
+const nestedZipSubjectLoading = ref(false)
+const nestedZipAssignmentLoading = ref(false)
+const questionsLoading = ref(false)
 
 // 全选功能相关
 const selectAllClasses = ref(false)
@@ -814,19 +1455,17 @@ const templateSubject = ref('')
 const selectedTemplateClasses = ref<string[]>([])
 const selectAllTemplateClasses = ref(false)
 
-// 计算属性：全选状态
-const isClassesIndeterminate = computed(() => {
-  const selected = selectedClasses.value.length
-  const total = availableClasses.value.length
-  return selected > 0 && selected < total
-})
 
-// 模板相关计算属性
-const isTemplateClassesIndeterminate = computed(() => {
-  const selected = selectedTemplateClasses.value.length
-  const total = availableClasses.value.length
-  return selected > 0 && selected < total
-})
+
+// 文件夹上传相关变量
+const folderUploadQuestionId = ref<number | string>('')
+const folderUploadDialogVisible = ref(false)
+const selectedFolderFiles = ref<File[]>([])
+const isDragOver = ref(false)
+const isFolderUploading = ref(false)
+const folderUploadProgress = ref(0)
+const folderUploadResult = ref<any>(null)
+const showAllFolderDetails = ref(false)
 
 // 系统能力状态
 const systemCapabilities = ref<any>(null)
@@ -877,10 +1516,14 @@ const filteredAnswers = computed(() => {
 const isImportDisabled = computed(() => {
   if (importType.value === 'file') {
     return !selectedFile.value
+  } else if (importType.value === 'folder_upload') {
+    return !folderUploadQuestionId.value
   } else if (importType.value === 'learning') {
     return !selectedSubject.value || selectedClasses.value.length === 0
   } else if (importType.value === 'template') {
     return !selectedTemplateId.value || !templateSubject.value || selectedTemplateClasses.value.length === 0
+  } else if (importType.value === 'nested_zip') {
+    return !nestedZipSubject.value.trim() || !nestedZipAssignment.value.trim() || !nestedZipQuestionId.value
   }
   return true
 })
@@ -1339,26 +1982,9 @@ const handleFileChange = (file: any) => {
 }
 
 // 导入类型变化处理
-const handleImportTypeChange = () => {
-  selectedFile.value = null
-  selectedSubject.value = ''
-  selectedClasses.value = []
-  selectAllClasses.value = false
-  // 重置模板相关字段
-  selectedTemplateId.value = ''
-  selectedTemplate.value = null
-  templateSubject.value = ''
-  selectedTemplateClasses.value = []
-  selectAllTemplateClasses.value = false
-  
-  if (importType.value === 'learning') {
-    loadAvailableSubjects()
-    loadSystemCapabilities()
-  } else if (importType.value === 'template') {
-    loadAvailableTemplates()
-    // 基于模板导入也需要加载科目，因为使用的是相同的学习通答案格式
-    loadAvailableSubjects()
-  }
+const handleImportTypeChange = async (val: string | number | boolean | undefined) => {
+  const type = String(val)
+  console.log('[导入类型切换]', type)
 }
 
 // 加载系统能力状态
@@ -1489,6 +2115,53 @@ const confirmImport = async () => {
       
       // 使用基于模板的导入
       await importWithTemplate()
+    } else if (importType.value === 'nested_zip') {
+      if (!nestedZipSubject.value.trim() || !nestedZipAssignment.value.trim() || !nestedZipQuestionId.value) {
+        ElMessage.error('请选择科目、作业和目标题目')
+        return
+      }
+      
+      // 调用基于科目和作业的嵌套压缩包导入API
+      console.log('开始嵌套压缩包导入:', {
+        subject: nestedZipSubject.value,
+        assignment: nestedZipAssignment.value,
+        questionId: nestedZipQuestionId.value
+      })
+      
+      const result = await answerApi.importNestedZipAnswersBySubject(
+        nestedZipSubject.value.trim(),
+        nestedZipAssignment.value.trim(),
+        Number(nestedZipQuestionId.value)
+      )
+      
+      // 显示导入结果
+      const successMsg = `✅ 导入完成！成功导入 ${result.successCount} 个答案`
+      const failureMsg = result.failureCount > 0 ? `，失败 ${result.failureCount} 个` : ''
+      ElMessage.success(successMsg + failureMsg)
+      
+      // 如果有详细信息，显示通知
+      if (result.details && result.details.length > 0) {
+        ElMessageBox.alert(
+          result.details.join('\n'),
+          '导入详情',
+          {
+            confirmButtonText: '确定',
+            type: 'info'
+          }
+        )
+      }
+      
+      // 如果有错误信息，显示警告
+      if (result.errors && result.errors.length > 0) {
+        ElMessageBox.alert(
+          result.errors.join('\n'),
+          '导入错误',
+          {
+            confirmButtonText: '确定',
+            type: 'warning'
+          }
+        )
+      }
     }
     
     importDialogVisible.value = false
@@ -1561,9 +2234,9 @@ const importLearningAnswers = async () => {
 const loadAvailableTemplates = async () => {
   try {
     templateLoading.value = true
-    const templatesResponse = await examTemplateApi.getUserTemplates(0, 100) // 获取前100个模板
+    const templatesResponse = await examPaperTemplateApi.getUserTemplates() // 获取用户模板
     
-    const allTemplates = templatesResponse.data.content
+    const allTemplates = templatesResponse.data
     const readyTemplates = allTemplates.filter((template: any) => template.status === 'READY')
     
     // 优先显示READY状态的模板，如果没有则显示所有模板
@@ -1591,7 +2264,8 @@ const handleTemplateChange = async () => {
   }
   try {
     // 实际调用API获取模板详情
-    selectedTemplate.value = await examTemplateApi.getTemplateById(Number(selectedTemplateId.value))
+    const response = await examPaperTemplateApi.getTemplate(Number(selectedTemplateId.value))
+    selectedTemplate.value = response.data
   } catch (error) {
     console.error('Failed to load template details:', error)
     ElMessage.error('加载模板详情失败')
@@ -1606,6 +2280,67 @@ const getTemplateStatusText = (status: string) => {
     'ARCHIVED': '已归档'
   }
   return texts[status] || status
+}
+
+// 获取模板状态标签类型
+const getTemplateStatusTagType = (status: string): 'success' | 'primary' | 'warning' | 'info' | 'danger' => {
+  const types: Record<string, 'success' | 'primary' | 'warning' | 'info' | 'danger'> = {
+    'DRAFT': 'info',
+    'READY': 'success',
+    'APPLIED': 'primary',
+    'ARCHIVED': 'warning'
+  }
+  return types[status] || 'info'
+}
+
+// 获取模板类型文本
+const getTemplateTypeText = (type: string) => {
+  const texts: Record<string, string> = {
+    'MANUAL': '手动创建',
+    'AI_GENERATED': 'AI生成',
+    'DOCUMENT_EXTRACTED': '文档提取',
+    'COPIED': '复制创建'
+  }
+  return texts[type] || type
+}
+
+// 选择模板
+const selectTemplate = (template: any) => {
+  selectedTemplateId.value = template.id
+  handleTemplateChange()
+}
+
+// 查看模板详情
+const viewTemplateDetails = (template: any) => {
+  if (template.id) {
+    // 在新标签页中打开模板详情页面
+    const routeUrl = router.resolve(`/templates/${template.id}`)
+    window.open(routeUrl.href, '_blank')
+  }
+}
+
+// 获取题目类型统计
+const getQuestionTypeStats = (questions: any[]) => {
+  const stats: Record<string, number> = {}
+  questions.forEach(question => {
+    const type = question.questionType || 'UNKNOWN'
+    stats[type] = (stats[type] || 0) + 1
+  })
+  return stats
+}
+
+// 获取题目类型文本
+const getQuestionTypeText = (type: string) => {
+  const texts: Record<string, string> = {
+    'SINGLE_CHOICE': '单选题',
+    'MULTIPLE_CHOICE': '多选题',
+    'TRUE_FALSE': '判断题',
+    'FILL_BLANK': '填空题',
+    'SHORT_ANSWER': '简答题',
+    'ESSAY': '论述题',
+    'UNKNOWN': '未知类型'
+  }
+  return texts[type] || type
 }
 
 const handleTemplateSubjectChange = async () => {
@@ -1686,7 +2421,7 @@ const markTemplateReady = async () => {
     )
     
     templateLoading.value = true
-    await examTemplateApi.markTemplateReady(selectedTemplate.value.id)
+    await examPaperTemplateApi.markTemplateReady(selectedTemplate.value.id)
     
     // 更新本地状态
     selectedTemplate.value.status = 'READY'
@@ -1841,9 +2576,229 @@ const getCompletionTagType = (status: string) => {
   return map[status] || 'info';
 };
 
+// 计算批阅进度百分比
+const getEvaluationProgress = (row: any) => {
+  const evaluatedAnswers = row.evaluatedAnswers || 0;
+  const totalQuestions = row.totalQuestions || 0;
+  
+  if (totalQuestions === 0) {
+    return 0;
+  }
+  
+  return Math.round((evaluatedAnswers / totalQuestions) * 100);
+};
+
+// 获取批阅进度状态
+const getEvaluationProgressStatus = (row: any) => {
+  const progress = getEvaluationProgress(row);
+  
+  if (progress === 100) {
+    return 'success';
+  } else if (progress > 0) {
+    return undefined; // 默认蓝色
+  } else {
+    return 'exception'; // 红色表示未开始
+  }
+};
+
 onMounted(() => {
   loadExamInfo()
   loadData() // 使用统一的数据加载方法，根据当前模式加载数据
+})
+
+// 嵌套压缩包科目变化处理
+const handleNestedZipSubjectChange = async () => {
+  nestedZipAssignment.value = ''
+  nestedZipAssignments.value = []
+  if (nestedZipSubject.value) {
+    await loadNestedZipAssignments()
+  }
+}
+
+// 加载嵌套压缩包可用科目
+const loadNestedZipSubjects = async () => {
+  try {
+    nestedZipSubjectLoading.value = true
+    nestedZipSubjects.value = await answerApi.getNestedZipSubjects()
+  } catch (error) {
+    console.error('Failed to load nested zip subjects:', error)
+    ElMessage.error('加载科目列表失败')
+  } finally {
+    nestedZipSubjectLoading.value = false
+  }
+}
+
+// 加载指定科目下的作业/实验列表
+const loadNestedZipAssignments = async () => {
+  try {
+    nestedZipAssignmentLoading.value = true
+    nestedZipAssignments.value = await answerApi.getNestedZipAssignments(nestedZipSubject.value)
+  } catch (error) {
+    console.error('Failed to load nested zip assignments:', error)
+    ElMessage.error('加载作业列表失败')
+  } finally {
+    nestedZipAssignmentLoading.value = false
+  }
+}
+
+
+
+// 文件夹上传方法
+const openFolderUploadDialog = () => {
+  if (!folderUploadQuestionId.value) {
+    ElMessage.warning('请先选择目标题目')
+    return
+  }
+  
+  folderUploadDialogVisible.value = true
+}
+
+const handleFolderUploadSuccess = (result: any) => {
+  folderUploadDialogVisible.value = false
+  ElMessage.success('文件夹上传成功！')
+  // 刷新答案列表
+  loadData()
+}
+
+// 文件夹上传内联方法
+const triggerFileInput = () => {
+  if (isFolderUploading.value) return
+  const fileInput = document.querySelector('input[type="file"][webkitdirectory]') as HTMLInputElement
+  if (fileInput) {
+    fileInput.click()
+  }
+}
+
+const handleFileSelect = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  if (target.files) {
+    const files = Array.from(target.files)
+    addFolderFiles(files)
+  }
+}
+
+const handleDrop = (event: DragEvent) => {
+  event.preventDefault()
+  isDragOver.value = false
+  
+  if (isFolderUploading.value) return
+  
+  if (event.dataTransfer?.files) {
+    const files = Array.from(event.dataTransfer.files)
+    addFolderFiles(files)
+  }
+}
+
+const handleDragOver = () => {
+  isDragOver.value = true
+}
+
+const handleDragLeave = () => {
+  isDragOver.value = false
+}
+
+const addFolderFiles = (files: File[]) => {
+  // 过滤支持的文件类型
+  const supportedExtensions = ['.doc', '.docx', '.pdf', '.txt', '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.rtf', '.odt']
+  const validFiles = files.filter(file => {
+    const extension = '.' + file.name.split('.').pop()?.toLowerCase()
+    return supportedExtensions.includes(extension)
+  })
+  
+  // 添加到选择的文件列表，避免重复
+  const existingNames = selectedFolderFiles.value.map(f => f.name)
+  const newFiles = validFiles.filter(file => !existingNames.includes(file.name))
+  
+  selectedFolderFiles.value.push(...newFiles)
+  
+  if (validFiles.length < files.length) {
+    ElMessage.warning(`已过滤 ${files.length - validFiles.length} 个不支持的文件类型`)
+  }
+}
+
+const removeFolderFile = (index: number) => {
+  selectedFolderFiles.value.splice(index, 1)
+}
+
+const clearFolderFiles = () => {
+  selectedFolderFiles.value = []
+  folderUploadResult.value = null
+  showAllFolderDetails.value = false
+}
+
+const formatFileSize = (bytes: number) => {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
+
+const startFolderUpload = async () => {
+  if (!folderUploadQuestionId.value || selectedFolderFiles.value.length === 0) return
+  
+  isFolderUploading.value = true
+  folderUploadProgress.value = 0
+  folderUploadResult.value = null
+  
+  try {
+    // 创建FormData
+    const formData = new FormData()
+    selectedFolderFiles.value.forEach(file => {
+      formData.append('files', file)
+    })
+    formData.append('questionId', String(folderUploadQuestionId.value))
+    
+    // 模拟进度更新
+    const progressInterval = setInterval(() => {
+      if (folderUploadProgress.value < 90) {
+        folderUploadProgress.value += Math.random() * 10
+      }
+    }, 500)
+    
+    // 上传文件
+    const response = await answerApi.uploadFolderAnswers(formData)
+    
+    clearInterval(progressInterval)
+    folderUploadProgress.value = 100
+    
+    // 处理响应
+    folderUploadResult.value = response
+    
+    if (response.success) {
+      ElMessage.success('文件夹上传成功！')
+      // 刷新答案列表
+      loadData()
+      // 可选：关闭导入对话框
+      // importDialogVisible.value = false
+    } else {
+      ElMessage.error('部分文件处理失败，请查看详情')
+    }
+    
+  } catch (error: any) {
+    console.error('上传失败:', error)
+    folderUploadResult.value = {
+      success: false,
+      message: '上传失败: ' + (error.response?.data?.message || error.message),
+      details: []
+    }
+    ElMessage.error('上传失败')
+  } finally {
+    isFolderUploading.value = false
+  }
+}
+
+// 监听导入弹窗打开，自动加载科目
+watch(importDialogVisible, async (visible) => {
+  // 暂时移除大作业导入的自动加载功能
+})
+
+// 全选checkbox的indeterminate状态
+const isClassesIndeterminate = computed(() => {
+  return selectedClasses.value.length > 0 && selectedClasses.value.length < availableClasses.value.length
+})
+const isTemplateClassesIndeterminate = computed(() => {
+  return selectedTemplateClasses.value.length > 0 && selectedTemplateClasses.value.length < availableClasses.value.length
 })
 </script>
 
@@ -2005,5 +2960,23 @@ onMounted(() => {
 .answer-count {
   font-weight: 600;
   color: #409eff;
+}
+
+/* 批阅进度样式 */
+.evaluation-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.evaluation-progress .el-progress {
+  width: 80px;
+}
+
+.progress-text {
+  font-size: 12px;
+  color: #606266;
+  font-weight: 500;
 }
 </style>

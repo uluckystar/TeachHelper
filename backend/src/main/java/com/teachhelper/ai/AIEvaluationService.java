@@ -936,13 +936,20 @@ public class AIEvaluationService {
     }
 
     /**
-     * 构建AI答案评估提示词
+     * 构建AI评估提示词（支持评分模式）
      */
-    private String buildEvaluationPrompt(com.teachhelper.entity.StudentAnswer studentAnswer) {
+    private String buildEvaluationPrompt(com.teachhelper.entity.StudentAnswer studentAnswer, String evaluationStyle) {
         StringBuilder prompt = new StringBuilder();
         com.teachhelper.entity.Question question = studentAnswer.getQuestion();
         
-        prompt.append("你是一位专业的教育评估专家，请对以下学生答案进行公正、客观的评分。\n\n");
+        // 根据评分模式添加系统角色描述
+        if ("STRICT".equals(evaluationStyle)) {
+            prompt.append("你是一位要求严格的资深教授，对学生答案的评估标准极高。你会仔细审查每一个细节，并对任何不精确或逻辑不清的地方进行扣分。\n\n");
+        } else if ("LENIENT".equals(evaluationStyle)) {
+            prompt.append("你是一位友善的评分教师，善于发现学生的闪光点，倾向于给予鼓励性评价。你会适当宽容，鼓励学生，遇到模糊或部分正确的答案时酌情给分。\n\n");
+        } else {
+            prompt.append("你是一位专业的教育评估专家，请对以下学生答案进行公正、客观的评分。\n\n");
+        }
         
         // 题目信息
         prompt.append("=== 题目信息 ===\n");
@@ -998,7 +1005,31 @@ public class AIEvaluationService {
         
         // 评估要求
         prompt.append("\n=== 评估要求 ===\n");
-        prompt.append("请对该学生答案进行客观、公正的评分，并提供详细的反馈意见。\n\n");
+        
+        // 根据评分模式添加具体的评估要求
+        if ("STRICT".equals(evaluationStyle)) {
+            prompt.append("以最严格的标准对该学生答案进行评分：\n\n");
+            prompt.append("**严格评分规则：**\n");
+            prompt.append("1. 极度严格：严格对照评分标准，任何不完全符合的地方都应酌情扣分\n");
+            prompt.append("2. 重视细节：对概念混淆、逻辑跳跃、表达不规范等问题进行严格扣分\n");
+            prompt.append("3. 无同情分：不要给予任何同情分或鼓励分\n");
+            prompt.append("4. 答案字数不足要求的70%，最高给40%分数\n");
+            prompt.append("5. 关键概念或论述缺失，最高给50%分数\n");
+            prompt.append("6. 有明显错误观点，至少扣30%分数\n");
+            prompt.append("7. 论述不够深入，最高给70%分数\n");
+            prompt.append("8. 表述不够准确，每处扣5-10%分数\n\n");
+        } else if ("LENIENT".equals(evaluationStyle)) {
+            prompt.append("以友善的标准对该学生答案进行评分：\n\n");
+            prompt.append("**评分原则：**\n");
+            prompt.append("1. 对于部分正确的答案，要充分认可其正确的部分\n");
+            prompt.append("2. 答案方向正确但表述不完整时，重点评价其思路的正确性\n");
+            prompt.append("3. 对学生的独特见解和创新思维给予积极评价\n");
+            prompt.append("4. 当答案包含核心要点时，即使细节不够完善，也要给予较高评价\n");
+            prompt.append("5. 表述不够准确但逻辑清晰的，主要看其理解程度而非表达完美度\n");
+            prompt.append("6. 只要体现了对知识点的基本理解，最低不少于60%分数\n\n");
+        } else {
+            prompt.append("请对该学生答案进行客观、公正的评分，并提供详细的反馈意见。\n\n");
+        }
         
         prompt.append("评估重点：\n");
         switch (question.getQuestionType()) {
@@ -1050,7 +1081,16 @@ public class AIEvaluationService {
         prompt.append("请严格按照以下JSON格式返回评估结果：\n");
         prompt.append("{\n");
         prompt.append("  \"score\": 分数(数字，保留1位小数),\n");
-        prompt.append("  \"feedback\": \"总体评价。必须包含一个名为'【得分点分析】'的独立部分，在该部分中，请明确列出学生此题回答中获得分数的所有具体要点，并与参考答案进行对比说明。每个得分点的得分情况请使用 '-> [得分: X分]' 的格式清晰标出。此外，请注意，您的所有输出都将直接嵌入Word文档，因此请不要使用任何Markdown语法\",\n");
+        
+        // 根据评分模式调整反馈格式要求
+        if ("LENIENT".equals(evaluationStyle)) {
+            prompt.append("  \"feedback\": \"请直接从总体评价开始，不要重复'总体评价'标题。必须包含一个名为'【得分点分析】'的独立部分，该部分需要换行显示。在得分点分析中，请明确列出学生答案中的所有得分要点，每个得分点使用 '-> [得分: X分]' 格式标出。对于思路正确、有见解、理解到位等优秀表现，要充分体现在得分中，如：'思路清晰，理解准确-> [得分: X分]'、'有独特见解，分析到位-> [得分: Y分]'等，确保所有得分点的总和等于最终总分。\",\n");
+        } else if ("STRICT".equals(evaluationStyle)) {
+            prompt.append("  \"feedback\": \"请直接从总体评价开始，不要重复'总体评价'标题。必须包含一个名为'【得分点分析】'的独立部分，该部分需要换行显示。在得分点分析中，请明确列出学生答案中的所有得分要点和扣分点，每个得分点使用 '-> [得分: X分]' 格式标出，每个扣分点使用 '-> [扣分: X分]' 格式标出。确保所有得分点减去扣分点的总和等于最终总分。\",\n");
+        } else {
+            prompt.append("  \"feedback\": \"请直接从总体评价开始，不要重复'总体评价'标题。必须包含一个名为'【得分点分析】'的独立部分，该部分需要换行显示。在得分点分析中，请明确列出学生答案中的所有得分要点，每个得分点使用 '-> [得分: X分]' 格式标出。确保所有得分点的总和等于最终总分。\",\n");
+        }
+        
         prompt.append("  \"strengths\": \"[请在此处列出答案的优点，不要包含'答案优点：'或类似的标题]\",\n");
         prompt.append("  \"improvements\": \"[请在此处列出具体的改进建议，不要包含'改进建议：'或类似的标题]\",\n");
         if (question.getRubricCriteria() != null && !question.getRubricCriteria().isEmpty()) {
@@ -1068,12 +1108,34 @@ public class AIEvaluationService {
         
         prompt.append("注意事项：\n");
         prompt.append("- 总分不能超过").append(question.getMaxScore()).append("分\n");
-        prompt.append("- 分数要合理，避免过于严格或过于宽松\n");
+        
+        // 根据评分模式添加不同的注意事项
+        if ("STRICT".equals(evaluationStyle)) {
+            prompt.append("- 评分要严格，宁可偏低不要偏高\n");
+            prompt.append("- 反馈要指出所有不足和改进点\n");
+            prompt.append("- 对错误和不完善之处要严格扣分\n");
+        } else if ("LENIENT".equals(evaluationStyle)) {
+            prompt.append("- 对学生答案中正确的部分要充分认可，给予应有的分数\n");
+            prompt.append("- 当思路正确时，即使表述不够完美也要重点评价其理解程度\n");
+            prompt.append("- 对创新思维和独特见解要给予积极评价和相应分数\n");
+            prompt.append("- 确保得分点分析中的所有分数总和等于最终总分\n");
+            prompt.append("- 反馈以建设性为主，多肯定优点，温和指出改进方向\n");
+        } else {
+            prompt.append("- 分数要合理，避免过于严格或过于宽松\n");
+        }
+        
         prompt.append("- 反馈要具体、建设性，帮助学生改进\n");
         prompt.append("- 评分要客观公正，基于答案质量而非主观偏好\n");
         prompt.append("- 如果有评分标准，每个标准的得分总和应该等于总分\n");
         
         return prompt.toString();
+    }
+    
+    /**
+     * 构建AI评估提示词（保持向后兼容，默认为普通模式）
+     */
+    private String buildEvaluationPrompt(com.teachhelper.entity.StudentAnswer studentAnswer) {
+        return buildEvaluationPrompt(studentAnswer, "NORMAL");
     }
     
     /**
@@ -1157,7 +1219,8 @@ public class AIEvaluationService {
             // 构建完整反馈
             StringBuilder fullFeedback = new StringBuilder();
             if (!feedback.trim().isEmpty()) {
-                fullFeedback.append("总体评价：").append(feedback).append("\n\n");
+                // AI已经在feedback中包含了总体评价，不需要重复添加标题
+                fullFeedback.append(feedback).append("\n\n");
             }
             if (!strengths.trim().isEmpty()) {
                 fullFeedback.append("答案优点：").append(strengths).append("\n\n");
@@ -1899,5 +1962,164 @@ public class AIEvaluationService {
             log.warn("提取维度评价失败: {}", criterionName, e);
             return null;
         }
+    }
+
+    /**
+     * 评估学生答案 - 使用AI进行智能评分（支持评分模式）
+     * 
+     * @param studentAnswer 学生答案实体
+     * @param userId 评估者用户ID
+     * @param evaluationStyle 评分模式 (NORMAL, STRICT, LENIENT)
+     * @return 评估结果对象，包含分数、反馈等信息
+     */
+    public EvaluationResult evaluateAnswer(com.teachhelper.entity.StudentAnswer studentAnswer, Long userId, String evaluationStyle) {
+        System.out.println("=== 开始AI答案评估（带评分模式）===");
+        System.out.println("评分模式: " + (evaluationStyle != null ? evaluationStyle : "NORMAL"));
+        
+        if (studentAnswer == null) {
+            System.err.println("❌ 学生答案为空");
+            return createErrorResult("学生答案不能为空");
+        }
+        
+        com.teachhelper.entity.Question question = studentAnswer.getQuestion();
+        if (question == null) {
+            System.err.println("❌ 题目信息为空");
+            return createErrorResult("题目信息不能为空");
+        }
+        
+        System.out.println("题目ID: " + question.getId());
+        System.out.println("题目标题: " + question.getTitle());
+        System.out.println("题目类型: " + question.getQuestionType());
+        System.out.println("题目满分: " + question.getMaxScore());
+        System.out.println("学生答案: " + studentAnswer.getAnswerText());
+        System.out.println("学生信息: " + (studentAnswer.getStudent() != null ? 
+            studentAnswer.getStudent().getName() + "(" + studentAnswer.getStudent().getStudentId() + ")" : "未知"));
+        
+        try {
+            // 使用传入的用户ID获取AI配置
+            System.out.println("当前评估者ID: " + userId);
+            
+            Optional<UserAIConfig> configOpt = userAIConfigService.getUserDefaultAIConfig(userId);
+            
+            if (!configOpt.isPresent()) {
+                System.out.println("⚠️  没有找到默认AI配置，使用基础评估规则");
+                return createBasicEvaluation(studentAnswer);
+            }
+            
+            UserAIConfig aiConfig = configOpt.get();
+            System.out.println("✅ 找到AI配置:");
+            System.out.println("  - 提供商: " + aiConfig.getProvider());
+            System.out.println("  - 模型名称: " + aiConfig.getModelName());
+            System.out.println("  - API端点: " + aiConfig.getApiEndpoint());
+            
+            AIClient aiClient = aiClientFactory.getClient(aiConfig.getProvider());
+            System.out.println("✅ 获取AI客户端成功: " + aiClient.getClass().getSimpleName());
+            
+            // 确保评分模式有默认值
+            String actualEvaluationStyle = evaluationStyle != null ? evaluationStyle : "NORMAL";
+            
+            // 构建评估提示词（带评分模式）
+            String prompt = buildEvaluationPrompt(studentAnswer, actualEvaluationStyle);
+            System.out.println("✅ 构建AI评估提示词成功，长度: " + prompt.length());
+            System.out.println("--- 评估提示词内容开始 ---");
+            System.out.println(prompt);
+            System.out.println("--- 评估提示词内容结束 ---");
+            
+            // 调用AI进行评估
+            System.out.println("🚀 开始调用AI进行答案评估...");
+            long startTime = System.currentTimeMillis();
+            AIResponse aiResponse = aiClient.chat(prompt, aiConfig);
+            long duration = System.currentTimeMillis() - startTime;
+            System.out.println("⏱️  AI评估耗时: " + duration + "ms");
+            
+            if (aiResponse.isSuccess()) {
+                System.out.println("✅ AI评估调用成功!");
+                System.out.println("  - 输入Token数: " + aiResponse.getInputTokens());
+                System.out.println("  - 输出Token数: " + aiResponse.getOutputTokens());
+                System.out.println("  - 总Token数: " + aiResponse.getTotalTokens());
+                System.out.println("--- AI评估响应内容开始 ---");
+                System.out.println(aiResponse.getContent());
+                System.out.println("--- AI评估响应内容结束 ---");
+                
+                // 解析AI评估结果
+                System.out.println("🔍 开始解析AI评估结果...");
+                EvaluationResult result = parseEvaluationResponse(aiResponse.getContent(), question.getMaxScore());
+                
+                if (result.isSuccess()) {
+                    System.out.println("✅ AI评估解析成功:");
+                    System.out.println("  - 得分: " + result.getScore() + "/" + question.getMaxScore());
+                    System.out.println("  - 反馈长度: " + (result.getFeedback() != null ? result.getFeedback().length() : 0) + " 字符");
+                    System.out.println("  - 评估详情数: " + (result.getCriteriaEvaluations() != null ? result.getCriteriaEvaluations().size() : 0));
+                    return result;
+                } else {
+                    System.out.println("❌ AI评估结果解析失败");
+                }
+            } else {
+                System.out.println("❌ AI评估调用失败:");
+                System.out.println("  - 错误信息: " + aiResponse.getErrorMessage());
+                System.out.println("  - 响应内容: " + aiResponse.getContent());
+            }
+            
+            // AI评估失败，使用基础评估
+            System.err.println("❌ AI评估失败，使用基础评估规则");
+            System.err.println("  - 错误原因: " + (aiResponse != null ? aiResponse.getErrorMessage() : "未知错误"));
+            return createBasicEvaluation(studentAnswer);
+            
+        } catch (Exception e) {
+            // 出现异常，使用基础评估
+            System.err.println("❌ AI评估出现异常，使用基础评估规则");
+            System.err.println("  - 异常类型: " + e.getClass().getSimpleName());
+            System.err.println("  - 异常信息: " + e.getMessage());
+            e.printStackTrace();
+            return createBasicEvaluation(studentAnswer);
+        }
+    }
+    
+    /**
+     * 评估学生答案 - 使用AI进行智能评分（带用户名和评分模式）
+     * 
+     * @param studentAnswer 学生答案实体
+     * @param username 评估者用户名
+     * @param evaluationStyle 评分模式 (NORMAL, STRICT, LENIENT)
+     * @return 评估结果对象，包含分数、反馈等信息
+     */
+    public EvaluationResult evaluateAnswer(com.teachhelper.entity.StudentAnswer studentAnswer, String username, String evaluationStyle) {
+        System.out.println("=== AIEvaluationService.evaluateAnswer(username, evaluationStyle) 调试信息 ===");
+        System.out.println("传入的用户名: " + username);
+        System.out.println("传入的评分模式: " + (evaluationStyle != null ? evaluationStyle : "NORMAL"));
+        
+        try {
+            if (username != null) {
+                // 通过用户名获取用户ID
+                System.out.println("尝试通过用户名获取用户ID...");
+                Long userId = authService.getUserIdByUsername(username);
+                if (userId != null) {
+                    System.out.println("✅ 通过用户名 " + username + " 获取到用户ID: " + userId);
+                    return evaluateAnswer(studentAnswer, userId, evaluationStyle);
+                } else {
+                    System.err.println("⚠️  无法通过用户名 " + username + " 找到用户，使用基础评估规则");
+                }
+            } else {
+                System.err.println("⚠️  用户名为空，使用基础评估规则");
+            }
+        } catch (Exception e) {
+            System.err.println("⚠️  通过用户名获取用户ID失败，使用基础评估规则");
+            System.err.println("  - 异常类型: " + e.getClass().getName());
+            System.err.println("  - 原因: " + e.getMessage());
+            e.printStackTrace(); // 打印完整堆栈跟踪
+        }
+        
+        // 如果无法获取用户ID，回退到基础评估
+        System.out.println("回退到基础评估...");
+        return createBasicEvaluation(studentAnswer);
+    }
+
+    public UserAIConfig getUserDefaultAIConfigPublic(Long userId) {
+        Optional<UserAIConfig> configOpt = userAIConfigService.getUserDefaultAIConfig(userId);
+        if (!configOpt.isPresent()) throw new RuntimeException("未找到AI配置");
+        return configOpt.get();
+    }
+    public AIClient getAIClientPublic(UserAIConfig config) {
+        return aiClientFactory.getClient(config.getProvider());
     }
 }

@@ -109,13 +109,13 @@ public class Exam extends BaseEntity {
     private List<Question> questions = new ArrayList<>();
     
     /**
-     * 来源模板
-     * 多对一关系，指向创建此考试所使用的模板
+     * 来源试卷模板
+     * 多对一关系，指向创建此考试所使用的试卷模板
      * 可选字段，如果为空则表示手动创建的考试
      */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "source_template_id")
-    private ExamTemplate sourceTemplate;
+    @JoinColumn(name = "source_paper_template_id")
+    private ExamPaperTemplate sourcePaperTemplate;
     
     // 构造方法
     
@@ -336,18 +336,18 @@ public class Exam extends BaseEntity {
     }
     
     /**
-     * 获取来源模板
-     * @return 来源模板
+     * 获取来源试卷模板
+     * @return 来源试卷模板
      */
-    public ExamTemplate getSourceTemplate() {
-        return sourceTemplate;
+    public ExamPaperTemplate getSourcePaperTemplate() {
+        return sourcePaperTemplate;
     }
     
     /**
-     * 设置来源模板
-     * @param sourceTemplate 来源模板
+     * 设置来源试卷模板
+     * @param sourcePaperTemplate 来源试卷模板
      */
-    public void setSourceTemplate(ExamTemplate sourceTemplate) {
-        this.sourceTemplate = sourceTemplate;
+    public void setSourcePaperTemplate(ExamPaperTemplate sourcePaperTemplate) {
+        this.sourcePaperTemplate = sourcePaperTemplate;
     }
 }

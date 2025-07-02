@@ -149,7 +149,18 @@ public class BatchEvaluationExecutorService {
             Long questionId = extractLongValue(config.get("questionId"));
             if (questionId != null) {
                 boolean evaluateAll = Boolean.TRUE.equals(config.get("evaluateAll"));
-                if (evaluateAll) {
+                boolean revaluateOnly = Boolean.TRUE.equals(config.get("revaluateOnly"));
+                
+                if (revaluateOnly) {
+                    // 只重新评估已评估的答案
+                    List<Long> answerIds = studentAnswerService.getAnswersByQuestionId(questionId)
+                        .stream()
+                        .filter(StudentAnswer::isEvaluated)
+                        .map(StudentAnswer::getId)
+                        .toList();
+                    logger.info("从题目ID {} 获取到 {} 个已评估答案（重新评阅）", questionId, answerIds.size());
+                    return answerIds;
+                } else if (evaluateAll) {
                     // 获取题目的所有答案
                     List<Long> answerIds = studentAnswerService.getAnswersByQuestionId(questionId)
                         .stream()
@@ -172,7 +183,18 @@ public class BatchEvaluationExecutorService {
             Long examId = extractLongValue(config.get("examId"));
             if (examId != null) {
                 boolean evaluateAll = Boolean.TRUE.equals(config.get("evaluateAll"));
-                if (evaluateAll) {
+                boolean revaluateOnly = Boolean.TRUE.equals(config.get("revaluateOnly"));
+                
+                if (revaluateOnly) {
+                    // 只重新评估已评估的答案
+                    List<Long> answerIds = studentAnswerService.getAnswersByExamId(examId)
+                        .stream()
+                        .filter(StudentAnswer::isEvaluated)
+                        .map(StudentAnswer::getId)
+                        .toList();
+                    logger.info("从考试ID {} 获取到 {} 个已评估答案（重新评阅）", examId, answerIds.size());
+                    return answerIds;
+                } else if (evaluateAll) {
                     // 获取考试的所有答案
                     List<Long> answerIds = studentAnswerService.getAnswersByExamId(examId)
                         .stream()
@@ -199,9 +221,19 @@ public class BatchEvaluationExecutorService {
             List<Long> examIds = (List<Long>) config.get("examIds");
             if (examIds != null && !examIds.isEmpty()) {
                 List<Long> allAnswerIds = new ArrayList<>();
+                boolean evaluateAll = Boolean.TRUE.equals(config.get("evaluateAll"));
+                boolean revaluateOnly = Boolean.TRUE.equals(config.get("revaluateOnly"));
+                
                 for (Long examId : examIds) {
-                    boolean evaluateAll = Boolean.TRUE.equals(config.get("evaluateAll"));
-                    if (evaluateAll) {
+                    if (revaluateOnly) {
+                        // 只重新评估已评估的答案
+                        List<Long> examAnswerIds = studentAnswerService.getAnswersByExamId(examId)
+                            .stream()
+                            .filter(StudentAnswer::isEvaluated)
+                            .map(StudentAnswer::getId)
+                            .toList();
+                        allAnswerIds.addAll(examAnswerIds);
+                    } else if (evaluateAll) {
                         List<Long> examAnswerIds = studentAnswerService.getAnswersByExamId(examId)
                             .stream()
                             .map(StudentAnswer::getId)
@@ -215,7 +247,8 @@ public class BatchEvaluationExecutorService {
                         allAnswerIds.addAll(examAnswerIds);
                     }
                 }
-                logger.info("从 {} 个考试获取到 {} 个答案", examIds.size(), allAnswerIds.size());
+                logger.info("从 {} 个考试获取到 {} 个答案{}", examIds.size(), allAnswerIds.size(), 
+                    revaluateOnly ? "（重新评阅）" : (evaluateAll ? "（全部）" : "（未评估）"));
                 return allAnswerIds;
             }
         }
@@ -332,7 +365,8 @@ public class BatchEvaluationExecutorService {
                 try {
                     evaluationSemaphore.acquire();
                     try {
-                        Map<String, Object> evaluationResult = evaluateSingleAnswerWithFetchedData(taskId, answer, callback, evaluatorUserId, evaluatorUsername);
+                        // 传递config参数给评估方法
+                        Map<String, Object> evaluationResult = evaluateSingleAnswerWithFetchedData(taskId, answer, callback, evaluatorUserId, evaluatorUsername, config);
                         detailedResults.add(evaluationResult);
                         String status = (String) evaluationResult.getOrDefault("evaluationStatus", "failed");
                         if ("success".equals(status)) {
@@ -378,7 +412,7 @@ public class BatchEvaluationExecutorService {
      * 返回详细的评估结果信息
      */
     @Transactional
-    private Map<String, Object> evaluateSingleAnswerWithFetchedData(String taskId, StudentAnswer answer, TaskProgressCallback callback, Long evaluatorUserId, String evaluatorUsername) {
+    private Map<String, Object> evaluateSingleAnswerWithFetchedData(String taskId, StudentAnswer answer, TaskProgressCallback callback, Long evaluatorUserId, String evaluatorUsername, Map<String, Object> config) {
         int maxRetries = 3;
         int retryCount = 0;
         
@@ -414,6 +448,16 @@ public class BatchEvaluationExecutorService {
                     retryCount + 1
                 );
                 
+                // 从配置中获取评分模式
+                String evaluationStyle = null;
+                if (config != null && config.containsKey("evaluationStyle")) {
+                    evaluationStyle = (String) config.get("evaluationStyle");
+                    logger.debug("从配置中读取到评分模式: {}", evaluationStyle);
+                } else {
+                    logger.debug("配置中未找到评分模式，使用默认模式 NORMAL");
+                    evaluationStyle = "NORMAL";
+                }
+                
                 // 调用AI评估服务（传入用户名以避免SecurityContext问题）
                 logger.debug("=== 准备调用AI评估服务 ===");
                 logger.debug("评估参数:");
@@ -421,14 +465,15 @@ public class BatchEvaluationExecutorService {
                 logger.debug("- answer.getId(): {}", answer.getId());
                 logger.debug("- evaluatorUserId: {}", evaluatorUserId);
                 logger.debug("- evaluatorUsername: {}", evaluatorUsername);
+                logger.debug("- evaluationStyle: {}", evaluationStyle);
                 
                 AIEvaluationService.EvaluationResult result;
                 if (evaluatorUsername != null) {
-                    logger.debug("🔄 使用用户名 {} 进行AI评估", evaluatorUsername);
-                    result = aiEvaluationService.evaluateAnswer(answer, evaluatorUsername);
+                    logger.debug("🔄 使用用户名 {} 进行AI评估，评分模式: {}", evaluatorUsername, evaluationStyle);
+                    result = aiEvaluationService.evaluateAnswer(answer, evaluatorUsername, evaluationStyle);
                 } else if (evaluatorUserId != null) {
-                    logger.debug("🔄 使用用户ID {} 进行AI评估", evaluatorUserId);
-                    result = aiEvaluationService.evaluateAnswer(answer, evaluatorUserId);
+                    logger.debug("🔄 使用用户ID {} 进行AI评估，评分模式: {}", evaluatorUserId, evaluationStyle);
+                    result = aiEvaluationService.evaluateAnswer(answer, evaluatorUserId, evaluationStyle);
                 } else {
                     logger.debug("🔄 无用户信息，使用默认AI评估方法");
                     // 如果无法获取用户信息，使用原方法（会自动回退到基础评估）
@@ -474,6 +519,7 @@ public class BatchEvaluationExecutorService {
                     detailResult.put("evaluatedAt", answer.getEvaluatedAt().toString());
                     detailResult.put("evaluationType", "AI_AUTO");
                     detailResult.put("retryCount", retryCount);
+                    detailResult.put("evaluationStyle", evaluationStyle);
                     
                     return detailResult;
                     
@@ -500,6 +546,7 @@ public class BatchEvaluationExecutorService {
                         failedResult.put("evaluationType", "AI_AUTO");
                         failedResult.put("retryCount", retryCount);
                         failedResult.put("errorMessage", result.getFeedback());
+                        failedResult.put("evaluationStyle", evaluationStyle);
                         
                         return failedResult;
                     }

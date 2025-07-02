@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>科目列表测试</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f7fa;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #409eff;
+            border-bottom: 2px solid #409eff;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #dcdfe6;
+            border-radius: 5px;
+        }
+        button {
+            background-color: #409eff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #337ecc;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+            border-left: 4px solid #409eff;
+        }
+        .error {
+            border-left-color: #f56c6c;
+            background-color: #fef0f0;
+        }
+        .success {
+            border-left-color: #67c23a;
+            background-color: #f0f9ff;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 嵌套压缩包科目列表测试</h1>
+        
+        <div class="test-section">
+            <h3>📋 测试获取科目列表</h3>
+            <p>点击按钮测试 <code>/api/student-answers/nested-zip-subjects</code> API</p>
+            <button onclick="testGetSubjects()">获取科目列表</button>
+            <div id="subjects-result"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>📁 测试获取作业列表</h3>
+            <p>输入科目名称，测试 <code>/api/student-answers/nested-zip-assignments</code> API</p>
+            <input type="text" id="subject-input" placeholder="输入科目名称，如：路由与交换技术平时作业与实验" 
+                   style="width: 100%; padding: 8px; margin: 5px 0;">
+            <button onclick="testGetAssignments()">获取作业列表</button>
+            <div id="assignments-result"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>🔧 路径诊断</h3>
+            <p>显示相关路径信息</p>
+            <button onclick="showPathInfo()">显示路径信息</button>
+            <div id="path-result"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8080';
+
+        async function testGetSubjects() {
+            const resultDiv = document.getElementById('subjects-result');
+            resultDiv.innerHTML = '<p>⏳ 获取科目列表中...</p>';
+            
+            try {
+                const token = localStorage.getItem('token') || 'test-token';
+                const response = await fetch(`${API_BASE}/api/student-answers/nested-zip-subjects`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response.ok) {
+                    const subjects = await response.json();
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <h4>✅ 获取成功！找到 ${subjects.length} 个科目：</h4>
+                            <pre>${JSON.stringify(subjects, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    const errorText = await response.text();
+                    resultDiv.innerHTML = `
+                        <div class="result error">
+                            <h4>❌ 请求失败 (${response.status})</h4>
+                            <pre>${errorText}</pre>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <h4>❌ 网络错误</h4>
+                        <p>${error.message}</p>
+                        <p>请确保后端服务已启动在 ${API_BASE}</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function testGetAssignments() {
+            const subject = document.getElementById('subject-input').value.trim();
+            const resultDiv = document.getElementById('assignments-result');
+            
+            if (!subject) {
+                resultDiv.innerHTML = '<div class="result error"><p>❌ 请输入科目名称</p></div>';
+                return;
+            }
+
+            resultDiv.innerHTML = '<p>⏳ 获取作业列表中...</p>';
+            
+            try {
+                const token = localStorage.getItem('token') || 'test-token';
+                const response = await fetch(`${API_BASE}/api/student-answers/nested-zip-assignments?subject=${encodeURIComponent(subject)}`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response.ok) {
+                    const assignments = await response.json();
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <h4>✅ 获取成功！科目"${subject}"下找到 ${assignments.length} 个作业：</h4>
+                            <pre>${JSON.stringify(assignments, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    const errorText = await response.text();
+                    resultDiv.innerHTML = `
+                        <div class="result error">
+                            <h4>❌ 请求失败 (${response.status})</h4>
+                            <pre>${errorText}</pre>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <h4>❌ 网络错误</h4>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        function showPathInfo() {
+            const resultDiv = document.getElementById('path-result');
+            resultDiv.innerHTML = `
+                <div class="result">
+                    <h4>📁 路径信息</h4>
+                    <p><strong>预期答案基础路径：</strong></p>
+                    <code>/Users/jiangjiaxing/project/vvv/TeachHelper/uploads/answer</code>
+                    <br><br>
+                    <p><strong>实际文件夹：</strong></p>
+                    <ul>
+                        <li>路由与交换技术</li>
+                        <li>路由与交换技术平时作业与实验</li>
+                    </ul>
+                    <p><strong>配置检查：</strong></p>
+                    <p>确保 application.yml 中 app.upload.dir 设置为：<br>
+                    <code>/Users/jiangjiaxing/project/vvv/TeachHelper/uploads</code></p>
+                </div>
+            `;
+        }
+
+        // 页面加载时显示基本信息
+        window.onload = function() {
+            console.log('测试页面已加载');
+            console.log('API Base URL:', API_BASE);
+        };
+    </script>
+</body>
+</html> 

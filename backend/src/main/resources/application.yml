@@ -78,6 +78,12 @@ app:
       max-file-size-mb: ${DOC_MAX_SIZE:50}  # 最大文件大小（MB）
       max-parsing-threads: ${DOC_MAX_THREADS:5}  # 最大解析线程数
   
+  # OCR（光学字符识别）配置
+  ocr:
+    enabled: ${OCR_ENABLED:true}  # 启用OCR功能
+    tesseract:
+      datapath: ${TESSERACT_DATAPATH:/opt/homebrew/share/tessdata}  # Tesseract训练数据路径
+  
   # 向量数据库通用配置
   vector:
     dimensions: 768 # embedding向量维度，nomic-embed-text: 768维

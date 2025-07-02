@@ -126,3 +126,29 @@ export function getScoreTag(score: number | null | undefined, maxScore: number |
   if (percentage >= 60) return 'info'
   return 'danger'
 }
+
+export function getSourceTypeTag(type: string): TagType {
+  const colorMap: Record<string, TagType> = {
+    'SELF_CREATED': 'primary',
+    'INTERNET': 'success',
+    'AI_GENERATED': 'warning',
+    'AI_ORGANIZED': 'info',
+    'TEMPLATE_CONFIRM': 'danger',
+    'LEARNING_IMPORT': 'success',
+    'QUESTION_BANK': 'primary'
+  }
+  return colorMap[type] || 'info'
+}
+
+export function getSourceTypeText(type: string): string {
+  const textMap: Record<string, string> = {
+    'SELF_CREATED': '手动创建',
+    'INTERNET': '网络获取',
+    'AI_GENERATED': 'AI生成',
+    'AI_ORGANIZED': 'AI整理',
+    'TEMPLATE_CONFIRM': '模板解析',
+    'LEARNING_IMPORT': '学习通导入',
+    'QUESTION_BANK': '题库导入'
+  }
+  return textMap[type] || type
+}

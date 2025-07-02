@@ -191,7 +191,9 @@
                 >
                   {{ getQuestionTypeText(question.questionType) }}
                 </el-tag>
-                <span class="question-title">题目 {{ index + 1 }}: {{ question.title }}</span>
+                <span class="question-title" :title="question.content">
+                  题目 {{ index + 1 }}: {{ truncateContent(question.content) }}
+                </span>
                 <div class="question-actions">
                   <el-button-group>
                     <el-button 
@@ -773,6 +775,10 @@ const navigateToAddQuestion = () => {
   router.push(`/exams/${examId.value}/questions/new`)
 }
 
+const navigateToEditExam = () => {
+  router.push(`/exams/${examId.value}/edit`)
+}
+
 const viewQuestion = (questionId: number) => {
   router.push(`/questions/${questionId}`)
 }
@@ -1146,6 +1152,13 @@ const getAnswerCount = (questionId: number) => {
 const getEvaluatedCount = (questionId: number) => {
   // 这里应该从统计数据中获取，暂时返回0
   return 0
+}
+
+// 截断题目内容显示
+const truncateContent = (content: string, maxLength: number = 100) => {
+  if (!content) return '无内容'
+  if (content.length <= maxLength) return content
+  return content.substring(0, maxLength) + '...'
 }
 </script>
 

@@ -269,8 +269,46 @@ public class QuestionService {
     // 新增方法：支持多条件搜索的题目查询
     @Transactional(readOnly = true)
     public Page<Question> searchQuestionsWithFilters(Pageable pageable, Map<String, Object> filters) {
-        // 使用简单查询，避免复杂的多条件查询
-        Page<Question> questionPage = questionRepository.findAll(pageable);
+        // 提取筛选参数
+        String keyword = (String) filters.get("keyword");
+        String questionType = (String) filters.get("questionType");
+        String sourceTypeStr = (String) filters.get("sourceType");
+        Long examId = (Long) filters.get("examId");
+        String startDateStr = (String) filters.get("startDate");
+        String endDateStr = (String) filters.get("endDate");
+        
+        // 转换来源类型字符串为枚举
+        com.teachhelper.entity.SourceType sourceType = null;
+        if (sourceTypeStr != null && !sourceTypeStr.trim().isEmpty()) {
+            sourceType = com.teachhelper.entity.SourceType.fromString(sourceTypeStr);
+        }
+        
+        // 转换日期字符串为LocalDate
+        java.time.LocalDate startDate = null;
+        java.time.LocalDate endDate = null;
+        
+        if (startDateStr != null && !startDateStr.trim().isEmpty()) {
+            try {
+                startDate = java.time.LocalDate.parse(startDateStr);
+            } catch (Exception e) {
+                // 如果日期解析失败，忽略该筛选条件
+                System.err.println("Failed to parse startDate: " + startDateStr);
+            }
+        }
+        
+        if (endDateStr != null && !endDateStr.trim().isEmpty()) {
+            try {
+                endDate = java.time.LocalDate.parse(endDateStr);
+            } catch (Exception e) {
+                // 如果日期解析失败，忽略该筛选条件
+                System.err.println("Failed to parse endDate: " + endDateStr);
+            }
+        }
+        
+        // 使用支持多条件筛选的查询方法
+        Page<Question> questionPage = questionRepository.searchQuestionsWithFilters(
+            keyword, questionType, sourceType, examId, startDate, endDate, pageable
+        );
         
         // 在事务内手动触发懒加载，确保所有数据都在事务内完成加载
         for (Question question : questionPage.getContent()) {

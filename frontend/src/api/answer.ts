@@ -5,7 +5,8 @@ import type {
   StudentAnswerSubmitRequest,
   StudentAnswerResponse,
   PageResponse,
-  StudentExamPaperResponse
+  StudentExamPaperResponse,
+  ImportResult
 } from '@/types/api'
 
 export const answerApi = {
@@ -284,8 +285,19 @@ export const answerApi = {
       fileName?: string;
     }
   }> {
-    const requestBody = { subject, classFolders, examId };
-    const response = await api.post('/student-answers/import/learning-async', requestBody);
+    // 使用 URLSearchParams 发送参数，与后端的 @RequestParam 匹配
+    const params = new URLSearchParams();
+    params.append('subject', subject);
+    params.append('classFolders', classFolders.join(','));
+    if (examId !== undefined) {
+      params.append('examId', String(examId));
+    }
+    
+    const response = await api.post('/student-answers/import/learning-async', params, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
+    });
     return response.data;
   },
 
@@ -296,16 +308,89 @@ export const answerApi = {
     templateId: number,
     examId?: number
   ): Promise<{ success: boolean; message: string; result: any; }> {
-    const params = new URLSearchParams({
+    const response = await longTimeoutApi.post('/student-answers/import-learning-answers-with-template', {
       subject,
-      templateId: String(templateId),
-    });
-    classFolders.forEach(cf => params.append('classFolders', cf));
-    if (examId) {
-      params.append('examId', String(examId));
-    }
-
-    const response = await longTimeoutApi.post(`/student-answers/import/learning-with-template?${params.toString()}`)
+      classFolders,
+      templateId,
+      examId
+    })
     return response.data
   },
+
+  // 嵌套压缩包答案导入
+  async importNestedZipAnswers(answerPath: string, questionId: number): Promise<ImportResult> {
+    const response = await longTimeoutApi.post<ImportResult>('/student-answers/import-nested-zip', null, {
+      params: {
+        answerPath,
+        questionId
+      }
+    })
+    return response.data
+  },
+
+  // 获取嵌套压缩包答案的科目列表
+  async getNestedZipSubjects(): Promise<string[]> {
+    const response = await api.get<string[]>('/student-answers/nested-zip-subjects')
+    return response.data
+  },
+
+  // 获取指定科目下的作业/实验列表
+  async getNestedZipAssignments(subject: string): Promise<string[]> {
+    const response = await api.get<string[]>('/student-answers/nested-zip-assignments', {
+      params: { subject }
+    })
+    return response.data
+  },
+
+  // 基于科目和作业的嵌套压缩包导入
+  async importNestedZipAnswersBySubject(subject: string, assignment: string, questionId: number): Promise<ImportResult> {
+    const response = await longTimeoutApi.post<ImportResult>('/student-answers/import-nested-zip-by-subject', null, {
+      params: {
+        subject,
+        assignment,
+        questionId
+      }
+    })
+    return response.data
+  },
+
+  // 大作业答案导入
+  async importMajorAssignmentAnswers(subject: string, assignment: string, questionId: number): Promise<ImportResult> {
+    const response = await longTimeoutApi.post<ImportResult>('/student-answers/import-major-assignment', null, {
+      params: { subject, assignment, questionId }
+    })
+    return response.data
+  },
+
+  // 获取大作业导入的作业列表
+  async getMajorAssignmentAssignments(subject: string): Promise<string[]> {
+    const response = await api.get<string[]>('/student-answers/major-assignment-assignments', {
+      params: { subject }
+    })
+    return response.data
+  },
+
+  // 文件夹批量上传答案
+  async uploadFolderAnswers(formData: FormData): Promise<ImportResult> {
+    const response = await api.post<ImportResult>('/student-answers/import-folder-upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+    return response.data
+  },
+
+  // 测试文件名解析
+  async testFileNameParse(fileName: string): Promise<{
+    success: boolean
+    fileName: string
+    studentName?: string
+    studentNumber?: string
+    parseMethod?: string
+    errorMessage?: string
+  }> {
+    const response = await api.post('/student-answers/test-filename-parse', { fileName })
+    return response.data
+  }
 }
+
+// 为兼容性导出别名
+export const studentAnswerApi = answerApi

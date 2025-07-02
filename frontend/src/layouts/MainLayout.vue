@@ -33,7 +33,7 @@
             </template>
             <el-menu-item index="/exams">考试管理中心</el-menu-item>
             <el-menu-item index="/exams/create">创建考试</el-menu-item>
-            <el-menu-item index="/exam-templates">试卷模板</el-menu-item>
+            <el-menu-item index="/templates">模板管理</el-menu-item>
             <el-menu-item index="/paper-generation">AI试卷生成</el-menu-item>
           </el-sub-menu>
           

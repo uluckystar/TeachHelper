@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>嵌套压缩包导入测试</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f7fa;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #409eff;
+            border-bottom: 2px solid #409eff;
+            padding-bottom: 10px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333;
+        }
+        input, textarea, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        textarea {
+            height: 80px;
+            resize: vertical;
+        }
+        button {
+            background-color: #409eff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #337ecc;
+        }
+        button:disabled {
+            background-color: #c0c4cc;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .success {
+            background-color: #f0f9ff;
+            border: 1px solid #67c23a;
+            color: #67c23a;
+        }
+        .error {
+            background-color: #fef0f0;
+            border: 1px solid #f56c6c;
+            color: #f56c6c;
+        }
+        .help-text {
+            font-size: 12px;
+            color: #909399;
+            margin-top: 5px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            background-color: #f4f4f5;
+            border-left: 4px solid #909399;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📦 嵌套压缩包答案导入测试</h1>
+        
+        <div class="status">
+            <strong>功能说明：</strong>导入嵌套压缩包中的学生答案到指定题目<br>
+            <strong>文件结构：</strong>答案路径 → 班级压缩包 → 学生压缩包 → 答案文档
+        </div>
+
+        <form id="importForm">
+            <div class="form-group">
+                <label for="answerPath">答案路径 *</label>
+                <textarea id="answerPath" placeholder="请输入答案文件夹的完整路径">
+/Users/jiangjiaxing/project/vvv/TeachHelper/uploads/answer/路由与交换技术平时作业与实验/实验1</textarea>
+                <div class="help-text">
+                    示例：/Users/jiangjiaxing/project/vvv/TeachHelper/uploads/answer/路由与交换技术平时作业与实验/实验1
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="questionId">目标题目ID *</label>
+                <input type="number" id="questionId" placeholder="请输入题目ID" value="1">
+                <div class="help-text">
+                    所有学生答案将导入到此题目下
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="baseUrl">API基础URL</label>
+                <input type="text" id="baseUrl" value="http://localhost:8080/api" placeholder="API基础URL">
+                <div class="help-text">
+                    默认为本地开发环境，如需修改请更新此URL
+                </div>
+            </div>
+
+            <button type="submit" id="submitBtn">开始导入</button>
+            <button type="button" onclick="clearResult()">清空结果</button>
+        </form>
+
+        <div id="result" class="result" style="display: none;"></div>
+    </div>
+
+    <script>
+        let isLoading = false;
+
+        document.getElementById('importForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            if (isLoading) return;
+            
+            const answerPath = document.getElementById('answerPath').value.trim();
+            const questionId = document.getElementById('questionId').value.trim();
+            const baseUrl = document.getElementById('baseUrl').value.trim();
+            
+            if (!answerPath || !questionId) {
+                showResult('请填写所有必填字段', 'error');
+                return;
+            }
+            
+            const submitBtn = document.getElementById('submitBtn');
+            const originalText = submitBtn.textContent;
+            
+            try {
+                isLoading = true;
+                submitBtn.textContent = '导入中...';
+                submitBtn.disabled = true;
+                
+                showResult('正在调用API...', 'status');
+                
+                const response = await fetch(`${baseUrl}/student-answers/import-nested-zip`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    params: new URLSearchParams({
+                        answerPath: answerPath,
+                        questionId: questionId
+                    })
+                });
+                
+                const contentType = response.headers.get('content-type');
+                let result;
+                
+                if (contentType && contentType.includes('application/json')) {
+                    result = await response.json();
+                } else {
+                    result = { message: await response.text() };
+                }
+                
+                if (response.ok) {
+                    const successMsg = `✅ 导入成功！
+                    
+成功数量: ${result.successCount || 0}
+失败数量: ${result.failureCount || 0}
+                    
+详细信息:
+${result.details ? result.details.join('\n') : '无详细信息'}
+                    
+错误信息:
+${result.errors ? result.errors.join('\n') : '无错误'}
+                    
+完整响应:
+${JSON.stringify(result, null, 2)}`;
+                    
+                    showResult(successMsg, 'success');
+                } else {
+                    const errorMsg = `❌ 导入失败
+                    
+状态码: ${response.status}
+状态文本: ${response.statusText}
+                    
+错误详情:
+${JSON.stringify(result, null, 2)}`;
+                    
+                    showResult(errorMsg, 'error');
+                }
+                
+            } catch (error) {
+                const errorMsg = `❌ 请求失败
+                
+错误类型: ${error.name}
+错误信息: ${error.message}
+                
+可能的原因:
+1. 后端服务未启动 (请确保 Spring Boot 应用正在运行)
+2. URL 配置错误 (请检查 API 基础URL)
+3. 网络连接问题
+4. CORS 策略限制
+                
+请检查浏览器控制台获取更多详细信息。`;
+                
+                showResult(errorMsg, 'error');
+                console.error('详细错误信息:', error);
+            } finally {
+                isLoading = false;
+                submitBtn.textContent = originalText;
+                submitBtn.disabled = false;
+            }
+        });
+        
+        function showResult(message, type) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = message;
+            resultDiv.className = `result ${type}`;
+            resultDiv.style.display = 'block';
+        }
+        
+        function clearResult() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'none';
+            resultDiv.textContent = '';
+        }
+        
+        // 页面加载时显示欢迎信息
+        window.addEventListener('load', function() {
+            showResult(`📋 测试页面已加载
+
+使用说明:
+1. 填写答案文件夹的完整路径
+2. 指定目标题目ID
+3. 点击"开始导入"按钮
+4. 查看导入结果
+
+注意事项:
+- 确保后端服务已启动 (http://localhost:8080)
+- 确保答案路径存在且包含正确的文件结构
+- 确保目标题目ID存在于数据库中`, 'status');
+        });
+    </script>
+</body>
+</html> 

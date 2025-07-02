@@ -1,17 +1,20 @@
 package com.teachhelper.controller.debug;
 
 import com.teachhelper.config.DocumentParsingConfig;
+import com.teachhelper.service.answer.OCRService;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import javax.sql.DataSource;
 import java.io.IOException;
 import java.sql.Connection;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -39,6 +42,9 @@ public class SystemStatusController {
 
     @Autowired
     private DocumentParsingConfig documentParsingConfig;
+
+    @Autowired
+    private OCRService ocrService;
 
     /**
      * 检查系统整体状态
@@ -162,6 +168,29 @@ public class SystemStatusController {
     @GetMapping("/document-parsing")
     public ResponseEntity<Map<String, Object>> checkDocumentParsing() {
         return ResponseEntity.ok(checkDocumentParsingCapabilities());
+    }
+    
+    /**
+     * 获取OCR服务状态
+     */
+    @GetMapping("/ocr-status")
+    public ResponseEntity<Map<String, Object>> getOCRStatus() {
+        Map<String, Object> status = new HashMap<>();
+        
+        try {
+            String ocrStatus = ocrService.getOCRStatus();
+            status.put("status", "success");
+            status.put("ocr_info", ocrStatus);
+            status.put("timestamp", LocalDateTime.now());
+            
+            return ResponseEntity.ok(status);
+        } catch (Exception e) {
+            status.put("status", "error");
+            status.put("error", e.getMessage());
+            status.put("timestamp", LocalDateTime.now());
+            
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(status);
+        }
     }
     
     // 私有辅助方法

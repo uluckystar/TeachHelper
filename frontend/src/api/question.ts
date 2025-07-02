@@ -106,8 +106,11 @@ export const questionApi = {
     gradeLevel?: string
     examId?: number
     source?: 'SELF_CREATED' | 'INTERNET' | 'AI_GENERATED' | 'AI_ORGANIZED'
+    sourceType?: 'SELF_CREATED' | 'INTERNET' | 'AI_GENERATED' | 'AI_ORGANIZED'
     questionBankId?: number
     sourceKnowledgeBaseId?: number
+    startDate?: string
+    endDate?: string
   }): Promise<{ 
     content: QuestionResponse[]
     totalElements: number

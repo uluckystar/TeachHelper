@@ -42,6 +42,9 @@ public class DevDataService {
     private DevPaperDataService devPaperDataService;
     
     @Autowired
+    private DevExamPaperTemplateDataService devExamPaperTemplateDataService;
+    
+    @Autowired
     private DevKnowledgeDataService devKnowledgeDataService;
     
     @Autowired
@@ -147,6 +150,15 @@ public class DevDataService {
             log.info("⚙️ Step 9/9: 任务管理数据已禁用");
             // taskDataInitializer 已禁用，不再生成示例任务数据
             
+            log.info("📝 创建试卷生成数据...");
+            devPaperDataService.createPaperTemplates();
+            
+            log.info("📋 创建试卷模板数据...");
+            devExamPaperTemplateDataService.createExamPaperTemplates();
+            
+            log.info("📚 创建知识库数据...");
+            devKnowledgeDataService.createKnowledgeBases();
+            
             log.info("🎉 示例数据生成完成！");
             printDataSummary();
             
@@ -238,6 +250,13 @@ public class DevDataService {
                 paperTemplateRepository.flush();
             } catch (Exception e) {
                 log.warn("清理试卷模板失败: {}", e.getMessage());
+            }
+            
+            log.info("清理试卷模板题目...");
+            try {
+                devExamPaperTemplateDataService.clearExamPaperTemplateData();
+            } catch (Exception e) {
+                log.warn("清理试卷模板题目失败: {}", e.getMessage());
             }
             
             log.info("清理知识库数据（含向量存储）...");

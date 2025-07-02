@@ -304,6 +304,55 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 批量重新评阅评分模式选择对话框 -->
+    <el-dialog
+      v-model="batchReevaluateDialogVisible"
+      title="选择重新评阅模式"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <div class="evaluation-style-selection">
+        <div class="selection-info">
+          <p>将对该题目的 <strong>{{ statistics?.evaluatedAnswers || 0 }}</strong> 个已批阅答案进行重新评阅</p>
+          <p class="style-description">请选择评分模式：</p>
+        </div>
+        
+        <el-radio-group v-model="batchReevaluateStyle" class="style-options">
+          <el-radio value="NORMAL" class="style-option">
+            <div class="option-content">
+              <div class="option-title">普通模式</div>
+              <div class="option-desc">平衡的评分标准，综合考虑准确性和完整性</div>
+            </div>
+          </el-radio>
+          
+          <el-radio value="LENIENT" class="style-option">
+            <div class="option-content">
+              <div class="option-title">宽松模式</div>
+              <div class="option-desc">更加宽容的评分，鼓励学生的积极思考，对部分正确答案酌情给分</div>
+            </div>
+          </el-radio>
+          
+          <el-radio value="STRICT" class="style-option">
+            <div class="option-content">
+              <div class="option-title">严格模式</div>
+              <div class="option-desc">更高的评分要求，对细节和准确性要求更严格</div>
+            </div>
+          </el-radio>
+        </el-radio-group>
+      </div>
+      
+      <template #footer>
+        <el-button @click="batchReevaluateDialogVisible = false">取消</el-button>
+        <el-button 
+          type="primary" 
+          @click="confirmBatchReevaluate"
+          :loading="batchReevaluateLoading"
+        >
+          开始重新评阅
+        </el-button>
+      </template>
+    </el-dialog>
   </el-dialog>
 </template>
 
@@ -360,6 +409,10 @@ const manualEvaluationForm = reactive({
   score: 0,
   feedback: ''
 })
+
+// 批量重新评阅
+const batchReevaluateDialogVisible = ref(false)
+const batchReevaluateStyle = ref('NORMAL')
 
 // 计算属性
 const visible = computed({
@@ -480,39 +533,44 @@ const handleBatchEvaluate = async () => {
 const handleBatchReevaluate = async () => {
   if (!props.questionId) return
   
-  try {
-    const result = await ElMessageBox.confirm(
-      `确定要对该题目的 ${statistics.value?.evaluatedAnswers} 个已批阅答案进行重新批阅吗？`,
-      '确认批量重新批阅',
-      {
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
-        type: 'warning'
-      }
-    )
+  // 显示评分模式选择对话框
+  batchReevaluateDialogVisible.value = true
+}
 
-    if (result === 'confirm') {
-      batchReevaluateLoading.value = true
-      const taskResponse = await evaluationApi.batchRevaluateAnswersByQuestion(props.questionId)
-      
-      ElNotification.success({
-        title: '批量重新批阅已启动',
-        message: '正在后台处理，请稍后刷新查看结果'
-      })
-      
-      // 等待几秒后自动刷新
-      setTimeout(() => {
-        loadData()
-        emit('refresh')
-      }, 3000)
-    }
+const confirmBatchReevaluate = async () => {
+  if (!props.questionId) return
+  
+  try {
+    batchReevaluateLoading.value = true
+    // 使用现有的API，传递评分模式参数
+    const taskResponse = await evaluationApi.batchRevaluateAnswersByQuestion(props.questionId, batchReevaluateStyle.value)
+    
+    ElNotification.success({
+      title: '批量重新批阅已启动',
+      message: `正在使用${getEvaluationStyleText(batchReevaluateStyle.value)}模式进行重新批阅`
+    })
+    
+    batchReevaluateDialogVisible.value = false
+    
+    // 等待几秒后自动刷新
+    setTimeout(() => {
+      loadData()
+      emit('refresh')
+    }, 3000)
   } catch (error) {
-    if (error !== 'cancel') {
-      console.error('批量重新批阅失败:', error)
-      ElMessage.error('批量重新批阅启动失败')
-    }
+    console.error('批量重新批阅失败:', error)
+    ElMessage.error('批量重新批阅启动失败')
   } finally {
     batchReevaluateLoading.value = false
+  }
+}
+
+const getEvaluationStyleText = (style: string) => {
+  switch (style) {
+    case 'STRICT': return '严格'
+    case 'LENIENT': return '宽松'
+    case 'NORMAL': 
+    default: return '普通'
   }
 }
 
@@ -777,5 +835,65 @@ const getRowClassName = ({ row }: { row: StudentAnswerResponse }) => {
 
 :deep(.unevaluated-row:hover) {
   background-color: #fff7e6 !important;
+}
+
+/* 评分模式选择样式 */
+.evaluation-style-selection {
+  padding: 10px 0;
+}
+
+.selection-info {
+  margin-bottom: 20px;
+}
+
+.selection-info p {
+  margin: 8px 0;
+  color: #606266;
+}
+
+.style-description {
+  font-weight: 600;
+  color: #303133;
+}
+
+.style-options {
+  width: 100%;
+}
+
+.style-option {
+  display: block;
+  width: 100%;
+  margin-bottom: 16px;
+  margin-right: 0;
+  padding: 16px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.style-option:hover {
+  border-color: #409eff;
+  background-color: #f5f9ff;
+}
+
+:deep(.style-option.is-checked) {
+  border-color: #409eff;
+  background-color: #f0f8ff;
+}
+
+.option-content {
+  margin-left: 8px;
+}
+
+.option-title {
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 4px;
+}
+
+.option-desc {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
 }
 </style>

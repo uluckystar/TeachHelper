@@ -136,6 +136,20 @@
             </div>
           </el-form-item>
 
+          <el-form-item label="评分模式">
+            <el-radio-group v-model="evaluationConfig.evaluationStyle">
+              <el-radio value="NORMAL">普通</el-radio>
+              <el-radio value="LENIENT">宽松</el-radio>
+              <el-radio value="STRICT">严格</el-radio>
+            </el-radio-group>
+            <div class="form-tip">
+              <strong>评分模式说明：</strong><br>
+              • <strong>普通</strong>：平衡的评分标准，综合考虑准确性和完整性<br>
+              • <strong>宽松</strong>：更加宽容的评分，鼓励学生的积极思考，对部分正确答案酌情给分<br>
+              • <strong>严格</strong>：更高的评分要求，对细节和准确性要求更严格
+            </div>
+          </el-form-item>
+
           <el-form-item label="批阅类型">
             <el-radio-group v-model="evaluationConfig.evaluationType">
               <el-radio value="FULL_EVALUATION">完整批阅（包含分数和详细反馈）</el-radio>
@@ -300,7 +314,8 @@ const evaluationConfig = ref({
   evaluationType: 'FULL_EVALUATION',
   batchSize: 10,
   concurrency: 2,
-  description: ''
+  description: '',
+  evaluationStyle: 'NORMAL'
 })
 
 // 计算属性
@@ -535,6 +550,7 @@ const startEvaluation = async () => {
       aiConfigId: evaluationConfig.value.aiConfigId,
       rubricId: evaluationConfig.value.rubricId || undefined,
       evaluationType: evaluationConfig.value.evaluationType,
+      evaluationStyle: evaluationConfig.value.evaluationStyle,
       batchSize: evaluationConfig.value.batchSize,
       concurrency: evaluationConfig.value.concurrency,
       description: evaluationConfig.value.description,
@@ -783,7 +799,8 @@ const resetWizard = () => {
     evaluationType: 'FULL_EVALUATION',
     batchSize: 10,
     concurrency: 2,
-    description: ''
+    description: '',
+    evaluationStyle: 'NORMAL'
   }
   createdTask.value = null
 }

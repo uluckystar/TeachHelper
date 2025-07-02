@@ -468,8 +468,9 @@ public class ExamService {
         Exam exam = examRepository.findById(examId).orElseThrow(() -> new ResourceNotFoundException("Exam not found"));
 
         try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            // 创建成绩详情页
-            Sheet detailSheet = workbook.createSheet(exam.getTitle() + " - 成绩单");
+            // 创建成绩详情页 - 使用清理后的工作表名称
+            String sanitizedSheetName = sanitizeSheetName(exam.getTitle() + " - 成绩单");
+            Sheet detailSheet = workbook.createSheet(sanitizedSheetName);
             CellStyle headerStyle = createHeaderStyle(workbook);
             CellStyle centeredStyle = createCenteredStyle(workbook);
             createHeaderRow(detailSheet, exam.getQuestions(), headerStyle);
@@ -500,6 +501,34 @@ public class ExamService {
             workbook.write(out);
             return new ExamExportData(new ByteArrayInputStream(out.toByteArray()), exam.getTitle());
         }
+    }
+
+    /**
+     * 清理Excel工作表名称中的非法字符
+     * Excel工作表名称不能包含: / \ ? * [ ] :
+     * 最大长度为31个字符
+     */
+    private String sanitizeSheetName(String sheetName) {
+        if (sheetName == null || sheetName.trim().isEmpty()) {
+            return "Sheet";
+        }
+        
+        // 替换非法字符为下划线
+        String sanitized = sheetName
+                .replaceAll("[/\\\\?*\\[\\]:]", "_")  // 替换Excel非法字符
+                .trim();
+        
+        // 确保不为空
+        if (sanitized.isEmpty()) {
+            sanitized = "Sheet";
+        }
+        
+        // 限制长度为31个字符（Excel限制）
+        if (sanitized.length() > 31) {
+            sanitized = sanitized.substring(0, 31);
+        }
+        
+        return sanitized;
     }
 
     private void createSummarySheet(Sheet sheet, Exam exam, List<ExamResultResponse> results, Workbook workbook) {
@@ -1012,5 +1041,9 @@ public class ExamService {
                 System.err.println("❌ 检查考试 " + examId + " 状态失败: " + e.getMessage());
             }
         }
+    }
+
+    public QuestionService getQuestionService() {
+        return this.questionService;
     }
 }

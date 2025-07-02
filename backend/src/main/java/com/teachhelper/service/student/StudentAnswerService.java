@@ -19,6 +19,11 @@ import com.teachhelper.exception.ResourceNotFoundException;
 import com.teachhelper.repository.*;
 import com.teachhelper.service.answer.LearningAnswerParserService;
 import com.teachhelper.service.answer.SmartQuestionMatchingService;
+import com.teachhelper.util.SecurityUtils;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.teachhelper.repository.QuestionOptionRepository;
+import com.teachhelper.entity.QuestionOption;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -80,6 +85,12 @@ public class StudentAnswerService {
     
     @Autowired
     private SmartQuestionMatchingService smartQuestionMatchingService;
+    
+    @Autowired
+    private com.teachhelper.service.template.ExamPaperTemplateService examPaperTemplateService;
+    
+    @Autowired
+    private QuestionOptionRepository questionOptionRepository;
 
     @Transactional
     public StudentAnswer submitAnswer(StudentAnswer studentAnswer) {
@@ -198,12 +209,23 @@ public class StudentAnswerService {
     
     @Transactional(readOnly = true)
     public List<StudentAnswer> getAnswersByQuestionId(Long questionId) {
-        return studentAnswerRepository.findByQuestionId(questionId);
+        List<StudentAnswer> answers = studentAnswerRepository.findByQuestionId(questionId);
+        // 获取答案ID列表并使用FETCH JOIN查询来加载关联数据
+        if (!answers.isEmpty()) {
+            List<Long> answerIds = answers.stream().map(StudentAnswer::getId).toList();
+            return studentAnswerRepository.findByIdInWithFetch(answerIds);
+        }
+        return answers;
     }
     
     @Transactional(readOnly = true)
     public List<StudentAnswer> getAnswersByStudentId(Long studentId) {
         return studentAnswerRepository.findByStudentId(studentId);
+    }
+    
+    @Transactional(readOnly = true)
+    public StudentAnswer findByStudentIdAndQuestionId(Long studentId, Long questionId) {
+        return studentAnswerRepository.findByStudentIdAndQuestionId(studentId, questionId);
     }
     
     @Transactional(readOnly = true)
@@ -419,12 +441,21 @@ public class StudentAnswerService {
             headerRow.createCell(2).setCellValue("学生姓名");
             headerRow.createCell(3).setCellValue("学生邮箱");
             headerRow.createCell(4).setCellValue("题目标题");
-            headerRow.createCell(5).setCellValue("答案内容");
-            headerRow.createCell(6).setCellValue("分数");
-            headerRow.createCell(7).setCellValue("反馈");
-            headerRow.createCell(8).setCellValue("是否已评估");
-            headerRow.createCell(9).setCellValue("提交时间");
-            headerRow.createCell(10).setCellValue("评估时间");
+            headerRow.createCell(5).setCellValue("题目类型");
+            headerRow.createCell(6).setCellValue("题目内容");
+            headerRow.createCell(7).setCellValue("选项A");
+            headerRow.createCell(8).setCellValue("选项B");
+            headerRow.createCell(9).setCellValue("选项C");
+            headerRow.createCell(10).setCellValue("选项D");
+            headerRow.createCell(11).setCellValue("选项E");
+            headerRow.createCell(12).setCellValue("选项F");
+            headerRow.createCell(13).setCellValue("正确答案");
+            headerRow.createCell(14).setCellValue("学生答案");
+            headerRow.createCell(15).setCellValue("分数");
+            headerRow.createCell(16).setCellValue("反馈");
+            headerRow.createCell(17).setCellValue("是否已评估");
+            headerRow.createCell(18).setCellValue("提交时间");
+            headerRow.createCell(19).setCellValue("评估时间");
             
             // 填充数据
             for (int i = 0; i < answers.size(); i++) {
@@ -432,18 +463,49 @@ public class StudentAnswerService {
                 Row dataRow = sheet.createRow(i + 1);
                 
                 User student = answer.getStudent();
+                Question question = answer.getQuestion();
                 
                 dataRow.createCell(0).setCellValue(answer.getId());
                 dataRow.createCell(1).setCellValue(student.getStudentNumber() != null ? student.getStudentNumber() : String.valueOf(student.getId()));
                 dataRow.createCell(2).setCellValue(student.getRealName() != null ? student.getRealName() : student.getUsername());
                 dataRow.createCell(3).setCellValue(student.getEmail());
-                dataRow.createCell(4).setCellValue(answer.getQuestion().getTitle());
-                dataRow.createCell(5).setCellValue(answer.getAnswerText());
-                dataRow.createCell(6).setCellValue(answer.getScore() != null ? answer.getScore().doubleValue() : 0.0);
-                dataRow.createCell(7).setCellValue(answer.getFeedback() != null ? answer.getFeedback() : "");
-                dataRow.createCell(8).setCellValue(answer.isEvaluated() ? "是" : "否");
-                dataRow.createCell(9).setCellValue(answer.getCreatedAt() != null ? answer.getCreatedAt().toString() : "");
-                dataRow.createCell(10).setCellValue(answer.getEvaluatedAt() != null ? answer.getEvaluatedAt().toString() : "");
+                dataRow.createCell(4).setCellValue(question.getTitle());
+                dataRow.createCell(5).setCellValue(getQuestionTypeDisplayName(question.getQuestionType()));
+                dataRow.createCell(6).setCellValue(question.getContent());
+                
+                // 获取题目的选项（如果是客观题）
+                List<QuestionOption> options = questionOptionRepository.findByQuestionIdOrderByOptionOrder(question.getId());
+                
+                // 填充选项内容（最多6个选项A-F）
+                for (int j = 0; j < 6; j++) {
+                    if (j < options.size()) {
+                        dataRow.createCell(7 + j).setCellValue(options.get(j).getContent());
+                    } else {
+                        dataRow.createCell(7 + j).setCellValue("");
+                    }
+                }
+                
+                // 获取正确答案
+                String correctAnswer = "";
+                if (isObjectiveQuestion(question.getQuestionType()) && !options.isEmpty()) {
+                    List<String> correctOptions = new ArrayList<>();
+                    for (int j = 0; j < options.size(); j++) {
+                        if (options.get(j).getIsCorrect()) {
+                            correctOptions.add(String.valueOf((char)('A' + j)));
+                        }
+                    }
+                    correctAnswer = String.join(",", correctOptions);
+                } else if (question.getReferenceAnswer() != null) {
+                    correctAnswer = question.getReferenceAnswer();
+                }
+                
+                dataRow.createCell(13).setCellValue(correctAnswer);
+                dataRow.createCell(14).setCellValue(answer.getAnswerText());
+                dataRow.createCell(15).setCellValue(answer.getScore() != null ? answer.getScore().doubleValue() : 0.0);
+                dataRow.createCell(16).setCellValue(answer.getFeedback() != null ? answer.getFeedback() : "");
+                dataRow.createCell(17).setCellValue(answer.isEvaluated() ? "是" : "否");
+                dataRow.createCell(18).setCellValue(answer.getCreatedAt() != null ? answer.getCreatedAt().toString() : "");
+                dataRow.createCell(19).setCellValue(answer.getEvaluatedAt() != null ? answer.getEvaluatedAt().toString() : "");
             }
             
             // 写入字节数组
@@ -451,6 +513,84 @@ public class StudentAnswerService {
         }
         
         return new ByteArrayResource(outputStream.toByteArray());
+    }
+    
+    /**
+     * 判断是否为客观题
+     */
+    private boolean isObjectiveQuestion(QuestionType questionType) {
+        return questionType == QuestionType.SINGLE_CHOICE || 
+               questionType == QuestionType.MULTIPLE_CHOICE || 
+               questionType == QuestionType.TRUE_FALSE;
+    }
+    
+    /**
+     * 获取题目类型的显示名称
+     */
+    private String getQuestionTypeDisplayName(QuestionType questionType) {
+        switch (questionType) {
+            case SINGLE_CHOICE:
+                return "单选题";
+            case MULTIPLE_CHOICE:
+                return "多选题";
+            case TRUE_FALSE:
+                return "判断题";
+            case SHORT_ANSWER:
+                return "简答题";
+            case ESSAY:
+                return "论述题";
+            case CODING:
+                return "编程题";
+            case CASE_ANALYSIS:
+                return "案例分析题";
+            case CALCULATION:
+                return "计算题";
+            default:
+                return "其他";
+        }
+    }
+    
+    /**
+     * 获取题目的选项信息和正确答案（格式化后的字符串）
+     */
+    private String getFormattedQuestionOptionsAndAnswer(Long questionId) {
+        try {
+            // 获取题目信息
+            Question question = questionRepository.findById(questionId).orElse(null);
+            if (question == null || !isObjectiveQuestion(question.getQuestionType())) {
+                return null;
+            }
+            
+            // 获取选项列表
+            List<QuestionOption> options = questionOptionRepository.findByQuestionIdOrderByOptionOrder(questionId);
+            if (options.isEmpty()) {
+                return null;
+            }
+            
+            StringBuilder result = new StringBuilder();
+            List<String> correctOptions = new ArrayList<>();
+            
+            // 格式化选项
+            for (int i = 0; i < options.size(); i++) {
+                QuestionOption option = options.get(i);
+                char optionLetter = (char) ('A' + i);
+                result.append(optionLetter).append(". ").append(option.getContent()).append("\n");
+                
+                if (option.getIsCorrect()) {
+                    correctOptions.add(String.valueOf(optionLetter));
+                }
+            }
+            
+            // 添加正确答案
+            if (!correctOptions.isEmpty()) {
+                result.append("正确答案: ").append(String.join(",", correctOptions));
+            }
+            
+            return result.toString().trim();
+        } catch (Exception e) {
+            log.debug("获取题目选项信息失败: {}", e.getMessage());
+            return null;
+        }
     }
 
     @Transactional(readOnly = true)
@@ -925,7 +1065,7 @@ public class StudentAnswerService {
             placeholderQuestion.setCreatedBy(1L);
             
             // 设置题目来源，标明是占位符
-            placeholderQuestion.setSourceType("学习通导入-占位符");
+            placeholderQuestion.setSourceType(SourceType.LEARNING_IMPORT);
             
             // 设置为未确认状态，需要教师确认
             placeholderQuestion.setIsConfirmed(false);
@@ -974,7 +1114,7 @@ public class StudentAnswerService {
         try {
             // 使用现有的搜索方法
             Page<Question> existingQuestions = questionRepository.searchQuestionsWithFilters(
-                searchKeyword, null, null, null, 
+                searchKeyword, null, null, null, null, null, 
                 PageRequest.of(0, 10));
             
             for (Question existingQuestion : existingQuestions.getContent()) {
@@ -1018,7 +1158,7 @@ public class StudentAnswerService {
             newQuestion.setCreatedBy(1L);
             
             // 设置题目来源
-            newQuestion.setSourceType("学习通导入");
+            newQuestion.setSourceType(SourceType.LEARNING_IMPORT);
             
             // 设置为未确认状态，需要教师确认
             newQuestion.setIsConfirmed(false);
@@ -1485,25 +1625,33 @@ public class StudentAnswerService {
         // 表头
         Row headerRow = sheet.createRow(rowIndex++);
         headerRow.createCell(0).setCellValue("题目序号");
-        headerRow.createCell(1).setCellValue("题目内容");
-        headerRow.createCell(2).setCellValue("学生答案");
-        headerRow.createCell(3).setCellValue("得分");
-        headerRow.createCell(4).setCellValue("满分");
-        headerRow.createCell(5).setCellValue("评估反馈");
+        headerRow.createCell(1).setCellValue("题目标题");
+        headerRow.createCell(2).setCellValue("题目内容");
+        headerRow.createCell(3).setCellValue("选项和答案");
+        headerRow.createCell(4).setCellValue("学生答案");
+        headerRow.createCell(5).setCellValue("得分");
+        headerRow.createCell(6).setCellValue("满分");
+        headerRow.createCell(7).setCellValue("评估反馈");
         
         // 答案数据
         for (StudentAnswerResponse answer : paper.getAnswers()) {
             Row dataRow = sheet.createRow(rowIndex++);
             dataRow.createCell(0).setCellValue(answer.getQuestionId());
             dataRow.createCell(1).setCellValue(answer.getQuestionTitle());
-            dataRow.createCell(2).setCellValue(answer.getAnswerText() != null ? answer.getAnswerText() : "");
-            dataRow.createCell(3).setCellValue(answer.getScore() != null ? answer.getScore().toString() : "未评估");
-            dataRow.createCell(4).setCellValue(answer.getMaxScore() != null ? answer.getMaxScore().toString() : "");
-            dataRow.createCell(5).setCellValue(answer.getFeedback() != null ? answer.getFeedback() : "");
+            dataRow.createCell(2).setCellValue(answer.getQuestionContent() != null ? answer.getQuestionContent() : "");
+            
+            // 获取选项信息（仅客观题）
+            String optionsInfo = getFormattedQuestionOptionsAndAnswer(answer.getQuestionId());
+            dataRow.createCell(3).setCellValue(optionsInfo != null ? optionsInfo : "");
+            
+            dataRow.createCell(4).setCellValue(answer.getAnswerText() != null ? answer.getAnswerText() : "");
+            dataRow.createCell(5).setCellValue(answer.getScore() != null ? answer.getScore().toString() : "未评估");
+            dataRow.createCell(6).setCellValue(answer.getMaxScore() != null ? answer.getMaxScore().toString() : "");
+            dataRow.createCell(7).setCellValue(answer.getFeedback() != null ? answer.getFeedback() : "");
         }
         
         // 自动调整列宽
-        for (int i = 0; i <= 5; i++) {
+        for (int i = 0; i <= 7; i++) {
             sheet.autoSizeColumn(i);
         }
         
@@ -1559,6 +1707,21 @@ public class StudentAnswerService {
                 XWPFRun qContentRun = qContent.createRun();
                 qContentRun.setText(answer.getQuestionContent());
                 qContentRun.addBreak();
+                
+                // 选项信息（仅客观题）
+                String optionsInfo = getFormattedQuestionOptionsAndAnswer(answer.getQuestionId());
+                if (optionsInfo != null && !optionsInfo.isEmpty()) {
+                    XWPFParagraph optionsHeader = document.createParagraph();
+                    XWPFRun optionsHeaderRun = optionsHeader.createRun();
+                    optionsHeaderRun.setBold(true);
+                    optionsHeaderRun.setText("选项:");
+                    
+                    XWPFParagraph optionsParagraph = document.createParagraph();
+                    XWPFRun optionsRun = optionsParagraph.createRun();
+                    optionsRun.setText(optionsInfo);
+                    optionsRun.setColor("666666"); // 灰色字体
+                    optionsRun.addBreak();
+                }
                 
                 // 学生答案
                 XWPFParagraph userAnswerH = document.createParagraph();
@@ -1624,10 +1787,10 @@ public class StudentAnswerService {
         document.setMargins(50, 50, 50, 50);
 
         // 设置中文字体
-        // 注意: iText默认不支持中文，需要提供中文字体文件或使用iText的亚洲字体支持库
-        // 这里使用一个常见的iText中文解决方案
         PdfFont font = PdfFontFactory.createFont("STSong-Light", "UniGB-UCS2-H", PdfFontFactory.EmbeddingStrategy.PREFER_EMBEDDED);
         document.setFont(font).setFontSize(11);
+        // 加载Noto字体（仅用于特殊字符）
+        PdfFont notoFont = PdfFontFactory.createFont("src/main/resources/fonts/NotoSansCJKsc-Regular.otf", PdfFontFactory.EmbeddingStrategy.PREFER_EMBEDDED);
 
         // 1. 设置主标题
         Paragraph title = new Paragraph(paper.getExamTitle() + " - 学生试卷")
@@ -1668,12 +1831,38 @@ public class StudentAnswerService {
                         .setFontSize(11);
                 document.add(questionContent);
             }
+            
+            // 选项信息（仅客观题）
+            String optionsInfo = getFormattedQuestionOptionsAndAnswer(answer.getQuestionId());
+            if (optionsInfo != null && !optionsInfo.isEmpty()) {
+                Paragraph optionsTitle = new Paragraph("选项:")
+                        .setFontSize(11)
+                        .setBold()
+                        .setFontColor(new DeviceRgb(80, 80, 80)); // 深灰色
+                document.add(optionsTitle);
+                
+                Paragraph options = new Paragraph(optionsInfo)
+                        .setFontSize(10)
+                        .setFontColor(new DeviceRgb(100, 100, 100)); // 灰色
+                document.add(options);
+            }
 
-            // 学生答案
+            // 学生答案（智能字体切换）
             String answerText = answer.getAnswerText() != null ? answer.getAnswerText() : "未回答";
-            Paragraph studentAnswer = new Paragraph("学生答案: " + answerText)
-                    .setFontSize(11)
-                    .setFontColor(new DeviceRgb(0, 100, 0)); // 深绿色
+            Paragraph studentAnswer = new Paragraph();
+            studentAnswer.add(new Text("学生答案: ").setFont(font).setFontColor(new DeviceRgb(0, 100, 0)));
+            for (int i = 0; i < answerText.length(); i++) {
+                char c = answerText.charAt(i);
+                String s = String.valueOf(c);
+                if (font.containsGlyph(c)) {
+                    studentAnswer.add(new Text(s).setFont(font).setFontColor(new DeviceRgb(0, 100, 0)));
+                } else if (notoFont.containsGlyph(c)) {
+                    studentAnswer.add(new Text(s).setFont(notoFont).setFontColor(new DeviceRgb(0, 100, 0)));
+                } else {
+                    studentAnswer.add(new Text("□").setFont(notoFont).setFontColor(new DeviceRgb(255, 0, 0)));
+                }
+            }
+            studentAnswer.setFontSize(11);
             document.add(studentAnswer);
 
             // 分数和反馈
@@ -1824,15 +2013,15 @@ public class StudentAnswerService {
                     // 获取考试信息用于构建试卷响应
                     Exam exam = examRepository.findById(examId).orElse(null);
                     String examTitle = exam != null ? exam.getTitle() : "未知考试";
-                    
+                    // 获取所有题目
+                    List<com.teachhelper.entity.Question> allQuestions = exam != null ? exam.getQuestions() : new java.util.ArrayList<>();
                     // 构建学生用户对象
                     User student = new User();
                     student.setId(studentId);
                     student.setRealName(studentName);
                     student.setStudentNumber(studentNumber);
                     student.setEmail(studentEmail);
-                    
-                    StudentExamPaperResponse paper = new StudentExamPaperResponse(student, examId, examTitle, answers);
+                    StudentExamPaperResponse paper = new StudentExamPaperResponse(student, examId, examTitle, allQuestions, answers);
                     papers.add(paper);
                     
                     log.debug("添加学生 {} 的试卷，包含 {} 个答案", studentName, answers.size());
@@ -2077,5 +2266,541 @@ public class StudentAnswerService {
                  result.getSuccessCount(), result.getFailedCount());
         
         return result;
+    }
+    
+    /**
+     * 基于模板导入学习通答案
+     * @param subject 科目
+     * @param classFolder 班级文件夹
+     * @param templateId 模板ID
+     * @param examId 考试ID
+     * @return 导入结果
+     */
+    public ImportResult importLearningAnswersWithTemplate(String subject, String classFolder, Long templateId, Long examId) throws IOException {
+        log.info("🚀 开始基于模板导入学习通答案 - 科目: {}, 班级: {}, 模板ID: {}, 考试ID: {}", 
+                 subject, classFolder, templateId, examId);
+        
+        ImportResult result = new ImportResult();
+        result.setSuccessfulStudents(new ArrayList<>());
+        result.setFailedStudents(new ArrayList<>());
+        result.setErrorMessages(new ArrayList<>());
+        
+        try {
+            // 1. 获取模板信息
+            com.teachhelper.dto.response.ExamPaperTemplateResponse template = examPaperTemplateService.getTemplate(templateId);
+            if (template == null) {
+                throw new RuntimeException("模板不存在: " + templateId);
+            }
+            
+            log.info("📋 使用模板: {} (ID: {}), 题目数: {}", template.getName(), templateId, template.getQuestionCount());
+            
+            // 2. 获取模板题目列表，建立题目顺序映射
+            List<com.teachhelper.dto.response.ExamPaperTemplateQuestionResponse> templateQuestions = template.getQuestions();
+            if (templateQuestions == null || templateQuestions.isEmpty()) {
+                throw new RuntimeException("模板没有配置题目: " + templateId);
+            }
+            
+            // 按照题目顺序排序
+            templateQuestions.sort((q1, q2) -> Integer.compare(q1.getQuestionOrder(), q2.getQuestionOrder()));
+            
+            // 3. 获取班级下的所有学习通文档
+            List<File> documents = learningAnswerParserService.getAnswerDocuments(uploadDir, subject, classFolder);
+            log.info("📄 班级 {} 共有 {} 个学习通文档", classFolder, documents.size());
+            
+            if (documents.isEmpty()) {
+                log.warn("⚠️ 班级 {} 没有找到学习通文档", classFolder);
+                return result;
+            }
+            
+            int successCount = 0;
+            int failedCount = 0;
+            
+            // 4. 逐个处理学生文档
+            for (File document : documents) {
+                try {
+                    log.info("📖 开始处理文档: {}", document.getName());
+                    
+                    // 使用基于模板的解析方法，只解析学生答案和分数，题目内容来自模板
+                    StudentAnswerImportData importData = learningAnswerParserService.parseStudentAnswersOnlyForTemplate(
+                        document, templateQuestions.size());
+                    
+                    if (importData == null) {
+                        log.warn("⚠️ 跳过无法解析的文档: {}", document.getName());
+                        failedCount++;
+                        result.getFailedStudents().add(document.getName());
+                        result.getErrorMessages().add("文档解析失败: " + document.getName());
+                        continue;
+                    }
+                    
+                    // 检查学生答案数据
+                    List<StudentAnswerImportData.QuestionAnswer> studentAnswers = importData.getAnswers();
+                    if (studentAnswers == null || studentAnswers.isEmpty()) {
+                        log.warn("⚠️ 跳过没有学生答案的文档: {}", document.getName());
+                        failedCount++;
+                        result.getFailedStudents().add(document.getName());
+                        result.getErrorMessages().add("文档没有学生答案: " + document.getName());
+                        continue;
+                    }
+                    
+                    log.info("📝 文档 {} 基于模板解析到 {} 个学生答案", document.getName(), studentAnswers.size());
+                    
+                    // 基于模板匹配和导入学生答案
+                    boolean success = importStudentAnswersWithTemplate(importData, templateQuestions, examId);
+                    
+                    if (success) {
+                        successCount++;
+                        result.getSuccessfulStudents().add(importData.getStudentName());
+                        log.info("✅ 文档处理成功: {} - 学生: {}", document.getName(), importData.getStudentName());
+                    } else {
+                        failedCount++;
+                        result.getFailedStudents().add(importData.getStudentName());
+                        result.getErrorMessages().add("答案导入失败: " + importData.getStudentName());
+                        log.warn("❌ 文档处理失败: {} - 学生: {}", document.getName(), importData.getStudentName());
+                    }
+                    
+                } catch (Exception e) {
+                    failedCount++;
+                    result.getFailedStudents().add(document.getName());
+                    result.getErrorMessages().add("处理文档异常: " + document.getName() + " - " + e.getMessage());
+                    log.error("❌ 处理文档异常: {} - {}", document.getName(), e.getMessage());
+                }
+            }
+            
+            result.setSuccessCount(successCount);
+            result.setFailedCount(failedCount);
+            result.setTotalFiles(documents.size());
+            
+            log.info("🎯 基于模板导入完成 - 总文件: {}, 成功: {}, 失败: {}", 
+                     documents.size(), successCount, failedCount);
+            
+        } catch (Exception e) {
+            log.error("❌ 基于模板导入失败: {}", e.getMessage(), e);
+            throw new IOException("基于模板导入失败: " + e.getMessage(), e);
+        }
+        
+        return result;
+    }
+    
+    /**
+     * 基于模板匹配和导入单个学生的答案
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    protected boolean importStudentAnswersWithTemplate(
+            StudentAnswerImportData importData, 
+            List<com.teachhelper.dto.response.ExamPaperTemplateQuestionResponse> templateQuestions,
+            Long examId) {
+        
+        try {
+            // 1. 查找或创建学生用户
+            User student = findOrCreateStudent(importData);
+            
+            List<StudentAnswerImportData.QuestionAnswer> studentAnswers = importData.getAnswers();
+            int importedCount = 0;
+            
+            log.info("📋 开始匹配学生答案与模板题目 - 学生: {}, 学生答案数: {}, 模板题目数: {}", 
+                     importData.getStudentName(), studentAnswers.size(), templateQuestions.size());
+            
+            // 调试：打印前几个学生答案的分数信息（基于模板导入时题目内容来自模板）
+            for (int debugIndex = 0; debugIndex < Math.min(3, studentAnswers.size()); debugIndex++) {
+                StudentAnswerImportData.QuestionAnswer debugAnswer = studentAnswers.get(debugIndex);
+                log.info("🔍 调试 - 题目{}: 题目内容来自模板, 学生答案={}, 分数={}", 
+                         debugIndex + 1,
+                         debugAnswer.getAnswerContent() != null && debugAnswer.getAnswerContent().length() > 30 
+                             ? debugAnswer.getAnswerContent().substring(0, 30) + "..."
+                             : debugAnswer.getAnswerContent(),
+                         debugAnswer.getScore());
+            }
+            
+            // 2. 基于题目顺序进行匹配
+            int maxQuestions = Math.min(studentAnswers.size(), templateQuestions.size());
+            
+            for (int i = 0; i < maxQuestions; i++) {
+                try {
+                    StudentAnswerImportData.QuestionAnswer studentAnswer = studentAnswers.get(i);
+                    com.teachhelper.dto.response.ExamPaperTemplateQuestionResponse templateQuestion = templateQuestions.get(i);
+                    
+                    // 3. 获取模板题目对应的实际题目
+                    Question question = getOrCreateQuestionFromTemplate(templateQuestion, examId, importData);
+                    
+                    if (question == null) {
+                        log.warn("⚠️ 无法获取题目 {} 对应的Question对象", templateQuestion.getQuestionOrder());
+                        continue;
+                    }
+                    
+                    // 4. 检查是否已存在该学生对该题目的答案
+                    StudentAnswer existingAnswer = studentAnswerRepository
+                        .findByStudentIdAndQuestionId(student.getId(), question.getId());
+                    
+                    if (existingAnswer != null) {
+                        // 更新现有答案
+                        String answerContentToSet = studentAnswer.getAnswerContent();
+                        log.info("🔍 题目{} 更新答案: 原答案=\"{}\", 新答案=\"{}\"", 
+                                i + 1, 
+                                existingAnswer.getAnswerText(),
+                                answerContentToSet != null ? (answerContentToSet.length() > 50 ? answerContentToSet.substring(0, 50) + "..." : answerContentToSet) : "null");
+                        
+                        existingAnswer.setAnswerText(answerContentToSet);
+                        
+                        // 设置学生得分（如果解析到了分数）
+                        if (studentAnswer.getScore() != null) {
+                            existingAnswer.setScore(new java.math.BigDecimal(studentAnswer.getScore()));
+                            // 只有客观题（选择题、判断题）才自动设置为已评估
+                            boolean isObjectiveQuestion = isObjectiveQuestionType(question.getQuestionType());
+                            existingAnswer.setEvaluated(isObjectiveQuestion);
+                            log.info("🔄 更新学生 {} 第{}题的答案，答案内容: \"{}\", 得分: {}，题型: {}，自动评估: {}", 
+                                     student.getRealName(), i + 1, 
+                                     answerContentToSet != null ? (answerContentToSet.length() > 30 ? answerContentToSet.substring(0, 30) + "..." : answerContentToSet) : "null",
+                                     studentAnswer.getScore(), question.getQuestionType(), isObjectiveQuestion);
+                        } else {
+                            existingAnswer.setEvaluated(false);
+                            log.info("🔄 更新学生 {} 第{}题的答案，答案内容: \"{}\", 无分数信息", 
+                                    student.getRealName(), i + 1,
+                                    answerContentToSet != null ? (answerContentToSet.length() > 30 ? answerContentToSet.substring(0, 30) + "..." : answerContentToSet) : "null");
+                        }
+                        
+                        studentAnswerRepository.save(existingAnswer);
+                    } else {
+                        // 创建新的答案记录
+                        StudentAnswer answer = new StudentAnswer();
+                        answer.setStudent(student);
+                        answer.setQuestion(question);
+                        
+                        String answerContentToSet = studentAnswer.getAnswerContent();
+                        log.info("🔍 题目{} 创建新答案: \"{}\"", 
+                                i + 1, 
+                                answerContentToSet != null ? (answerContentToSet.length() > 50 ? answerContentToSet.substring(0, 50) + "..." : answerContentToSet) : "null");
+                        
+                        answer.setAnswerText(answerContentToSet);
+                        
+                        // 设置学生得分（如果解析到了分数）
+                        if (studentAnswer.getScore() != null) {
+                            answer.setScore(new java.math.BigDecimal(studentAnswer.getScore()));
+                            // 只有客观题（选择题、判断题）才自动设置为已评估
+                            boolean isObjectiveQuestion = isObjectiveQuestionType(question.getQuestionType());
+                            answer.setEvaluated(isObjectiveQuestion);
+                            log.info("✅ 创建学生 {} 第{}题的答案，答案内容: \"{}\", 得分: {}，题型: {}，自动评估: {}", 
+                                     student.getRealName(), i + 1, 
+                                     answerContentToSet != null ? (answerContentToSet.length() > 30 ? answerContentToSet.substring(0, 30) + "..." : answerContentToSet) : "null",
+                                     studentAnswer.getScore(), question.getQuestionType(), isObjectiveQuestion);
+                        } else {
+                            answer.setEvaluated(false);
+                            log.info("✅ 创建学生 {} 第{}题的答案，答案内容: \"{}\", 无分数信息", 
+                                    student.getRealName(), i + 1,
+                                    answerContentToSet != null ? (answerContentToSet.length() > 30 ? answerContentToSet.substring(0, 30) + "..." : answerContentToSet) : "null");
+                        }
+                        
+                        studentAnswerRepository.save(answer);
+                    }
+                    
+                    importedCount++;
+                    
+                } catch (Exception e) {
+                    log.error("❌ 处理第{}题时出错: {}", i + 1, e.getMessage());
+                }
+            }
+            
+            log.info("✅ 学生 {} 答案导入完成，共导入 {} 道题", importData.getStudentName(), importedCount);
+            return importedCount > 0;
+            
+        } catch (Exception e) {
+            log.error("❌ 导入学生 {} 答案失败: {}", importData.getStudentName(), e.getMessage(), e);
+            return false;
+        }
+    }
+    
+    /**
+     * 根据模板题目获取实际的Question对象
+     * 基于模板导入：正确处理模板配置中的题目内容和选项信息
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    protected Question getOrCreateQuestionFromTemplate(
+            com.teachhelper.dto.response.ExamPaperTemplateQuestionResponse templateQuestion,
+            Long examId,
+            StudentAnswerImportData importData) {
+        
+        try {
+            // 检查考试是否存在
+            Optional<Exam> examOpt = examRepository.findById(examId);
+            if (examOpt.isEmpty()) {
+                log.error("❌ 考试不存在: {}", examId);
+                return null;
+            }
+            Exam exam = examOpt.get();
+            
+            // 首先尝试在考试中查找已有的对应顺序的题目
+            List<Question> examQuestions = questionRepository.findByExamIdOrderByCreatedAt(examId);
+            
+            // 如果考试中已有对应顺序的题目，直接返回
+            if (templateQuestion.getQuestionOrder() != null && 
+                templateQuestion.getQuestionOrder() > 0 && 
+                templateQuestion.getQuestionOrder() <= examQuestions.size()) {
+                
+                Question existingQuestion = examQuestions.get(templateQuestion.getQuestionOrder() - 1);
+                log.debug("✅ 使用考试中已有的题目: ID={}, 顺序={}", 
+                         existingQuestion.getId(), templateQuestion.getQuestionOrder());
+                return existingQuestion;
+            }
+            
+            // 如果考试中没有对应的题目，需要为考试创建新题目
+            Question newQuestion = new Question();
+            
+            // 设置题目基本信息
+            String questionTitle = "题目" + templateQuestion.getQuestionOrder();
+            newQuestion.setTitle(questionTitle);
+            newQuestion.setQuestionType(mapStringToQuestionType(templateQuestion.getQuestionType()));
+            newQuestion.setMaxScore(templateQuestion.getScore() != null ? 
+                templateQuestion.getScore() : BigDecimal.valueOf(5.0));
+            newQuestion.setExam(exam);
+            newQuestion.setCreatedBy(SecurityUtils.getCurrentUserId());
+            newQuestion.setSourceType(SourceType.LEARNING_IMPORT);
+            newQuestion.setIsConfirmed(true);
+            
+            // 处理题目内容和选项
+            String questionContent = templateQuestion.getQuestionContent();
+            String correctAnswer = null;
+            List<String> optionsList = null;
+            
+            // 从模板配置中解析选项和正确答案
+            if (templateQuestion.getQuestionConfig() != null && !templateQuestion.getQuestionConfig().isEmpty()) {
+                try {
+                    ObjectMapper mapper = new ObjectMapper();
+                    JsonNode configNode = mapper.readTree(templateQuestion.getQuestionConfig());
+                    
+                    if (configNode.has("correctAnswer")) {
+                        correctAnswer = configNode.get("correctAnswer").asText();
+                    }
+                    
+                    if (configNode.has("options")) {
+                        JsonNode optionsNode = configNode.get("options");
+                        if (optionsNode.isArray()) {
+                            optionsList = new ArrayList<>();
+                            for (JsonNode optionNode : optionsNode) {
+                                optionsList.add(optionNode.asText());
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("解析模板题目配置失败: {}", e.getMessage());
+                }
+            }
+            
+            // 构建完整的题目内容（题目干 + 选项）
+            StringBuilder fullContent = new StringBuilder();
+            fullContent.append(questionContent);
+            
+            if (optionsList != null && !optionsList.isEmpty()) {
+                // 移除题目内容中的( )占位符，因为选项中已经包含了完整信息
+                String cleanedContent = questionContent.replaceAll("\\s*\\(\\s*\\)\\s*$", "");
+                fullContent = new StringBuilder(cleanedContent);
+                
+                // 添加选项到题目内容中
+                fullContent.append("\n");
+                for (String option : optionsList) {
+                    fullContent.append(option).append("\n");
+                }
+            }
+            
+            newQuestion.setContent(fullContent.toString().trim());
+            
+            // 设置参考答案
+            if (correctAnswer != null) {
+                newQuestion.setReferenceAnswer(correctAnswer);
+            }
+            
+            // 保存题目到数据库
+            Question savedQuestion = questionRepository.save(newQuestion);
+            
+            // 为选择题创建选项实体
+            if (isChoiceQuestionType(savedQuestion.getQuestionType()) && optionsList != null && !optionsList.isEmpty()) {
+                createQuestionOptionsFromTemplate(savedQuestion, optionsList, correctAnswer);
+                log.debug("✅ 为题目 {} 创建了 {} 个选项", savedQuestion.getId(), optionsList.size());
+            }
+            
+            log.info("✅ 为考试 {} 创建新题目: ID={}, 顺序={}, 类型={}, 选项数={}", 
+                     examId, savedQuestion.getId(), templateQuestion.getQuestionOrder(), 
+                     templateQuestion.getQuestionType(), optionsList != null ? optionsList.size() : 0);
+            
+            return savedQuestion;
+            
+        } catch (Exception e) {
+            log.error("❌ 获取或创建模板题目失败: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+    
+    /**
+     * 判断是否为选择题类型
+     */
+    private boolean isChoiceQuestionType(QuestionType questionType) {
+        return questionType == QuestionType.SINGLE_CHOICE || 
+               questionType == QuestionType.MULTIPLE_CHOICE || 
+               questionType == QuestionType.TRUE_FALSE;
+    }
+    
+    /**
+     * 从模板创建题目选项
+     */
+    private void createQuestionOptionsFromTemplate(Question question, List<String> optionsList, String correctAnswer) {
+        if (optionsList == null || optionsList.isEmpty()) {
+            return;
+        }
+        
+        log.debug("为题目 {} 创建选项，正确答案: {}", question.getId(), correctAnswer);
+        
+        int optionOrder = 1;
+        for (String optionText : optionsList) {
+            if (optionText == null || optionText.trim().isEmpty()) {
+                continue;
+            }
+            
+            // 提取选项标识符和内容 (如: "A、选项内容" -> 标识符="A", 内容="选项内容")
+            String optionIdentifier = extractOptionIdentifier(optionText);
+            String optionContent = extractOptionContent(optionText);
+            
+            // 判断是否为正确答案
+            boolean isCorrect = isCorrectOption(optionIdentifier, optionContent, correctAnswer);
+            
+            // 创建选项实体
+            QuestionOption option = new QuestionOption();
+            option.setContent(optionContent);
+            option.setIsCorrect(isCorrect);
+            option.setOptionOrder(optionOrder);
+            option.setQuestion(question);
+            
+            // 保存选项到数据库
+            QuestionOption savedOption = questionOptionRepository.save(option);
+            
+            log.debug("✅ 创建选项: {} - {} (正确: {}, ID: {})", 
+                    optionIdentifier, 
+                    optionContent.length() > 20 ? optionContent.substring(0, 20) + "..." : optionContent, 
+                    isCorrect, 
+                    savedOption.getId());
+            
+            optionOrder++;
+        }
+    }
+    
+    /**
+     * 提取选项标识符 (A、B、C、D等)
+     */
+    private String extractOptionIdentifier(String optionText) {
+        if (optionText == null) return "";
+        
+        // 匹配格式：A、 或 A. 或 (A) 等
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("^([A-Z])\\s*[、.]");
+        java.util.regex.Matcher matcher = pattern.matcher(optionText.trim());
+        
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        
+        // 如果没有找到标识符，返回空字符串
+        return "";
+    }
+    
+    /**
+     * 提取选项内容（去除选项标识符）
+     */
+    private String extractOptionContent(String optionText) {
+        if (optionText == null) return "";
+        
+        // 移除开头的选项标识符 (A、 或 A. 等)
+        String content = optionText.replaceAll("^[A-Z]\\s*[、.]\\s*", "").trim();
+        return content.isEmpty() ? optionText.trim() : content;
+    }
+    
+    /**
+     * 判断选项是否为正确答案
+     */
+    private boolean isCorrectOption(String optionIdentifier, String optionContent, String correctAnswer) {
+        if (correctAnswer == null || correctAnswer.trim().isEmpty()) {
+            return false;
+        }
+        
+        // 1. 直接匹配选项标识符 (A、B、C、D)
+        if (optionIdentifier.equals(correctAnswer.trim())) {
+            return true;
+        }
+        
+        // 2. 匹配选项内容
+        if (optionContent.equals(correctAnswer.trim())) {
+            return true;
+        }
+        
+        // 3. 模糊匹配（去除空格后比较）
+        if (optionContent.replaceAll("\\s+", "").equals(correctAnswer.replaceAll("\\s+", ""))) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * 判断题目类型是否为客观题（可以自动评估的题型）
+     */
+    private boolean isObjectiveQuestionType(QuestionType questionType) {
+        if (questionType == null) {
+            return false;
+        }
+        
+        switch (questionType) {
+            case SINGLE_CHOICE:
+            case MULTIPLE_CHOICE:
+            case TRUE_FALSE:
+                return true; // 选择题和判断题是客观题，有答案就可以自动评估
+            case FILL_BLANK:
+            case SHORT_ANSWER:
+            case ESSAY:
+            case CODING:
+            case CASE_ANALYSIS:
+            case CALCULATION:
+                return false; // 主观题需要人工评阅，即使有分数也不自动设置为已评估
+            default:
+                return false;
+        }
+    }
+    
+    /**
+     * 映射字符串到QuestionType枚举
+     */
+    private QuestionType mapStringToQuestionType(String questionTypeStr) {
+        if (questionTypeStr == null) {
+            return QuestionType.SHORT_ANSWER;
+        }
+        
+        try {
+            return QuestionType.valueOf(questionTypeStr.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            // 处理一些常见的映射
+            switch (questionTypeStr.toLowerCase()) {
+                case "单选题":
+                case "single_choice":
+                    return QuestionType.SINGLE_CHOICE;
+                case "多选题":
+                case "multiple_choice":
+                    return QuestionType.MULTIPLE_CHOICE;
+                case "判断题":
+                case "true_false":
+                    return QuestionType.TRUE_FALSE;
+                case "填空题":
+                case "fill_blank":
+                    return QuestionType.FILL_BLANK;
+                case "简答题":
+                case "short_answer":
+                    return QuestionType.SHORT_ANSWER;
+                case "论述题":
+                case "essay":
+                    return QuestionType.ESSAY;
+                case "计算题":
+                case "calculation":
+                    return QuestionType.CALCULATION;
+                case "案例分析题":
+                case "case_analysis":
+                    return QuestionType.CASE_ANALYSIS;
+                default:
+                    log.warn("未知题目类型: {}, 使用默认类型 SHORT_ANSWER", questionTypeStr);
+                    return QuestionType.SHORT_ANSWER;
+            }
+        }
     }
 }

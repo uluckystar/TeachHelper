@@ -14,6 +14,7 @@ import com.teachhelper.entity.DifficultyLevel;
 import com.teachhelper.entity.RubricCriterion;
 import com.teachhelper.entity.QuestionKnowledgePoint;
 import com.teachhelper.entity.QuestionBank;
+import com.teachhelper.entity.SourceType;
 import com.teachhelper.exception.ResourceNotFoundException;
 import com.teachhelper.repository.KnowledgeBaseRepository;
 import com.teachhelper.repository.KnowledgeBaseFavoriteRepository;
@@ -535,9 +536,11 @@ public class KnowledgeBaseService {
         questionMap.put("content", question.getContent());
         questionMap.put("type", getQuestionTypeFrontendFormat(question.getQuestionType()));
         questionMap.put("difficulty", getDifficultyFrontendFormat(question.getDifficulty()));
-        questionMap.put("isAIGenerated", "AI_GENERATED".equals(question.getSourceType()));
+        questionMap.put("isAIGenerated", question.getSourceType() != null && 
+                       (question.getSourceType() == SourceType.AI_GENERATED || question.getSourceType() == SourceType.AI_ORGANIZED));
         questionMap.put("createdAt", question.getCreatedAt() != null ? question.getCreatedAt().toString() : null);
-        questionMap.put("createdBy", question.getSourceType() != null && question.getSourceType().startsWith("AI") ? "AI生成" : "教师");
+        questionMap.put("createdBy", question.getSourceType() != null && 
+                       (question.getSourceType() == SourceType.AI_GENERATED || question.getSourceType() == SourceType.AI_ORGANIZED) ? "AI生成" : "教师");
         
         // 获取练习统计 - 暂时使用固定值
         questionMap.put("practiceCount", 0);

@@ -514,17 +514,17 @@ public class QuestionScoreParsingService {
         if (sectionHeader != null) {
             String lower = sectionHeader.toLowerCase();
             if (lower.contains("选择题") || lower.contains("单选") || lower.contains("多选")) {
-                return new BigDecimal("3");
+                return new BigDecimal("1");
             } else if (lower.contains("填空题") || lower.contains("填空")) {
-                return new BigDecimal("4");
-            } else if (lower.contains("判断题") || lower.contains("判断")) {
                 return new BigDecimal("2");
+            } else if (lower.contains("判断题") || lower.contains("判断")) {
+                return new BigDecimal("0.5");  // 判断题通常分值较低
             } else if (lower.contains("简答题") || lower.contains("简答")) {
-                return new BigDecimal("10");
+                return new BigDecimal("4");
             } else if (lower.contains("论述题") || lower.contains("论述")) {
                 return new BigDecimal("15");
             } else if (lower.contains("计算题") || lower.contains("计算")) {
-                return new BigDecimal("12");
+                return new BigDecimal("10");
             } else if (lower.contains("分析题") || lower.contains("分析")) {
                 return new BigDecimal("12");  // 分析题通常分值较高
             }
@@ -570,13 +570,13 @@ public class QuestionScoreParsingService {
     }
 
     /**
-     * 判断题目类型
+     * 判断题目类型 - 优化版本，更准确识别学习通格式
      */
     public String detectQuestionType(String questionContent, String sectionHeader) {
         log.debug("检测题目类型 - 段落标题: {}, 题目内容: {}", sectionHeader, 
                  questionContent != null && questionContent.length() > 50 ? questionContent.substring(0, 50) + "..." : questionContent);
         
-        // 优先根据段落标题判断
+        // 优先根据段落标题判断（学习通格式最可靠）
         if (sectionHeader != null && !sectionHeader.trim().isEmpty()) {
             String lower = sectionHeader.toLowerCase();
             log.debug("段落标题小写: {}", lower);
@@ -584,6 +584,9 @@ public class QuestionScoreParsingService {
             if (lower.contains("选择题") || lower.contains("单选") || lower.contains("多选")) {
                 log.debug("根据段落标题判断为选择题");
                 return "选择题";
+            } else if (lower.contains("判断题") || lower.contains("判断")) {
+                log.debug("根据段落标题判断为判断题");
+                return "判断题";
             } else if (lower.contains("填空题") || lower.contains("填空")) {
                 log.debug("根据段落标题判断为填空题");
                 return "填空题";
@@ -596,39 +599,59 @@ public class QuestionScoreParsingService {
             } else if (lower.contains("计算题") || lower.contains("计算")) {
                 log.debug("根据段落标题判断为计算题");
                 return "计算题";
-            } else if (lower.contains("判断题") || lower.contains("判断")) {
-                log.debug("根据段落标题判断为判断题");
-                return "判断题";
             } else if (lower.contains("分析题") || lower.contains("分析")) {
                 log.debug("根据段落标题判断为分析题");
                 return "分析题";
             }
         }
 
-        // 从题目内容判断
+        // 从题目内容判断（需要更严格的规则）
         if (questionContent != null && !questionContent.trim().isEmpty()) {
-            String lower = questionContent.toLowerCase();
+            String content = questionContent.trim();
+            String lower = content.toLowerCase();
             log.debug("题目内容小写片段: {}", lower.length() > 100 ? lower.substring(0, 100) + "..." : lower);
             
-            // 更精确的选择题判断
-            if (lower.contains("( )") || lower.contains("（ ）") || 
-                lower.matches(".*[A-D][.、].*") || 
-                (lower.contains("选择") && (lower.contains("正确") || lower.contains("错误")))) {
+            // 过滤明显不是题目的内容
+            if (isNotValidQuestion(content)) {
+                log.debug("检测到无效题目内容，使用默认类型");
+                return "简答题";
+            }
+            
+            // 1. 选择题特征（必须包含问号和选项括号）
+            if ((lower.contains("?") || lower.contains("？")) && 
+                (lower.contains("( )") || lower.contains("（ ）"))) {
                 log.debug("根据题目内容判断为选择题");
                 return "选择题";
-            } else if (lower.contains("填空") || lower.contains("____") || lower.contains("_____")) {
-                log.debug("根据题目内容判断为填空题");
-                return "填空题";
-            } else if (lower.contains("计算") || lower.contains("求") || lower.contains("解：") || 
-                      (lower.contains("公式") && lower.contains("结果"))) {
-                log.debug("根据题目内容判断为计算题");
-                return "计算题";
-            } else if ((lower.contains("判断") && (lower.contains("正确") || lower.contains("错误"))) ||
-                      (lower.contains("√") || lower.contains("×") || lower.contains("对") || lower.contains("错"))) {
+            }
+            
+            // 2. 判断题特征（简化逻辑，更准确识别学习通格式）
+            if ((lower.contains("( )") || lower.contains("（ ）")) && 
+                !lower.contains("?") && !lower.contains("？")) {
+                // 学习通判断题通常以"( )"结尾，不包含问号
                 log.debug("根据题目内容判断为判断题");
                 return "判断题";
-            } else if (lower.contains("论述") || lower.contains("分析") || lower.contains("阐述") || 
-                      lower.contains("试述") || lower.contains("简述")) {
+            }
+            
+            // 3. 填空题特征
+            if (lower.contains("____") || lower.contains("_____") || 
+                lower.contains("填空") || lower.contains("空白")) {
+                log.debug("根据题目内容判断为填空题");
+                return "填空题";
+            }
+            
+            // 4. 计算题特征
+            if (lower.contains("计算") || lower.contains("求") || 
+                lower.contains("解：") || lower.contains("公式") ||
+                (lower.contains("已知") && lower.contains("求解"))) {
+                log.debug("根据题目内容判断为计算题");
+                return "计算题";
+            }
+            
+            // 5. 论述题特征
+            if (lower.contains("论述") || lower.contains("阐述") || 
+                lower.contains("试述") || lower.contains("简述") ||
+                lower.contains("分析") || lower.contains("评价") ||
+                content.length() > 100) { // 长题目通常是论述题
                 log.debug("根据题目内容判断为论述题");
                 return "论述题";
             }
@@ -636,5 +659,52 @@ public class QuestionScoreParsingService {
 
         log.debug("无法明确判断题目类型，使用默认类型：简答题");
         return "简答题"; // 默认类型
+    }
+    
+    /**
+     * 检查是否不是有效的题目内容
+     */
+    private boolean isNotValidQuestion(String content) {
+        if (content == null || content.trim().isEmpty()) {
+            return true;
+        }
+        
+        String trimmed = content.trim();
+        
+        // 过滤IP地址
+        if (trimmed.matches("^\\d+\\.\\d+\\.\\d+\\.\\d+.*")) {
+            return true;
+        }
+        
+        // 过滤纯数字序列
+        if (trimmed.matches("^\\d+(\\.\\d+)*$")) {
+            return true;
+        }
+        
+        // 过滤选项行（A、B、C、D开头）
+        if (trimmed.matches("^[A-Z]、\\s*.*") && trimmed.length() < 100) {
+            return true;
+        }
+        
+        // 过滤学生信息相关行
+        if (trimmed.contains("学生答案") || trimmed.contains("学生得分") || 
+            trimmed.contains("正确答案") || trimmed.contains("批语") ||
+            trimmed.contains("答题人") || trimmed.contains("学号") ||
+            trimmed.contains("提交时间") || trimmed.contains("ip")) {
+            return true;
+        }
+        
+        // 过滤过短的内容
+        if (trimmed.length() < 5) {
+            return true;
+        }
+        
+        // 过滤特殊格式的非题目内容
+        if (trimmed.matches("^\\d+\\s*分$") || // 单纯的分数
+            trimmed.matches("^[一二三四五六七八九十]+[.、]$")) { // 单纯的序号
+            return true;
+        }
+        
+        return false;
     }
 } 

@@ -4,6 +4,7 @@ import com.teachhelper.dto.request.StudentAnswerImportData;
 import com.teachhelper.entity.Question;
 import com.teachhelper.entity.QuestionBank;
 import com.teachhelper.entity.QuestionType;
+import com.teachhelper.entity.SourceType;
 import com.teachhelper.repository.QuestionRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -225,7 +226,7 @@ public class SmartQuestionMatchingService {
                 : questionInfo.coreContent;
                 
             Page<Question> searchResults = questionRepository.searchQuestionsWithFilters(
-                searchKeyword, null, null, null, 
+                searchKeyword, null, null, null, null, null, 
                 PageRequest.of(0, MAX_SEARCH_RESULTS));
             
             Question bestMatch = null;
@@ -334,7 +335,7 @@ public class SmartQuestionMatchingService {
         clonedQuestion.setQuestionType(originalQuestion.getQuestionType());
         clonedQuestion.setMaxScore(originalQuestion.getMaxScore());
         clonedQuestion.setCreatedBy(originalQuestion.getCreatedBy());
-        clonedQuestion.setSourceType("克隆自题目ID: " + originalQuestion.getId());
+        clonedQuestion.setSourceType(SourceType.QUESTION_BANK);
         clonedQuestion.setIsConfirmed(originalQuestion.getIsConfirmed());
         clonedQuestion.setQuestionBank(originalQuestion.getQuestionBank());
         
@@ -390,7 +391,7 @@ public class SmartQuestionMatchingService {
             newQuestion.setCreatedBy(1L);
             
             // 设置题目来源
-            newQuestion.setSourceType("学习通智能导入");
+            newQuestion.setSourceType(SourceType.LEARNING_IMPORT);
             
             // 设置为未确认状态，需要教师确认
             newQuestion.setIsConfirmed(false);

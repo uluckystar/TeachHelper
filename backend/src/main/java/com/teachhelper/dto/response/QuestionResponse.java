@@ -5,6 +5,7 @@ import java.util.List;
 
 import com.teachhelper.dto.QuestionOptionDTO;
 import com.teachhelper.entity.QuestionType;
+import com.teachhelper.entity.SourceType;
 
 public class QuestionResponse {
     
@@ -25,7 +26,8 @@ public class QuestionResponse {
     private double averageScore;
     
     // 题目来源相关字段
-    private String sourceType;
+    private SourceType sourceType;
+    private String sourceTypeDisplayName;
     private Long sourceKnowledgeBaseId;
     private String sourceKnowledgeBaseName;
     private Long sourceKnowledgePointId;
@@ -159,12 +161,20 @@ public class QuestionResponse {
     }
     
     // 题目来源相关字段的getter和setter
-    public String getSourceType() {
+    public SourceType getSourceType() {
         return sourceType;
     }
     
-    public void setSourceType(String sourceType) {
+    public void setSourceType(SourceType sourceType) {
         this.sourceType = sourceType;
+    }
+    
+    public String getSourceTypeDisplayName() {
+        return sourceTypeDisplayName;
+    }
+    
+    public void setSourceTypeDisplayName(String sourceTypeDisplayName) {
+        this.sourceTypeDisplayName = sourceTypeDisplayName;
     }
     
     public Long getSourceKnowledgeBaseId() {

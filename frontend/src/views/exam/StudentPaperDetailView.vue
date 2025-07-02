@@ -155,11 +155,42 @@
                 </div>
                 <div class="student-answer">
                   <div v-if="!isEditingStudentAnswer(answer.id)" class="answer-display">
-                    <div v-if="answer.answerText" class="text-answer">
-                      <pre>{{ answer.answerText }}</pre>
+                    <!-- 客观题选项展示 -->
+                    <div v-if="hasQuestionOptions(answer) && ((answer.questionType && isObjectiveQuestion(answer.questionType)) || !answer.questionType)" class="options-answer">
+                      <div class="options-title">选项:</div>
+                      <div class="options-list">
+                        <div 
+                          v-for="(option, optionIndex) in getQuestionOptions(answer)"
+                          :key="optionIndex"
+                          class="option-item"
+                          :class="{
+                            'student-selected': isStudentSelectedOption(answer, option, optionIndex),
+                            'correct-option': isCorrectOption(answer, option),
+                            'wrong-selected': isStudentSelectedOption(answer, option, optionIndex) && !isCorrectOption(answer, option)
+                          }"
+                        >
+                          <div class="option-content">
+                            <span class="option-label">{{ getOptionLabel(option, optionIndex) }}</span>
+                            <div class="option-indicators">
+                              <el-tag v-if="isStudentSelectedOption(answer, option, optionIndex)" type="primary" size="small">
+                                学生选择
+                              </el-tag>
+                              <el-tag v-if="isCorrectOption(answer, option)" type="success" size="small">
+                                正确答案
+                              </el-tag>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <div v-if="!answer.answerText" class="no-answer">
-                      <el-text type="info">学生未作答</el-text>
+                    <!-- 主观题文本答案展示 -->
+                    <div v-else class="text-answer-section">
+                      <div v-if="answer.answerText" class="text-answer">
+                        <pre>{{ answer.answerText }}</pre>
+                      </div>
+                      <div v-if="!answer.answerText" class="no-answer">
+                        <el-text type="info">学生未作答</el-text>
+                      </div>
                     </div>
                   </div>
                   <div v-else class="answer-edit">
@@ -359,7 +390,8 @@ import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { answerApi } from '@/api/answer'
 import { examApi } from '@/api/exam'
 import { evaluationApi } from '@/api/evaluation'
-import type { StudentAnswerResponse, StudentExamPaperResponse, ExamResponse } from '@/types/api'
+import { questionApi } from '@/api/question'
+import type { StudentAnswerResponse, StudentExamPaperResponse, ExamResponse, QuestionResponse } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -374,6 +406,7 @@ const batchEvaluating = ref(false)
 const saving = ref(false)
 const exam = ref<ExamResponse>()
 const studentPaper = ref<StudentExamPaperResponse>()
+const examQuestions = ref<QuestionResponse[]>([])
 const evaluatingAnswers = ref<Set<number>>(new Set())
 const viewMode = ref('all') // 新增：视图模式
 
@@ -721,6 +754,172 @@ const getEmptyDescription = () => {
   }
 }
 
+// 客观题相关方法
+const isObjectiveQuestion = (questionType: string) => {
+  return ['SINGLE_CHOICE', 'MULTIPLE_CHOICE', 'TRUE_FALSE'].includes(questionType)
+}
+
+// 从考试题目列表中查找对应的题目
+const findQuestionFromExam = (answer: any): QuestionResponse | null => {
+  if (!examQuestions.value.length) return null
+  
+  // 尝试通过questionId匹配
+  if (answer.questionId) {
+    const found = examQuestions.value.find(q => q.id === answer.questionId)
+    if (found) return found
+  }
+  
+  // 尝试通过referencedQuestion的id匹配
+  if (answer.referencedQuestion?.id) {
+    const found = examQuestions.value.find(q => q.id === answer.referencedQuestion.id)
+    if (found) return found
+  }
+  
+  // 尝试通过题目标题匹配
+  if (answer.questionTitle) {
+    const found = examQuestions.value.find(q => 
+      q.title === answer.questionTitle || q.content === answer.questionContent
+    )
+    if (found) return found
+  }
+  
+  return null
+}
+
+const hasQuestionOptions = (answer: any) => {
+  try {
+    if (answer.questionConfig) {
+      const config = JSON.parse(answer.questionConfig)
+      return config.options && Array.isArray(config.options) && config.options.length > 0
+    }
+    // 如果没有questionConfig，检查referencedQuestion
+    if (answer.referencedQuestion?.questionConfig) {
+      const config = JSON.parse(answer.referencedQuestion.questionConfig)
+      return config.options && Array.isArray(config.options) && config.options.length > 0
+    }
+    // 如果答案中没有配置，从考试题目列表中查找
+    const examQuestion = findQuestionFromExam(answer)
+    if (examQuestion?.options && Array.isArray(examQuestion.options)) {
+      return examQuestion.options.length > 0
+    }
+  } catch (e) {
+    console.warn('解析题目配置失败:', e)
+  }
+  return false
+}
+
+const getQuestionOptions = (answer: any) => {
+  try {
+    if (answer.questionConfig) {
+      const config = JSON.parse(answer.questionConfig)
+      return config.options || []
+    }
+    // 如果没有questionConfig，检查referencedQuestion
+    if (answer.referencedQuestion?.questionConfig) {
+      const config = JSON.parse(answer.referencedQuestion.questionConfig)
+      return config.options || []
+    }
+    // 如果答案中没有配置，从考试题目列表中查找
+    const examQuestion = findQuestionFromExam(answer)
+    if (examQuestion?.options && Array.isArray(examQuestion.options)) {
+      return examQuestion.options
+    }
+  } catch (e) {
+    console.warn('解析题目选项失败:', e)
+  }
+  return []
+}
+
+const getCorrectAnswer = (answer: any) => {
+  try {
+    if (answer.questionConfig) {
+      const config = JSON.parse(answer.questionConfig)
+      return config.correctAnswer || ''
+    }
+    // 如果没有questionConfig，检查referencedQuestion
+    if (answer.referencedQuestion?.questionConfig) {
+      const config = JSON.parse(answer.referencedQuestion.questionConfig)
+      return config.correctAnswer || ''
+    }
+    // 如果答案中没有配置，从考试题目列表中查找
+    const examQuestion = findQuestionFromExam(answer)
+    if (examQuestion?.referenceAnswer) {
+      return examQuestion.referenceAnswer
+    }
+  } catch (e) {
+    console.warn('解析正确答案失败:', e)
+  }
+  return ''
+}
+
+// 获取选项标签显示文本
+const getOptionLabel = (option: any, optionIndex: number) => {
+  if (typeof option === 'string') {
+    return option
+  }
+  
+  if (typeof option === 'object' && option.content) {
+    // 对象格式的选项：添加A、B、C、D标识
+    const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+    const letter = letters[optionIndex] || (optionIndex + 1).toString()
+    return `${letter}、${option.content}`
+  }
+  
+  return option || ''
+}
+
+const isCorrectOption = (answer: any, option: any) => {
+  // 处理对象格式的选项
+  if (typeof option === 'object' && 'isCorrect' in option) {
+    return option.isCorrect === true
+  }
+  
+  // 处理字符串格式的选项（兼容原有逻辑）
+  const correctAnswer = getCorrectAnswer(answer)
+  if (!correctAnswer) return false
+  
+  const optionStr = typeof option === 'string' ? option : option?.content || ''
+  
+  // 提取选项标识符 (A、B、C、D)
+  const optionMatch = optionStr.match(/^([A-Z])、/)
+  if (optionMatch && optionMatch[1] === correctAnswer) {
+    return true
+  }
+  
+  // 直接匹配选项内容
+  const optionContent = optionStr.replace(/^[A-Z]、\s*/, '')
+  return optionContent === correctAnswer || optionStr === correctAnswer
+}
+
+const isStudentSelectedOption = (answer: any, option: any, optionIndex: number) => {
+  if (!answer.answerText) return false
+  
+  const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+  const expectedLetter = letters[optionIndex]
+  
+  // 检查学生答案是否包含该选项字母
+  if (expectedLetter && answer.answerText.includes(expectedLetter)) {
+    return true
+  }
+  
+  // 处理对象格式的选项
+  if (typeof option === 'object' && option.content) {
+    return answer.answerText.includes(option.content)
+  }
+  
+  // 处理字符串格式的选项
+  const optionStr = typeof option === 'string' ? option : option?.content || ''
+  const optionMatch = optionStr.match(/^([A-Z])、/)
+  if (optionMatch) {
+    const optionLetter = optionMatch[1]
+    return answer.answerText.includes(optionLetter)
+  }
+  
+  // 直接匹配选项内容
+  const optionContent = optionStr.replace(/^[A-Z]、\s*/, '')
+  return answer.answerText.includes(optionContent) || answer.answerText === optionStr
+}
+
 const loadExam = async () => {
   try {
     exam.value = await examApi.getExam(parseInt(examId.value))
@@ -739,6 +938,15 @@ const loadStudentPaper = async () => {
     ElMessage.error('加载学生试卷失败')
   } finally {
     loading.value = false
+  }
+}
+
+const loadExamQuestions = async () => {
+  try {
+    examQuestions.value = await questionApi.getQuestionsByExam(parseInt(examId.value))
+  } catch (error) {
+    console.error('加载考试题目失败:', error)
+    ElMessage.error('加载考试题目失败')
   }
 }
 
@@ -1038,6 +1246,7 @@ const goBack = () => {
 onMounted(() => {
   loadExam()
   loadStudentPaper()
+  loadExamQuestions()
 })
 
 // 在组件卸载时清理定时器
@@ -1494,5 +1703,84 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+}
+
+/* 客观题选项样式 */
+.options-answer {
+  margin: 16px 0;
+  padding: 16px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border-left: 4px solid #409eff;
+}
+
+.options-title {
+  font-weight: 600;
+  color: #409eff;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.option-item {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  background: white;
+  border-radius: 6px;
+  border: 2px solid #e4e7ed;
+  transition: all 0.3s ease;
+}
+
+.option-item:hover {
+  border-color: #c6e2ff;
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.1);
+}
+
+.option-item.correct-option {
+  background: #f0f9ff;
+  border-color: #67c23a;
+  box-shadow: 0 2px 8px rgba(103, 194, 58, 0.1);
+}
+
+.option-item.student-selected {
+  background: #ecf5ff;
+  border-color: #409eff;
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.15);
+}
+
+.option-item.wrong-selected {
+  background: #fef0f0;
+  border-color: #f56c6c;
+  box-shadow: 0 2px 8px rgba(245, 108, 108, 0.15);
+}
+
+.option-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.option-label {
+  flex: 1;
+  color: #606266;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.option-indicators {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.text-answer-section {
+  margin: 16px 0;
 }
 </style>

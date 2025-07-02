@@ -58,8 +58,9 @@ public class Question extends BaseEntity {
     @Column(name = "reference_answer", columnDefinition = "TEXT")
     private String referenceAnswer;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "source_type")
-    private String sourceType;
+    private SourceType sourceType;
 
     @Column(name = "is_confirmed", nullable = false)
     private Boolean isConfirmed = false; // AI整理题目的确认状态
@@ -272,11 +273,11 @@ public class Question extends BaseEntity {
         this.studentAnswers = studentAnswers;
     }
 
-    public String getSourceType() {
+    public SourceType getSourceType() {
         return sourceType;
     }
     
-    public void setSourceType(String sourceType) {
+    public void setSourceType(SourceType sourceType) {
         this.sourceType = sourceType;
     }
     

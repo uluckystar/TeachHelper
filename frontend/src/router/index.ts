@@ -128,15 +128,22 @@ const router = createRouter({
           meta: { roles: ['ADMIN', 'TEACHER'] }
         },
         {
-          path: 'exam-templates',
-          name: 'ExamTemplateList',
-          component: () => import('@/views/ExamTemplateView.vue'),
+          path: 'templates',
+          name: 'UnifiedTemplateManagement',
+          component: () => import('@/views/template/UnifiedTemplateManagementView.vue'),
           meta: { roles: ['ADMIN', 'TEACHER'] }
         },
         {
-          path: 'exam-templates/:id',
-          name: 'ExamTemplateDetail',
-          component: () => import('@/views/exam/ExamTemplateDetailView.vue'),
+          path: 'templates/:id',
+          name: 'TemplateDetail',
+          component: () => import('@/views/template/TemplateDetailView.vue'),
+          props: true,
+          meta: { roles: ['ADMIN', 'TEACHER'] }
+        },
+        {
+          path: 'templates/:id/edit',
+          name: 'TemplateEdit',
+          component: () => import('@/views/template/TemplateEditView.vue'),
           props: true,
           meta: { roles: ['ADMIN', 'TEACHER'] }
         },
@@ -491,8 +498,8 @@ router.beforeEach(async (to: any, from: any, next: any) => {
     const examId = parseInt(to.params.examId as string)
     if (examId) {
       try {
-        const { studentAnswerApi } = await import('@/api/answer')
-        const hasSubmitted = await studentAnswerApi.hasCurrentStudentSubmittedExam(examId)
+        const { answerApi } = await import('@/api/answer')
+        const hasSubmitted = await answerApi.hasCurrentStudentSubmittedExam(examId)
         if (hasSubmitted) {
           if (import.meta.env.DEV) {
             console.log('Route guard: Student has already submitted exam', { examId })

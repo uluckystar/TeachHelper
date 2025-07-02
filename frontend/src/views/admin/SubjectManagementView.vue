@@ -519,4 +519,69 @@ const saveGradeMappings = async (subjectId: number) => {
     for (const gradeId of toRemove) {
       const mappings = await subjectGradeMappingApi.getGradesBySubjectId(subjectId)
       const mapping = mappings.data?.find((m: any) => m.gradeLevelId === gradeId)
-      if
+      if (mapping) {
+        await subjectGradeMappingApi.deleteSubjectGradeMapping(mapping.id)
+      }
+    }
+    
+    // 添加新关联的年级
+    for (const gradeId of toAdd) {
+      await subjectGradeMappingApi.createSubjectGradeMapping({
+        subjectId,
+        gradeLevelId: gradeId
+      })
+    }
+    
+    // 更新原始年级列表
+    originalGrades.value = [...selectedGrades.value]
+  } catch (error) {
+    console.error('Failed to save grade mappings:', error)
+    throw error
+  }
+}
+</script>
+
+<style scoped>
+.subject-management {
+  padding: 20px;
+}
+
+.operation-bar {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.search-filters {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.pagination {
+  margin-top: 20px;
+  text-align: center;
+}
+
+.grade-mapping {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #e4e7ed;
+}
+
+.grade-category {
+  margin-bottom: 16px;
+}
+
+.grade-category h4 {
+  margin: 0 0 8px 0;
+  color: #606266;
+  font-size: 14px;
+}
+
+.grade-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+</style>

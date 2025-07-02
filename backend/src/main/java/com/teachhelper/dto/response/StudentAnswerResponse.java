@@ -131,7 +131,8 @@ public class StudentAnswerResponse {
         if (studentAnswer.getQuestion() != null) {
             dto.setQuestionId(studentAnswer.getQuestion().getId());
             dto.setQuestionTitle(studentAnswer.getQuestion().getTitle()); // Assuming Question entity has getTitle()
-            dto.setQuestionContent(studentAnswer.getQuestion().getContent()); // Assuming Question entity has getContent()
+            // 对于学生试卷详情，过滤题目内容中的选项信息
+            dto.setQuestionContent(filterQuestionContentForStudent(studentAnswer.getQuestion(), studentAnswer.getAnswerText()));
             // 设置题目的满分
             dto.setMaxScore(studentAnswer.getQuestion().getMaxScore() != null ? 
                 studentAnswer.getQuestion().getMaxScore().doubleValue() : 0.0);
@@ -168,6 +169,49 @@ public class StudentAnswerResponse {
             dto.setEvaluator(studentAnswer.getEvaluator().getUsername()); // Assuming User entity has getUsername()
         }
         return dto;
+    }
+    
+    /**
+     * 为学生视图过滤题目内容
+     * 返回完整的题目内容，包含选项，但不包含学生答案信息
+     */
+    private static String filterQuestionContentForStudent(com.teachhelper.entity.Question question, String studentAnswer) {
+        if (question == null) {
+            return "";
+        }
+        
+        String content = question.getContent();
+        if (content == null) {
+            return "";
+        }
+        
+        // 直接返回题目完整内容，不附加学生答案信息
+        // 学生答案应该在 answerText 字段中单独显示
+        return content;
+    }
+    
+    /**
+     * 从题目内容中移除选项部分
+     */
+    private static String removeOptionsFromContent(String content) {
+        if (content == null || content.trim().isEmpty()) {
+            return content;
+        }
+        
+        // 通过正则表达式移除选项部分
+        // 匹配格式如：A. xxx  B. xxx  C. xxx 或 A、xxx B、xxx C、xxx
+        String result = content;
+        
+        // 移除 A. B. C. D. 格式的选项
+        result = result.replaceAll("\\s*[A-Z]\\s*[.、]\\s*[^\\n\\r]*(?=[\\n\\r]|$)", "");
+        
+        // 移除 (A) (B) (C) (D) 格式的选项  
+        result = result.replaceAll("\\s*\\([A-Z]\\)\\s*[^\\n\\r]*(?=[\\n\\r]|$)", "");
+        
+        // 移除多余的换行符
+        result = result.replaceAll("\\n{2,}", "\n").trim();
+        
+        return result;
     }
     
     public static class StudentInfo {
